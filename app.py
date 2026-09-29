@@ -196,9 +196,11 @@ def saglik():
 
     Veritabanini hazirlar ve 200 dondurur; Render "Application Loading"
     ekranindan kurtulmak icin servisin yant verdigini dogrular.
+    Yanit, yayindaki kod surumunu (commit) de tasir.
     """
     webdb.init_db()
-    return Response("ok", mimetype="text/plain")
+    surum = (os.environ.get("RENDER_GIT_COMMIT") or "yerel")[:7]
+    return Response("ok " + surum, mimetype="text/plain")
 
 
 # ---------------------------------------------------------------------------
