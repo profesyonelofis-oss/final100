@@ -20,9 +20,29 @@ from pathlib import Path
 _giris_denemeleri = {}
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("KARAOGLU_DATA_DIR")
-                or (BASE_DIR / "data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _hazirla_data_dir() -> Path:
+    """KARAOGLU_DATA_DIR varsa onu kullan; yok/izin yoksa data/ klasorune dus.
+
+    Render'da Persistent Disk bagliyken /data env olarak set edilir. Disk henuz
+    baglanmamissa (free plan) /data yazilamaz; uygulama cakilmasin diye varsayilan
+    klasore geri dusulur. Disk baglandiginda otomatik olarak /data kullanilir.
+    """
+    hedef = Path(os.environ.get("KARAOGLU_DATA_DIR") or (BASE_DIR / "data"))
+    try:
+        hedef.mkdir(parents=True, exist_ok=True)
+        deneme = hedef / ".yazma_testi"
+        deneme.write_text("ok", encoding="utf-8")
+        deneme.unlink()
+        return hedef
+    except OSError:
+        yedek_yol = BASE_DIR / "data"
+        yedek_yol.mkdir(parents=True, exist_ok=True)
+        return yedek_yol
+
+
+DATA_DIR = _hazirla_data_dir()
 DB_PATH = DATA_DIR / "zeytin_takip.db"
 
 SCHEMA_VERSION = 2

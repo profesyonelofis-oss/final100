@@ -214,6 +214,30 @@ def main():
         except Exception:
             proc.kill()
 
+    print("\n[10] DATA_DIR fallback: /data yazilamazsa varsayilana dusme")
+    eski_env = os.environ.get("KARAOGLU_DATA_DIR")
+    os.environ["KARAOGLU_DATA_DIR"] = gecici
+    import webdb
+    kontrol("Yazilabilir KARAOGLU_DATA_DIR kullanilir",
+            webdb._hazirla_data_dir() == Path(gecici))
+    engel = Path(gecici) / "engel.txt"
+    engel.write_text("x", encoding="utf-8")
+    os.environ["KARAOGLU_DATA_DIR"] = str(engel / "alt")
+    dusulen = webdb._hazirla_data_dir()
+    kontrol("Yazilamaz yolda varsayilan data/ klasorune dusuldu",
+            dusulen == webdb.BASE_DIR / "data", str(dusulen))
+    if eski_env is None:
+        os.environ.pop("KARAOGLU_DATA_DIR", None)
+    else:
+        os.environ["KARAOGLU_DATA_DIR"] = eski_env
+    # testin olusturdugu bos klasoru temizle (projenin gercek data'sina dokunma)
+    try:
+        if dusulen == webdb.BASE_DIR / "data" and dusulen.exists() \
+                and not any(dusulen.iterdir()):
+            dusulen.rmdir()
+    except OSError:
+        pass
+
     print("\n" + "=" * 50)
     print(f"SONUC: {len(PASS)} basarili, {len(FAIL)} hatali")
     if FAIL:
