@@ -126,7 +126,11 @@ def giris():
         if webdb.check_user(ad, sifre):
             session["kullanici"] = ad
             u = webdb.get_user(ad)
-            if u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
+            if u["rol"] == "admin" and u["lisans"] != "aktif":
+                # yoneticinin uyeligi her zaman aktiftir (eski kurulumlar da duzelir)
+                webdb.set_lisans(ad, "aktif",
+                                 (datetime.now() + timedelta(days=3650)).strftime("%Y-%m-%d"))
+            elif u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
                 webdb.set_lisans(ad, "suresi_bitti")
             return redirect(url_for("genel_bakis"))
         flash("Kullanıcı adı veya şifre hatalı.", "hata")
@@ -148,8 +152,10 @@ def ilk_kurulum():
             flash("Şifreler birbiriyle uyuşmuyor.", "hata")
         else:
             webdb.create_user(ad, s1)
-            # ilk hesap otomatik olarak yonetici (admin) olur
+            # ilk hesap otomatik olarak yonetici (admin) olur ve uyeligi AKTIF baslar
             webdb.set_rol(ad, "admin")
+            webdb.set_lisans(ad, "aktif",
+                             (datetime.now() + timedelta(days=3650)).strftime("%Y-%m-%d"))
             flash("Kurulum tamamlandı, giriş yapabilirsiniz.", "basari")
             return redirect(url_for("giris"))
     return render_template("ilk_kurulum.html")
