@@ -169,6 +169,30 @@ def main():
         kontrol("Kilit suresinde dogru sifre bile reddedilir (302 yok)", r8.status != 302, f"durum={r8.status}")
         r8.read()
 
+        print("\n[8] Ayarlar: logo uretim + secim, fiyat formu KALDIRILDI")
+        req = urllib.request.Request(BASE + "/ayarlar", headers={"Cookie": cookie})
+        govde9 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
+        kontrol("Ayarlar sayfasinda 5 logo varyanti var",
+                govde9.count("/logo-sec") >= 5 and govde9.count("SEÇ") >= 5)
+        kontrol("Kalibre fiyat formu KALDIRILDI", "fiyat_No:1" not in govde9)
+        kontrol("Onerilen logo isaretli", "★ önerilen" in govde9)
+        # logo sec
+        req = urllib.request.Request(BASE + "/logo-sec", data=urllib.parse.urlencode(
+            {"stil": "Altin"}).encode(), headers={"Cookie": cookie})
+        r9 = ac2.open(req, timeout=10)
+        kontrol("Logo secimi kaydedildi", r9.status == 200)
+        # /logo artik SVG donduruyor mu?
+        req = urllib.request.Request(BASE + "/logo", headers={"Cookie": cookie})
+        r10 = ac2.open(req, timeout=10)
+        govde10 = r10.read().decode("utf-8", "replace")
+        kontrol("/logo SVG uretti (Altin stil)",
+                r10.headers.get("Content-Type", "").startswith("image/svg") and "svg" in govde10,
+                r10.headers.get("Content-Type", ""))
+        # firma adi degisince monogram da degismeli (KARAOGLU -> diger harfler)
+        req = urllib.request.Request(BASE + "/logo-sec", data=urllib.parse.urlencode(
+            {"stil": "Klasik"}).encode(), headers={"Cookie": cookie})
+        ac2.open(req, timeout=10)
+
     finally:
         proc.terminate()
         try:

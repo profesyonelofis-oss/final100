@@ -440,14 +440,30 @@ LOGO_IZINLI_UZANTILAR = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 def get_logo_mtime():
-    """Logo dosyasinin surum zamanini dondurur (yoksa None).
-
-    Sablonlarda cache-kiran ?v= parametresi olarak kullanilir.
+    """Logo surum zamanini dondurur (yoksa None). Sablonlarda cache-kiran ?v=.
     """
     try:
         return int((DATA_DIR / LOGO_STAMP_FILE).read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
+
+
+def get_uretilmis_logo_stili():
+    """Secili uretilmis logo stil adini dondurur (yoksa None).
+
+    Yeni sistemde logo, firma adindan otomatik URETILIR (SVG).
+    Eski dosya yuklemeli logo varsa onu gecerli sayar (geriye uyum).
+    """
+    if get_logo_dosyasi():  # eski yuklemeli logo oncelikli
+        return None
+    return get_ayar("logo_stil") or None
+
+
+def set_uretilmis_logo_stili(stil_adi):
+    """Secilen logo stilini kaydeder ve surum zamanini gunceller."""
+    set_ayar("logo_stil", (stil_adi or "").strip())
+    (DATA_DIR / LOGO_STAMP_FILE).write_text(
+        str(int(datetime.now().timestamp())), encoding="utf-8")
 
 
 def set_logo(veri, uzanti):

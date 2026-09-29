@@ -15,6 +15,7 @@ from functools import wraps
 from flask import (Flask, Response, flash, redirect, render_template, request,
                    send_file, session, url_for)
 
+import logo_uret
 import webdb
 import webpdf
 
@@ -96,11 +97,13 @@ def sabitler():
     if session.get("kullanici"):
         _user = webdb.get_user(session["kullanici"])
     _logo_dosyasi = webdb.get_logo_dosyasi()
+    _uretilmis = webdb.get_uretilmis_logo_stili()
     return {
         "USER": _user,
         "FIRMA_ADI": webdb.get_firma_adi(),
+        # Logo onceligi: eski yuklemeli dosya > uretilmis stil > varsayilan PNG
         "LOGO_URL": ("/logo?v=%d" % (webdb.get_logo_mtime() or 0))
-                    if _logo_dosyasi
+                    if (_logo_dosyasi or _uretilmis)
                     else url_for("static", filename="logo_default.png"),
         "fmt_tr": webdb.fmt_tr,
         "KALIBRELER": webdb.KALIBRELER,
@@ -446,19 +449,19 @@ def gider_sil(gider_id):
 def ayarlar():
     webdb.init_db()
     if request.method == "POST":
-        for kalibre in webdb.KALIBRELER:
-            if f"fiyat_{kalibre}" in request.form:
-                webdb.update_kalibre_fiyat(kalibre,
-                                           request.form[f"fiyat_{kalibre}"])
         if "komisyon" in request.form:
             webdb.set_komisyon(request.form["komisyon"])
         if "firma_adi" in request.form:
             webdb.set_firma_adi(request.form["firma_adi"])
         flash("Ayarlar kaydedildi.", "basari")
         return redirect(url_for("ayarlar"))
-    return render_template("ayarlar.html", fiyatlar=webdb.get_kalibre_fiyatlari(),
+    firma_adi = webdb.get_firma_adi()
+    return render_template("ayarlar.html",
                            komisyon=webdb.get_komisyon(),
-                           firma_adi=webdb.get_firma_adi(),
+                           firma_adi=firma_adi,
+                           logolar=logo_uret.tum_stiller(firma_adi),
+                           onerilen=logo_uret.onerilen_stil(firma_adi),
+                           secili_stil=webdb.get_uretilmis_logo_stili(),
                            logo_yuklu=webdb.logo_var_mi())
 
 
@@ -492,14 +495,23 @@ _LOGO_MIMELER = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
 
 @app.route("/logo")
 def logo():
-    """Yuklenen logoyu servis eder; yoksa varsayilan logoya yonlenir."""
+    """Logoyu servis eder.
+
+    Oncelik: eski yuklemeli dosya > firma adindan uretilmis SVG > varsayilan PNG.
+    """
     dosya = webdb.get_logo_dosyasi()
-    if not dosya:
-        return redirect(url_for("static", filename="logo_default.png"))
-    yol = webdb.DATA_DIR / dosya
-    resp = send_file(yol, mimetype=_LOGO_MIMELER[Path(dosya).suffix.lower()])
-    resp.headers["Cache-Control"] = "public, max-age=3600"
-    return resp
+    if dosya:
+        yol = webdb.DATA_DIR / dosya
+        resp = send_file(yol, mimetype=_LOGO_MIMELER[Path(dosya).suffix.lower()])
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+    stil = webdb.get_uretilmis_logo_stili()
+    if stil:
+        svg = logo_uret.svg_ure(webdb.get_firma_adi(), stil)
+        resp = Response(svg, mimetype="image/svg+xml")
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+    return redirect(url_for("static", filename="logo_default.png"))
 
 
 @app.route("/logo-yukle", methods=["POST"])
@@ -522,7 +534,22 @@ def logo_yukle():
 @giris_gerekli
 def logo_sifirla():
     webdb.reset_logo()
+    webdb.set_uretilmis_logo_stili("")
     flash("Logo varsayılana döndürüldü.", "basari")
+    return redirect(url_for("ayarlar"))
+
+
+@app.route("/logo-sec", methods=["POST"])
+@giris_gerekli
+def logo_sec():
+    """Uretilmis logolardan birini secer (firma adina gore otomatik logo)."""
+    stil = (request.form.get("stil") or "").strip()
+    gecerli = logo_uret.secili_stil_adi()
+    if stil not in gecerli:
+        flash("Geçersiz logo seçimi.", "hata")
+        return redirect(url_for("ayarlar"))
+    webdb.set_uretilmis_logo_stili(stil)
+    flash("Logo seçildi.", "basari")
     return redirect(url_for("ayarlar"))
 
 

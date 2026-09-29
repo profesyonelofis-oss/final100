@@ -1,19 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Ayarlar - {{ FIRMA_ADI }}{% endblock %}
 {% block sayfa_basligi %}AYARLAR{% endblock %}
-{% block sayfa_alti %}Kalibre fiyatları ve komisyon{% endblock %}
+{% block sayfa_alti %}Komisyon, logo ve marka ayarları{% endblock %}
 
 {% block icerik %}
 <div class="grid-2">
+
   <div class="panel">
-    <h2>KALİBRE FİYATLARI (₺/KG)</h2>
-    <form method="post">
-      {% for k in KALIBRELER %}
-      <label for="fiyat_{{ k }}">{{ k }}</label>
-      <input type="text" id="fiyat_{{ k }}" name="fiyat_{{ k }}"
-             value="{{ fmt_tr(fiyatlar.get(k, 0)) }}" inputmode="decimal">
+    <h2>LOGO (OTOMATİK ÜRETİLEN)</h2>
+    <p style="color:var(--metin2); font-size:13px; margin-bottom:10px;">
+      Logo, firma adınızdan otomatik üretilir — dosya yüklemenize gerek yok.
+      Beş stilden birini seçin; kenar çubuğunda, giriş ekranında ve fişlerde görünür.
+      Firma adını değiştirdiğinizde logo da otomatik güncellenir.
+    </p>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:14px;">
+      {% for l in logolar %}
+      <div class="logo-karti" style="border:2px solid {{ 'var(--vurgu)' if l.stil == secili_stil else 'var(--cizgi)' }};
+                    border-radius:12px; padding:12px; text-align:center; background:#fff;">
+        <img src="data:image/svg+xml;utf8,{{ l.svg | urlencode }}" alt="{{ l.stil }} logo"
+             style="width:96px; height:96px; object-fit:contain; border-radius:10px;">
+        <div style="font-size:13px; font-weight:600; margin:8px 0 4px;">{{ l.stil }}</div>
+        {% if l.stil == onerilen %}<div style="font-size:11px; color:#B8860B; margin-bottom:4px;">★ önerilen</div>{% else %}<div style="height:19px;"></div>{% endif %}
+        <form method="post" action="/logo-sec">
+          <input type="hidden" name="stil" value="{{ l.stil }}">
+          <button type="submit" class="btn small {{ 'ghost' if l.stil == secili_stil else '' }}" style="width:100%;">
+            {{ 'SEÇİLİ ✓' if l.stil == secili_stil else 'SEÇ' }}
+          </button>
+        </form>
+      </div>
       {% endfor %}
-      <button type="submit" class="btn" style="margin-top:14px;">FİYATLARI KAYDET</button>
+    </div>
+
+    {% if logo_yuklu %}
+    <div style="margin-top:16px; display:flex; align-items:center; gap:10px;">
+      <img src="{{ LOGO_URL }}" alt="Yüklenmiş logo"
+           style="width:48px; height:48px; object-fit:contain; border:1px solid var(--cizgi); border-radius:8px;">
+      <span style="font-size:12px; color:var(--metin2);">Eskiden yüklenmiş dosya logo hâlâ geçerli.</span>
+      <form method="post" action="/logo-sifirla"
+            onsubmit="return confirm('Yüklenmiş dosya logosu silinsin ve otomatik üretilen logo devreye girsin mi?')">
+        <button type="submit" class="btn ghost small">Dosya Logosunu Sil</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
+    <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+      Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim.
+      Değiştirince monogram ve logolar otomatik yenilenir.
+    </p>
+    <form method="post">
+      <label for="firma_adi">FİRMA ADI</label>
+      <input type="text" id="firma_adi" name="firma_adi" value="{{ firma_adi }}"
+             placeholder="Örn: KARAOĞLU" maxlength="40">
+      <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
     </form>
   </div>
 
@@ -30,37 +70,12 @@
       <button type="submit" class="btn" style="margin-top:14px;">KOMİSYONU KAYDET</button>
     </form>
 
-    <h2 style="margin-top:28px;">LOGO</h2>
+    <h2 style="margin-top:28px;">KALİBRE FİYATLARI</h2>
     <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-      Kenar çubuğunda, giriş ekranında ve fişlerde görünür.
-      PNG, JPG, GIF veya WEBP &middot; en fazla 2 MB. Kare görsel önerilir.
+      Alım ve teslimat fişlerinde kullanılan güncel fiyatlar; kayıt
+      ekranlarında her seferinde öneri olarak gelir, fişte değiştirilebilir.
     </p>
-    <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
-      <img src="{{ LOGO_URL }}" alt="Mevcut logo"
-           style="width:64px; height:64px; object-fit:contain;
-                  border:1px solid var(--cizgi); border-radius:8px; background:#fff;">
-      {% if logo_yuklu %}
-      <form method="post" action="/logo-sifirla"
-            onsubmit="return confirm('Logo varsayılan sembole döndürülsün mü?')">
-        <button type="submit" class="btn ghost small">Varsayılana Döndür</button>
-      </form>
-      {% endif %}
-    </div>
-    <form method="post" action="/logo-yukle" enctype="multipart/form-data">
-      <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/*" required>
-      <button type="submit" class="btn" style="margin-top:10px;">LOGOYU YÜKLE</button>
-    </form>
-
-    <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
-    <form method="post">
-      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-        Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim:
-      </p>
-      <label for="firma_adi">FİRMA ADI</label>
-      <input type="text" id="firma_adi" name="firma_adi" value="{{ firma_adi }}"
-             placeholder="Örn: KARAOĞLU" maxlength="40">
-      <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
-    </form>
+    <a class="btn ghost" href="/alim" style="margin-top:4px;">Alım ekranında görüntüle</a>
 
     <h2 style="margin-top:28px;">YEDEK</h2>
     <p style="color:var(--metin2); font-size:13px;">
@@ -68,5 +83,6 @@
     </p>
     <a class="btn ghost" href="/yedek" style="margin-top:10px;">⬇ YEDEK İNDİR (.db)</a>
   </div>
+
 </div>
 {% endblock %}
