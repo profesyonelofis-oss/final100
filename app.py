@@ -91,6 +91,16 @@ def giris_gerekli(f):
     return sarmal
 
 
+@app.template_filter("tarih_tr")
+def tarih_tr(deger):
+    """2026-09-29 -> 29.09.2026 (fis ciktisi icin)."""
+    try:
+        y, a, g = str(deger).split("-")
+        return f"{g}.{a}.{y}"
+    except Exception:
+        return deger
+
+
 @app.context_processor
 def sabitler():
     _user = None
@@ -288,7 +298,8 @@ def alim():
                         odenen = toplam
                     fis_id = webdb.add_alim_fisi(ad, tel, tarih, odenen, detaylar)
                     flash(f"Alım fişi #{fis_id} kaydedildi.", "basari")
-                    return redirect(url_for("alim_fis_pdf", fis_id=fis_id))
+                    # yeni fis dogrudan yazdirma modunda acilir (musteriye verilecek cikti)
+                    return redirect(url_for("alim_fis_pdf", fis_id=fis_id, yazdir=1))
     fisler = webdb.get_all_alim_fisleri()
     fiyatlar = webdb.get_kalibre_fiyatlari()
     komisyon = webdb.get_komisyon()

@@ -96,7 +96,7 @@
         <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
         <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
         <td class="orta">
-          <a class="btn ghost small" href="/alim-fis/{{ f[0] }}" target="_blank">PDF</a>
+          <a class="btn ghost small" href="/alim-fis/{{ f[0] }}?yazdir=1" target="_blank">🖨 Yazdır</a>
           <form method="post" action="/alim-sil/{{ f[0] }}" style="display:inline;" onsubmit="return confirm('#{{ f[0] }} numaralı fiş silinsin mi?')">
             <button type="submit" class="btn ghost danger small">Sil</button>
           </form>

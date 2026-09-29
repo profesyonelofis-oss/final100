@@ -72,7 +72,7 @@
           <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
           <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
           <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
-          <td class="orta"><a class="btn ghost small" href="/alim-fis/{{ f[0] }}" target="_blank">PDF</a></td>
+          <td class="orta"><a class="btn ghost small" href="/alim-fis/{{ f[0] }}?yazdir=1" target="_blank">🖨 Yazdır</a></td>
         </tr>
         {% endfor %}
       </tbody>

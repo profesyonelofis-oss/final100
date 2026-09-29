@@ -118,7 +118,18 @@ def main():
         req = urllib.request.Request(BASE + "/alim", data=urllib.parse.urlencode(veri).encode(),
                                      headers={"Cookie": cookie})
         r3 = ac2.open(req, timeout=10)
-        kontrol("Alim fiisi kaydedildi (PDF'e yonlenir)", "alim-fis" in r3.url or r3.status == 200, r3.url)
+        kontrol("Alim fiisi kaydedildi (yazdirma sayfasina yonlenir)",
+                "alim-fis" in r3.url and "yazdir=1" in r3.url, r3.url)
+        # musteriye verilecek fis ciktisi kontrolu
+        fis_yolu = r3.url.split("/alim-fis/")[1].split("?")[0] if "alim-fis" in r3.url else "1"
+        req = urllib.request.Request(BASE + "/alim-fis/" + fis_yolu, headers={"Cookie": cookie})
+        rf = ac2.open(req, timeout=10)
+        fis_govde = rf.read().decode("utf-8", "replace")
+        kontrol("Fis sayfasinda yazdir butonu var", "YAZDIR / PDF KAYDET" in fis_govde)
+        kontrol("Fis musteri bilgisi (satici) iceriyor", "Test Satici" in fis_govde)
+        kontrol("Fis tarih formati gun.ay.yil", "29.09.2026" in fis_govde)
+        kontrol("Fis imza alanlari var (musteriye verilecek)",
+                "İmza (Satıcı)" in fis_govde and "İmza (Alıcı)" in fis_govde)
         req = urllib.request.Request(BASE + "/saticilar", headers={"Cookie": cookie})
         r4 = ac2.open(req, timeout=10)
         kontrol("Satici listede gorunuyor", "Test Satici" in r4.read().decode("utf-8", "replace"))
