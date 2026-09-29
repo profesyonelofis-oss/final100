@@ -18,9 +18,7 @@
         <td>{{ k[0] }}</td>
         <td><strong>{{ k[1] }}</strong></td>
         <td>
-          <span class="sifre-metin" data-kullanici="{{ k[1] }}" style="visibility:hidden; margin-right:6px;">{{ sifreler.get(k[1], '-') }}</span>
-          <button type="button" class="btn ghost small" style="padding:2px 8px;"
-                  onclick="sifreGoster(this)">Göster</button>
+          <span class="sifre-metin" style="color:var(--metin2);">••••••</span>
         </td>
         <td>
           {% if k[2] == 'admin' %}<span class="rozet yesil">YÖNETİCİ</span>
@@ -106,18 +104,6 @@
 </div>
 
 <script>
-function sifreGoster(btn) {
-  var span = btn.parentElement.querySelector('.sifre-metin');
-  if (span.style.visibility === 'hidden' || span.dataset.gizli === '1') {
-    span.style.visibility = 'visible';
-    span.dataset.gizli = '0';
-    btn.textContent = 'Gizle';
-  } else {
-    span.style.visibility = 'hidden';
-    span.dataset.gizli = '1';
-    btn.textContent = 'Göster';
-  }
-}
 function sifreFormAc(ad) {
   var f = document.getElementById('sifre-form-' + ad);
   f.style.display = (f.style.display === 'none') ? 'inline-flex' : 'none';

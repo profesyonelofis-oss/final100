@@ -144,6 +144,30 @@ def main():
         req = urllib.request.Request(BASE + "/kullanicilar", headers={"Cookie": cookie})
         govde8 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
         kontrol("Kullanicilar sayfasinda admin AKTIF", "AKTİF" in govde8 and "testadmin" in govde8)
+        kontrol("Sifre Goster butonu KALDIRILDI", "sifreGoster" not in govde8)
+
+        print("\n[7] Guvenlik: sifre hash-only + brute-force kilit")
+        import sqlite3
+        db_yolu = Path(gecici) / "zeytin_takip.db"
+        c = sqlite3.connect(db_yolu)
+        satir = c.execute("SELECT sifre_gizli FROM kullanicilar WHERE kullanici_adi='testadmin'").fetchone()
+        c.close()
+        kontrol("DB'de geri cozulebilir sifre YOK", satir is not None and satir[0] is None)
+        # 5 hatali deneme (yavas hash + kilit sayaci)
+        for _ in range(5):
+            try:
+                c_ac.open(urllib.request.Request(BASE + "/giris", data=urllib.parse.urlencode(
+                    {"kullanici_adi": "testadmin", "sifre": "yanlissifre"}).encode()), timeout=10)
+            except Exception:
+                pass
+        # 6. istek: DOGRU sifre — kilit aktifse REDDEDILMELI (302 donmez)
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        conn.request("POST", "/giris", urllib.parse.urlencode(
+            {"kullanici_adi": "testadmin", "sifre": "1234"}))
+        r8 = conn.getresponse()
+        kontrol("Kilit suresinde dogru sifre bile reddedilir (302 yok)", r8.status != 302, f"durum={r8.status}")
+        r8.read()
 
     finally:
         proc.terminate()

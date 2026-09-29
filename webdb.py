@@ -10,11 +10,14 @@ Veritabani konumu: <klasor>/data/zeytin_takip.db (web klasorunun icinde tasinar)
 
 import hashlib
 import os
-import base64
 import secrets
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
+
+# Giris denemesi takibi (brute-force engeli) — bellek ici
+_giris_denemeleri = {}
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("KARAOGLU_DATA_DIR")
@@ -30,6 +33,18 @@ GIDER_TURLERI = ["Yakıt", "Bakım", "Muhasebe", "Elektrik", "Su", "Vergi",
 
 
 DEFAULT_FIRMA_ADI = "KARAOĞLU"  # Ayarlar > Firma Adi'ndan degistirilir
+
+# Ilk kurulumda otomatik girilecek varsayilan fiyat/komisyon (TL).
+# Panel > Ayarlar sayfasindan her zaman degistirilebilir.
+VARSAYILAN_KALIBRE_FIYATLARI = {
+    "Duble": 0.0,
+    "No:1": 0.0,
+    "No:2": 0.0,
+    "No:3": 0.0,
+    "No:4": 0.0,
+    "Yağlık": 0.0,
+}
+VARSAYILAN_KOMISYON = 0.0
 
 
 def get_connection():
@@ -128,7 +143,8 @@ def _create_schema(cursor):
             komisyon_kg REAL NOT NULL DEFAULT 0.0
         )""")
     if cursor.execute("SELECT COUNT(*) FROM ayarlar").fetchone()[0] == 0:
-        cursor.execute("INSERT INTO ayarlar (id, komisyon_kg) VALUES (1, 0.0)")
+        cursor.execute("INSERT INTO ayarlar (id, komisyon_kg) VALUES (1, ?)",
+                       (VARSAYILAN_KOMISYON,))
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teslimat_notlari (
@@ -139,8 +155,8 @@ def _create_schema(cursor):
 
     if cursor.execute("SELECT COUNT(*) FROM kalibre_fiyatlari").fetchone()[0] == 0:
         cursor.executemany(
-            "INSERT INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, 0)",
-            [(k,) for k in KALIBRELER])
+            "INSERT INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, ?)",
+            [(k, VARSAYILAN_KALIBRE_FIYATLARI.get(k, 0.0)) for k in KALIBRELER])
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS genel_ayarlar (
@@ -196,86 +212,29 @@ def init_db():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Sifre saklama (GERI CUZULEBILIR): yonetici panelinde goruntulenebilmesi icin.
-# Anahtar data/ klasorunde tutulur; klasor hostinge tasinirsa anahtar da tasınır.
-# ---------------------------------------------------------------------------
-
-def _sifre_anahtari_yolu():
-    return DATA_DIR / "sifre_anahtari.key"
-
-
-def _sifre_anahtari():
-    """Anahtari oku; yoksa uretip data/ icine kaydet."""
-    yol = _sifre_anahtari_yolu()
-    if yol.exists():
-        return yol.read_text(encoding="utf-8").strip()
-    anahtar = secrets.token_urlsafe(32)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    yol.write_text(anahtar, encoding="utf-8")
-    try:
-        os.chmod(yol, 0o600)
-    except OSError:
-        pass
-    return anahtar
-
-
-def _xor_mask(sifre):
-    """Sifreyi anahtarla maskeler; sadece yonetici goruntulemek icin cozulur.
-    Gercek guvenlik saglamaz (anahtar ayni klasorde) - ama DB baskasi eline
-    gecse bile sifreler acik metin DEGIL, anahtar dosyasi olmadan okunamaz."""
-    if not sifre:
-        return ""
-    anahtar = _sifre_anahtari()
-    veri = sifre.encode("utf-8")
-    m_anahtar = anahtar.encode("utf-8")
-    kutulu = bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri))
-    return base64.urlsafe_b64encode(kutulu).decode("ascii")
-
-
-def _xor_unmask(kutulu):
-    if not kutulu:
-        return ""
-    anahtar = _sifre_anahtari()
-    try:
-        veri = base64.urlsafe_b64decode(kutulu.encode("ascii"))
-    except Exception:
-        return ""
-    m_anahtar = anahtar.encode("utf-8")
-    return bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri)).decode(
-        "utf-8", errors="replace")
-
-
-def get_user_sifre(kullanici_adi):
-    """Yonetici paneli icin saklanan sifreyi cozup dondurur; yoksa None."""
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT sifre_gizli FROM kullanicilar WHERE kullanici_adi = ?",
-        (kullanici_adi,)).fetchone()
-    conn.close()
-    if not row or not row[0]:
-        return None
-    return _xor_unmask(row[0])
-
+# Sifre saklama (GUENLI): yalnizca PBKDF2-SHA256 hash saklanir; sifreler
+# hicbir sekilde geri cozulemez/ goruntulenebilir. Admin sifreyi unutan
+# kullanici icin "Sifre Degistir" ile yeni sifre belirler.
 
 def set_user_sifre(kullanici_adi, sifre):
-    """Kullanicinin sifresini hem hash hem geri cozulebilir sakla."""
+    """Kullanicinin sifresini yalnizca hash olarak sakla."""
     conn = get_connection()
     conn.execute(
-        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = ? "
+        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = NULL "
         "WHERE kullanici_adi = ?",
-        (_hash_password(sifre), _xor_mask(sifre), kullanici_adi))
+        (_hash_password(sifre), kullanici_adi))
     conn.commit()
     conn.close()
 
 
 def create_user(kullanici_adi, sifre):
-    """Yeni kullanici: hash + geri cozulebilir saklama."""
+    """Yeni kullanici: yalnizca hash saklanir."""
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli) "
-            "VALUES (?, ?, ?)",
-            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre)))
+            "VALUES (?, ?, NULL)",
+            (kullanici_adi, _hash_password(sifre)))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -293,6 +252,25 @@ def _hash_password(sifre, salt=None):
 
 
 def check_user(kullanici_adi, sifre):
+    """Giris kontrolu; ard arda hatali denemelerde kisa kilit (brute-force engeli).
+
+    Kural: ayni kullanici icin 5 hatali denemeden sonra 30 saniya bekleme.
+    Durum bellekte tutulur (proses yeniden baslayinca sifirlanir).
+    """
+    anahtar = (kullanici_adi or "").strip().lower()
+    simdi = time.time()
+    sonHata, deneme = _giris_denemeleri.get(anahtar, (0.0, 0))
+    if deneme >= 5 and simdi - sonHata < 30:
+        return False  # kilit suresi: sessizce reddet
+    sonuc = _check_user_db(kullanici_adi, sifre)
+    if sonuc:
+        _giris_denemeleri.pop(anahtar, None)
+    else:
+        _giris_denemeleri[anahtar] = (simdi, deneme + 1)
+    return sonuc
+
+
+def _check_user_db(kullanici_adi, sifre):
     conn = get_connection()
     row = conn.execute(
         "SELECT sifre_hash FROM kullanicilar WHERE kullanici_adi = ?",
