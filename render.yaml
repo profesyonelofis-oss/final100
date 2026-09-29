@@ -1,0 +1,17 @@
+# Render.com Blueprint dosyasi
+# Render panelinde: New + -> Blueprint -> bu depoyu sec; tum ayarlar otomatik gelir.
+# Detay: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: karaoglu-zeytin-takip
+    runtime: python
+    plan: free                      # ucretli plana gecmek icin: starter
+    pythonVersion: "3.12.4"
+    buildCommand: pip install -r requirements.txt
+    startCommand: waitress-serve --host=0.0.0.0 --port=$PORT --listen=0.0.0.0:$PORT wsgi:app
+    healthCheckPath: /saglik
+    envVars:
+      - key: KARAOGLU_SECRET_KEY
+        generateValue: true         # rastgele gizli anahtar (oturumlar icin)
+      - key: PYTHON_VERSION
+        value: "3.12.4"

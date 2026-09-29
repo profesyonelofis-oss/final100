@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kayıt Ol - {{ FIRMA_ADI }}</title>
+  <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="giris-sayfa">
+    <div class="giris-kart">
+      <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
+      <h1>{{ FIRMA_ADI }}</h1>
+
+      {% with mesajlar = get_flashed_messages(with_categories=true) %}
+        {% for kategori, mesaj in mesajlar %}
+          <div class="flash {{ kategori }}">{{ mesaj }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="post">
+        <label for="kullanici_adi">KULLANICI ADI</label>
+        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
+        <label for="sifre">ŞİFRE (en az 4 karakter)</label>
+        <input type="password" id="sifre" name="sifre" required minlength="4">
+        <label for="sifre2">ŞİFRE (tekrar)</label>
+        <input type="password" id="sifre2" name="sifre2" required minlength="4">
+        <button type="submit" class="btn">KAYIT OL</button>
+      </form>
+
+      <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
+        Hesabınız var mı? <a href="/giris">Giriş yapın</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>

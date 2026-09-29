@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Teslimatlar - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}TESLİMATLAR{% endblock %}
+{% block sayfa_alti %}Firmalara teslim edilen zeytin satış fişleri{% endblock %}
+
+{% block icerik %}
+<div class="grid-2">
+  <form method="post" class="panel">
+    <h2>YENİ TESLİMAT FİŞİ</h2>
+    <label for="firma_adi">FİRMA ADI</label>
+    <input type="text" id="firma_adi" name="firma_adi" placeholder="Örn: Komşu Sızma Tesisi" required>
+
+    <label for="tarih">TARİH</label>
+    <input type="date" id="tarih" name="tarih" value="{{ bugun }}">
+
+    <h2 style="margin-top:18px;">DETAY (KG × FİYAT)</h2>
+    <div class="fis-grid">
+      <div class="baslik">SINIF</div>
+      <div class="baslik" style="text-align:center;">KG</div>
+      <div class="baslik" style="text-align:center;">FİYAT (₺/KG)</div>
+      <div class="baslik" style="text-align:right;">TOPLAM</div>
+      {% for k in KALIBRELER %}
+      <div class="sinif">{{ k }}</div>
+      <input type="text" inputmode="decimal" data-kg="{{ k }}" name="kg_{{ k }}" placeholder="0">
+      <input type="text" inputmode="decimal" data-fiyat="{{ k }}" name="fiyat_{{ k }}" placeholder="0">
+      <div class="toplam" data-toplam="{{ k }}">—</div>
+      {% endfor %}
+    </div>
+    <div class="fis-toplam">
+      <div>
+        <div class="etiket" style="color:var(--metin2); font-size:12px; font-weight:bold;">TOPLAM</div>
+        <div id="toplam-kg" style="font-weight:bold;">0,000 KG</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="etiket" style="color:var(--metin2); font-size:12px;">HESAPLANAN</div>
+        <div id="hesaplanan-tutar" style="font-weight:bold;">0,00 ₺</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="etiket" style="color:var(--metin2); font-size:12px;">ALINAN PARA</div>
+        <input type="text" name="alinan" id="alinan" placeholder="0" style="width:140px; text-align:right;">
+      </div>
+    </div>
+
+    <button type="submit" class="btn" style="margin-top:16px;">TESLİMAT FİŞİNİ KAYDET</button>
+  </form>
+
+  <div class="panel">
+    <h2>KAYITLI TESLİMAT FİŞLERİ</h2>
+    {% if fisler %}
+    <table>
+      <thead>
+        <tr><th>#</th><th>TARİH</th><th>FİRMA</th>
+            <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ALINAN</th>
+            <th class="sağ">FARK</th><th class="orta">İŞLEM</th></tr>
+      </thead>
+      <tbody>
+        {% for f in fisler %}
+        <tr>
+          <td>{{ f[0] }}</td>
+          <td>{{ f[2] }}</td>
+          <td>{{ f[1] or '—' }}</td>
+          <td class="sağ">{{ fmt_tr(f[3], False) }}</td>
+          <td class="sağ">{{ fmt_tr(f[4]) }} ₺</td>
+          <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+          <td class="sağ {{ 'kirmizi-metin' if f[6] != 0 else 'yesil-metin' }}">{{ fmt_tr(f[6]) }} ₺</td>
+          <td class="orta">
+            <form method="post" action="/teslimat-sil/{{ f[0] }}" onsubmit="return confirm('#{{ f[0] }} silinsin mi?')">
+              <button type="submit" class="btn ghost danger small">Sil</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--metin2);">Henüz teslimat kaydı yok.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

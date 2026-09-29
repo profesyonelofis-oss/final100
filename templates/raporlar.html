@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Raporlar - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}RAPORLAR{% endblock %}
+{% block sayfa_alti %}Dönem özeti ve tüm kayıtlar{% endblock %}
+
+{% block icerik %}
+<div class="cards">
+  <div class="card mavi">
+    <div class="etiket">TOPLAM ALIM</div>
+    <div class="deger">{{ fmt_tr(s.toplam_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.toplam_alim_tutar) }} ₺</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">GİDERLER</div>
+    <div class="deger">{{ fmt_tr(s.toplam_gider) }} ₺</div>
+  </div>
+  <div class="card yesil">
+    <div class="etiket">BİRİM MALİYET</div>
+    <div class="deger">{{ fmt_tr(s.birim_maliyet) }} ₺/KG</div>
+  </div>
+  <div class="card mavi">
+    <div class="etiket">TESLİM EDİLEN</div>
+    <div class="deger">{{ fmt_tr(s.teslim_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.teslim_para) }} ₺</div>
+  </div>
+  <div class="card sari">
+    <div class="etiket">DEPODA KALAN</div>
+    <div class="deger">{{ fmt_tr(s.depo_kalan_kilo, False) }} KG</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">SATICI KALAN BAKİYE</div>
+    <div class="deger">{{ fmt_tr(s.kalan_bakiye) }} ₺</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>TÜM ALIM FİŞLERİ</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>SATICI</th>
+      <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ÖDENEN</th><th class="sağ">KALAN</th></tr></thead>
+    <tbody>
+      {% for f in fisler %}
+      <tr>
+        <td>{{ f[0] }}</td><td>{{ f[3] }}</td><td>{{ f[1] }}</td>
+        <td class="sağ">{{ fmt_tr(f[4], False) }}</td>
+        <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+        <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>TÜM TESLİMAT FİŞLERİ</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>FİRMA</th>
+      <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ALINAN</th><th class="sağ">FARK</th></tr></thead>
+    <tbody>
+      {% for f in satislar %}
+      <tr>
+        <td>{{ f[0] }}</td><td>{{ f[2] }}</td><td>{{ f[1] or '—' }}</td>
+        <td class="sağ">{{ fmt_tr(f[3], False) }}</td>
+        <td class="sağ">{{ fmt_tr(f[4]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>TÜM GİDERLER</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>TÜR</th><th class="sağ">TUTAR</th><th>AÇIKLAMA</th></tr></thead>
+    <tbody>
+      {% for g in giderler %}
+      <tr>
+        <td>{{ g[0] }}</td><td>{{ g[1] }}</td><td>{{ g[2] }}</td>
+        <td class="sağ">{{ fmt_tr(g[3]) }} ₺</td>
+        <td>{{ g[4] or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

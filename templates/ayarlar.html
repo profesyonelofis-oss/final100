@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Ayarlar - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}AYARLAR{% endblock %}
+{% block sayfa_alti %}Kalibre fiyatları ve komisyon{% endblock %}
+
+{% block icerik %}
+<div class="grid-2">
+  <div class="panel">
+    <h2>KALİBRE FİYATLARI (₺/KG)</h2>
+    <form method="post">
+      {% for k in KALIBRELER %}
+      <label for="fiyat_{{ k }}">{{ k }}</label>
+      <input type="text" id="fiyat_{{ k }}" name="fiyat_{{ k }}"
+             value="{{ fmt_tr(fiyatlar.get(k, 0)) }}" inputmode="decimal">
+      {% endfor %}
+      <button type="submit" class="btn" style="margin-top:14px;">FİYATLARI KAYDET</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>KOMİSYON (₺/KG)</h2>
+    <form method="post">
+      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+        Satıcıya ödenecek tutar hesaplanırken KG başına bu kesinti yapılır:
+        <strong>Ödenecek = Tutar − (KG × Komisyon)</strong>
+      </p>
+      <label for="komisyon">KOMİSYON MİKTARI</label>
+      <input type="text" id="komisyon" name="komisyon"
+             value="{{ fmt_tr(komisyon) }}" inputmode="decimal">
+      <button type="submit" class="btn" style="margin-top:14px;">KOMİSYONU KAYDET</button>
+    </form>
+
+    <h2 style="margin-top:28px;">LOGO</h2>
+    <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+      Kenar çubuğunda, giriş ekranında ve fişlerde görünür.
+      PNG, JPG, GIF veya WEBP &middot; en fazla 2 MB. Kare görsel önerilir.
+    </p>
+    <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
+      <img src="{{ LOGO_URL }}" alt="Mevcut logo"
+           style="width:64px; height:64px; object-fit:contain;
+                  border:1px solid var(--cizgi); border-radius:8px; background:#fff;">
+      {% if logo_yuklu %}
+      <form method="post" action="/logo-sifirla"
+            onsubmit="return confirm('Logo varsayılan sembole döndürülsün mü?')">
+        <button type="submit" class="btn ghost small">Varsayılana Döndür</button>
+      </form>
+      {% endif %}
+    </div>
+    <form method="post" action="/logo-yukle" enctype="multipart/form-data">
+      <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/*" required>
+      <button type="submit" class="btn" style="margin-top:10px;">LOGOYU YÜKLE</button>
+    </form>
+
+    <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
+    <form method="post">
+      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+        Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim:
+      </p>
+      <label for="firma_adi">FİRMA ADI</label>
+      <input type="text" id="firma_adi" name="firma_adi" value="{{ firma_adi }}"
+             placeholder="Örn: KARAOĞLU" maxlength="40">
+      <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
+    </form>
+
+    <h2 style="margin-top:28px;">YEDEK</h2>
+    <p style="color:var(--metin2); font-size:13px;">
+      Veritabanınızı bilgisayarınıza indirebilirsiniz. Dosya: <code>data/zeytin_takip.db</code>
+    </p>
+    <a class="btn ghost" href="/yedek" style="margin-top:10px;">⬇ YEDEK İNDİR (.db)</a>
+  </div>
+</div>
+{% endblock %}

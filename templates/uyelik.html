@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Üyelik - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}ÜYELİK{% endblock %}
+{% block sayfa_alti %}{{ 'Üyeliğiniz aktif' if u.lisans == 'aktif' else 'Hesabınız onay bekliyor' }}{% endblock %}
+
+{% block icerik %}
+{% if u.lisans == 'aktif' %}
+
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">✅</div>
+  <h2 style="font-size:20px; margin:10px 0;">ÜYELİĞİNİZ AKTİF</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, üyeliğiniz aktif. Uygulamanın tüm bölümlerini kullanabilirsiniz.
+  </p>
+  {% if u.bitis %}
+  <div class="flash basari" style="text-align:left;">
+    Üyelik bitiş tarihiniz: <strong>{{ u.bitis }}</strong>
+  </div>
+  {% endif %}
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px;">
+    <a class="btn" href="/">Uygulamaya Git</a>
+  </div>
+</div>
+
+{% else %}
+
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">⏳</div>
+  <h2 style="font-size:20px; margin:10px 0;">ÜYELİĞİNİZ ONAY BEKLİYOR</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, hesabınız oluşturuldu ancak uygulamayı
+    kullanmaya başlamak için üyelik ücretinin onayı gerekiyor.
+  </p>
+
+  {% if u.lisans == 'reddedildi' %}
+  <div class="flash hata" style="text-align:left;">
+    Üyeliğiniz durduruldu. Lütfen bizimle iletişime geçin.
+  </div>
+  {% elif u.lisans == 'suresi_bitti' %}
+  <div class="flash hata" style="text-align:left;">
+    Üyelik süreniz doldu ({{ u.bitis }}). Uygulamayı kullanmaya devam etmek için
+    ödemenizi yenileyin; onaydan sonra hesabınız tekrar açılacaktır.
+  </div>
+  {% else %}
+  <div class="flash basari" style="text-align:left;">
+    Kaydınız alındı. Aşağıdaki hesaba ödeme yaptıktan sonra yönetici onaylayacak
+    ve tüm bölümler açılacaktır.
+  </div>
+  {% endif %}
+
+  <div style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
+              border-radius:12px; padding:18px 22px; margin:18px 0;">
+    <h2 style="margin-bottom:10px;">ÖDEME BİLGİLERİ</h2>
+    {% if ucret %}
+    <p style="font-size:18px; margin:6px 0;"><strong>Üyelik Ücreti:</strong> {{ ucret }}</p>
+    {% endif %}
+    {% if iban %}
+    <p style="font-size:15px; margin:6px 0;"><strong>IBAN:</strong> <code style="font-size:15px;">{{ iban }}</code></p>
+    {% endif %}
+    {% if havale_ad %}
+    <p style="font-size:15px; margin:6px 0;"><strong>Hesap Sahibi:</strong> {{ havale_ad }}</p>
+    {% endif %}
+    {% if not_bilgi %}
+    <p style="font-size:14px; color:var(--metin2); margin:10px 0 0;">{{ not_bilgi }}</p>
+    {% endif %}
+    {% if not ucret and not iban and not havale_ad %}
+    <p style="color:var(--metin2);">Ödeme bilgileri henüz girilmedi. Yöneticiyle iletişime geçin.</p>
+    {% endif %}
+  </div>
+
+  <p style="color:var(--metin2); font-size:13px;">
+    Ödeme yaptıktan sonra bu sayfayı yenileyebilirsiniz; onaylandığında
+    otomatik olarak uygulamaya yönlendirilirsiniz.
+  </p>
+
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px;">
+    <a class="btn" href="/uyelik">↻ Durumu Yenile</a>
+    <a class="btn ghost" href="/cikis">Çıkış</a>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

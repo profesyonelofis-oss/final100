@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Giderler - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}GİDERLER{% endblock %}
+{% block sayfa_alti %}İşletme gider kayıtları{% endblock %}
+
+{% block icerik %}
+<div class="grid-2">
+  <div class="panel">
+    <h2>YENİ GİDER</h2>
+    <form method="post">
+      <label for="tur">GİDER TÜRÜ</label>
+      <select id="tur" name="tur" required>
+        {% for t in GIDER_TURLERI %}
+        <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="tutar">TUTAR (₺)</label>
+      <input type="text" id="tutar" name="tutar" placeholder="0" required>
+
+      <label for="tarih">TARİH</label>
+      <input type="date" id="tarih" name="tarih" value="{{ bugun }}">
+
+      <label for="aciklama">AÇIKLAMA</label>
+      <input type="text" id="aciklama" name="aciklama" placeholder="İsteğe bağlı">
+
+      <button type="submit" class="btn" style="margin-top:14px;">GİDER KAYDET</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>KAYITLI GİDERLER</h2>
+    {% if giderler %}
+    <table>
+      <thead>
+        <tr><th>#</th><th>TARİH</th><th>TÜR</th><th class="sağ">TUTAR</th><th>AÇIKLAMA</th><th class="orta">İŞLEM</th></tr>
+      </thead>
+      <tbody>
+        {% for g in giderler %}
+        <tr>
+          <td>{{ g[0] }}</td>
+          <td>{{ g[1] }}</td>
+          <td>{{ g[2] }}</td>
+          <td class="sağ">{{ fmt_tr(g[3]) }} ₺</td>
+          <td>{{ g[4] or '—' }}</td>
+          <td class="orta">
+            <form method="post" action="/gider-sil/{{ g[0] }}" onsubmit="return confirm('Silinsin mi?')">
+              <button type="submit" class="btn ghost danger small">Sil</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--metin2);">Henüz gider kaydı yok.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

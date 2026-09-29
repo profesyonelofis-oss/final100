@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Zeytin Alımı - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}ZEYTİN ALIMI{% endblock %}
+{% block sayfa_alti %}Yeni alım fişi oluştur ve kayıtlı fişler{% endblock %}
+
+{% block icerik %}
+<div class="grid-2">
+  <form method="post" id="alim-form" class="panel">
+    <h2>SATICI BİLGİLERİ</h2>
+
+    <label for="uretici_ad">AD SOYAD</label>
+    <input type="text" id="uretici_ad" name="uretici_ad" placeholder="AD SOYAD" required>
+
+    <label for="uretici_tel">TELEFON</label>
+    <input type="text" id="uretici_tel" name="uretici_tel" placeholder="0 5XX XXX XX XX" required>
+
+    <label>ZEYTİN ÇEŞİDİ</label>
+    <div class="radio-row">
+      {% for c in CESITLER %}
+      <label><input type="radio" name="cesit" value="{{ c }}" required> {{ c }}</label>
+      {% endfor %}
+    </div>
+
+    <label>ÖDEME DURUMU</label>
+    <div class="radio-row">
+      <label><input type="radio" name="odeme_durumu" value="Ödendi" required onchange="odemeDegisti()"> ÖDENDİ</label>
+      <label><input type="radio" name="odeme_durumu" value="Ödenmedi" onchange="odemeDegisti()"> ÖDENMEDİ</label>
+    </div>
+
+    <label for="odenen">ÖDENEN TUTAR (₺)</label>
+    <input type="text" id="odenen" name="odenen" placeholder="0">
+
+    <label for="tarih">TARİH</label>
+    <input type="date" id="tarih" name="tarih" value="{{ bugun }}">
+
+    <input type="hidden" id="komisyon-deger" value="{{ komisyon }}">
+
+    <div style="display:flex; gap:8px; margin-top:16px;">
+      <button type="submit" class="btn" style="flex:1;">ALIM FİŞİNİ KAYDET</button>
+      <button type="reset" class="btn ghost danger">İPTAL</button>
+    </div>
+  </form>
+
+  <div class="panel">
+    <h2>FİŞ DETAYI (KG × FİYAT)</h2>
+    <div class="fis-grid">
+      <div class="baslik">SINIF</div>
+      <div class="baslik" style="text-align:center;">KG</div>
+      <div class="baslik" style="text-align:center;">FİYAT (₺/KG)</div>
+      <div class="baslik" style="text-align:right;">TOPLAM</div>
+      {% for k in KALIBRELER %}
+      <div class="sinif">{{ k }}</div>
+      <input type="text" inputmode="decimal" form="alim-form" data-kg="{{ k }}" name="kg_{{ k }}" id="kg_{{ k }}" placeholder="0">
+      <input type="text" inputmode="decimal" form="alim-form" data-fiyat="{{ k }}" name="fiyat_{{ k }}" id="fiyat_{{ k }}" placeholder="0">
+      <div class="toplam" data-toplam="{{ k }}">—</div>
+      {% endfor %}
+    </div>
+    <div class="fis-toplam">
+      <div>
+        <div class="etiket" style="color:var(--metin2); font-size:12px; font-weight:bold;">TOPLAM</div>
+        <div id="toplam-kg" style="font-weight:bold;">0,000 KG</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="etiket" style="color:var(--metin2); font-size:12px;">HESAPLANAN</div>
+        <div id="hesaplanan-tutar" style="font-weight:bold;">0,00 ₺</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="etiket" style="color:var(--metin2); font-size:12px;">KOMİSYON SONRASI ÖDENECEK</div>
+        <div id="odenecek-tutar" class="buyuk">0,00 ₺</div>
+      </div>
+    </div>
+    <p style="color:var(--metin2); font-size:12px; margin-top:10px;">
+      Komisyon: KG başına {{ fmt_tr(komisyon) }} ₺ (Ayarlar'dan değiştirilir)
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>KAYITLI ALIM FİŞLERİ</h2>
+  {% if fisler %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>TARİH</th><th>SATICI</th><th>TELEFON</th>
+          <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ÖDENEN</th>
+          <th class="sağ">KALAN</th><th class="orta">İŞLEM</th></tr>
+    </thead>
+    <tbody>
+      {% for f in fisler %}
+      <tr>
+        <td>{{ f[0] }}</td>
+        <td>{{ f[3] }}</td>
+        <td><a href="/satici/{{ f[1] }}">{{ f[1] }}</a></td>
+        <td>{{ f[2] or '—' }}</td>
+        <td class="sağ">{{ fmt_tr(f[4], False) }}</td>
+        <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+        <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
+        <td class="orta">
+          <a class="btn ghost small" href="/alim-fis/{{ f[0] }}" target="_blank">PDF</a>
+          <form method="post" action="/alim-sil/{{ f[0] }}" style="display:inline;" onsubmit="return confirm('#{{ f[0] }} numaralı fiş silinsin mi?')">
+            <button type="submit" class="btn ghost danger small">Sil</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--metin2);">Henüz kayıt yok.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function odemeDegisti() {
+  var durum = document.querySelector('input[name="odeme_durumu"]:checked');
+  var odenen = document.getElementById('odenen');
+  if (durum && durum.value === 'Ödendi') {
+    var hesap = document.getElementById('odenecek-tutar').textContent;
+    odenen.value = hesap.replace(' ₺', '').trim();
+  }
+}
+</script>
+{% endblock %}

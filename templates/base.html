@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ FIRMA_ADI }}{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="logo-area" onclick="location.href='/'">
+      <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
+      <div>
+        <div class="logo-title">{{ FIRMA_ADI }}</div>
+        <div class="logo-sub">Zeytin Takip</div>
+      </div>
+    </div>
+    <nav>
+      {% if USER and USER.lisans != 'aktif' %}
+      <a href="/uyelik" class="{{ 'active' if request.path == '/uyelik' }}">
+        <span class="ico">&#9203;</span> Üyelik
+      </a>
+      {% endif %}
+      <a href="/" class="{{ 'active' if request.path == '/' }}">
+        <span class="ico">📊</span> Hesap Tablosu
+      </a>
+      <a href="/alim" class="{{ 'active' if request.path == '/alim' }}">
+        <span class="ico">🫒</span> Zeytin Alımı
+      </a>
+      <a href="/saticilar" class="{{ 'active' if request.path == '/saticilar' }}">
+        <span class="ico">👥</span> Satıcılar
+      </a>
+      <a href="/teslimatlar" class="{{ 'active' if request.path == '/teslimatlar' }}">
+        <span class="ico">🚚</span> Teslimatlar
+      </a>
+      <a href="/giderler" class="{{ 'active' if request.path == '/giderler' }}">
+        <span class="ico">🧾</span> Giderler
+      </a>
+      <a href="/raporlar" class="{{ 'active' if request.path == '/raporlar' }}">
+        <span class="ico">📈</span> Raporlar
+      </a>
+      <a href="/ayarlar" class="{{ 'active' if request.path == '/ayarlar' }}">
+        <span class="ico">⚙️</span> Ayarlar
+      </a>
+      {% if USER and USER.rol == 'admin' %}
+      <a href="/kullanicilar" class="{{ 'active' if request.path == '/kullanicilar' }}">
+        <span class="ico">🔐</span> Kullanıcılar
+      </a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      {% if not USER or USER.lisans == 'aktif' %}<a href="/yedek" class="btn ghost small">⬇ Yedek İndir</a>{% endif %}
+      <a href="/cikis" class="btn ghost small danger">Çıkış</a>
+    </div>
+    <div class="ver">v1.0</div>
+  </aside>
+  <main class="content">
+    <header class="topbar">
+      <div>
+        <h1>{% block sayfa_basligi %}{% endblock %}</h1>
+        <div class="tarih">{% block sayfa_alti %}{% endblock %}</div>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+    {% if USER and USER.lisans != 'aktif' %}
+    <div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <span>⏳ <strong>ÖNİZLEME MODU:</strong> Üyeliğiniz onay bekliyor. Tüm bölümleri gezebilirsiniz; kayıt ekleme/düzenleme kapalıdır.</span>
+      <a class="btn small" href="/uyelik">Üyelik</a>
+    </div>
+    {% endif %}
+    {% with mesajlar = get_flashed_messages(with_categories=true) %}
+      {% for kategori, mesaj in mesajlar %}
+        <div class="flash {{ kategori }}">{{ mesaj }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block icerik %}{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% if USER and USER.lisans != 'aktif' %}
+  <script>
+  /* Onizleme modu: tum yazma formlarini pasiflestir (sunucu tarafinda da engelli) */
+  (function () {
+    /* 1) Tum form girdileri (form disinda [form] ozelligiyle baglilar dahil) salt-okunur */
+    document.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (el) {
+      el.readOnly = true;
+      el.tabIndex = -1;
+      el.style.background = '#F3F4F6';
+      el.title = 'Üyeliğiniz onay bekliyor; düzenleme kapalı.';
+    });
+    document.querySelectorAll('input[type=radio], input[type=checkbox]').forEach(function (el) {
+      el.disabled = true;
+    });
+    /* 2) Tum gonderme dugmeleri pasif */
+    document.querySelectorAll('form button, form input[type="submit"]').forEach(function (b) {
+      b.disabled = true;
+      b.title = 'Üyeliğiniz onay bekliyor';
+    });
+    /* 3) Kayit formu vurgusu */
+    document.querySelectorAll('form[method="post"], form[method="POST"], form[method=post]')
+      .forEach(function (f) {
+        f.style.opacity = '0.72';
+        f.title = 'Üyeliğiniz onay bekliyor; kayıt ekleyemezsiniz.';
+      });
+    document.querySelectorAll('a[href="/yedek"]').forEach(function (a) { a.remove(); });
+  })();
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

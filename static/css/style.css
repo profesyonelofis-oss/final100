@@ -1,0 +1,178 @@
+/* KARAOGLU Zeytin Takip - Web */
+:root {
+  --yesil: #198754;
+  --yesil-koyu: #157347;
+  --kirmizi: #DC3545;
+  --kirmizi-koyu: #C82333;
+  --bg: #F1F4F1;
+  --kart: #FFFFFF;
+  --metin: #1A1A1A;
+  --metin2: #6C757D;
+  --cizgi: #E9ECEF;
+  --input-cizgi: #DEE2E6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--metin);
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ---------- Kenar cubugu ---------- */
+.sidebar {
+  width: 230px;
+  background: #FFFFFF;
+  border-right: 1px solid var(--cizgi);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.logo-area {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--cizgi);
+  cursor: pointer;
+}
+.logo-area img { width: 42px; height: 42px; object-fit: contain; }
+.logo-title { font-weight: bold; font-size: 20px; letter-spacing: 1px; }
+.logo-sub { font-size: 12px; color: var(--metin2); }
+.sidebar nav { flex: 1; padding: 10px 8px; overflow-y: auto; }
+.sidebar nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #495057;
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.sidebar nav a:hover { background: #F1F3F5; }
+.sidebar nav a.active { background: var(--yesil); color: #fff; font-weight: bold; }
+.sidebar .ico { width: 22px; text-align: center; }
+.sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--cizgi); display: flex; gap: 8px; }
+.sidebar-footer .btn { flex: 1; text-align: center; }
+.ver { text-align: center; color: #ADB5BD; font-size: 11px; padding: 6px 0 12px; }
+
+/* ---------- Icerik ---------- */
+.content { flex: 1; padding: 22px 28px; max-width: 1400px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.topbar h1 { font-size: 24px; }
+.tarih { color: var(--metin2); font-size: 14px; margin-top: 2px; }
+.clock {
+  font-family: "Courier New", monospace;
+  font-size: 30px; font-weight: bold; color: var(--yesil);
+  background: var(--kart); border: 1px solid var(--cizgi);
+  padding: 8px 18px; border-radius: 12px;
+}
+
+/* ---------- Kartlar / ozet ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.card {
+  background: var(--kart); border: 1px solid var(--cizgi);
+  border-radius: 12px; padding: 16px 18px;
+}
+.card .etiket { color: var(--metin2); font-size: 12px; font-weight: bold; letter-spacing: .4px; }
+.card .deger { font-size: 22px; font-weight: bold; margin-top: 6px; }
+.card .alt { font-size: 12px; color: var(--metin2); margin-top: 4px; }
+.card.yesil { border-left: 5px solid var(--yesil); }
+.card.kirmizi { border-left: 5px solid var(--kirmizi); }
+.card.mavi { border-left: 5px solid #0D6EFD; }
+.card.sari { border-left: 5px solid #FFC107; }
+
+.panel {
+  background: var(--kart); border: 1px solid var(--cizgi);
+  border-radius: 12px; padding: 20px; margin-bottom: 20px;
+}
+.panel h2 { font-size: 15px; color: #495057; margin-bottom: 14px; letter-spacing: .4px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ---------- Form ---------- */
+label { display: block; font-size: 12px; color: var(--metin2); margin: 12px 0 4px; font-weight: bold; }
+input[type=text], input[type=number], input[type=date], input[type=password], input[type=time], select, textarea {
+  width: 100%; padding: 9px 12px;
+  border: 1px solid var(--input-cizgi); border-radius: 8px;
+  font-size: 14px; font-family: inherit; background: #fff;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--yesil); }
+.radio-row { display: flex; gap: 18px; align-items: center; margin: 8px 0; }
+.radio-row label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--metin); font-weight: normal; cursor: pointer; }
+
+/* ---------- Butonlar ---------- */
+.btn {
+  display: inline-block; padding: 10px 18px;
+  border: none; border-radius: 8px; cursor: pointer;
+  font-size: 14px; font-weight: bold; font-family: inherit;
+  background: var(--yesil); color: #fff; text-decoration: none;
+}
+.btn:hover { background: var(--yesil-koyu); }
+.btn.tehlikeli { background: var(--kirmizi); }
+.btn.tehlikeli:hover { background: var(--kirmizi-koyu); }
+.btn.notor { background: #E9ECEF; color: #495057; }
+.btn.notor:hover { background: #DEE2E6; }
+.btn.ghost { background: transparent; color: #495057; border: 1px solid var(--input-cizgi); }
+.btn.ghost:hover { background: #F1F3F5; }
+.btn.small { padding: 6px 12px; font-size: 12px; }
+.btn.ghost.danger { color: var(--kirmizi); border-color: #F8D7DA; }
+.btn.ghost.danger:hover { background: #F8D7DA; }
+
+/* ---------- Tablo ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--metin2); font-size: 12px; letter-spacing: .4px; padding: 8px 10px; border-bottom: 2px solid var(--cizgi); }
+td { padding: 9px 10px; border-bottom: 1px solid var(--cizgi); }
+tr:hover td { background: #F8F9FA; }
+td.sağ, th.sağ { text-align: right; }
+td.orta, th.orta { text-align: center; }
+.toplam-satir td { font-weight: bold; border-top: 2px solid var(--cizgi); }
+.kirmizi-metin { color: var(--kirmizi); font-weight: bold; }
+.yesil-metin { color: var(--yesil); font-weight: bold; }
+.rozet { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+.rozet.yesil { background: #D1E7DD; color: #0F5132; }
+.rozet.kirmizi { background: #F8D7DA; color: #842029; }
+.harf-filtre { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.harf-filtre a { padding: 5px 12px; border: 1px solid var(--input-cizgi); border-radius: 8px; text-decoration: none; color: #495057; font-size: 13px; }
+.harf-filtre a.aktif, .harf-filtre a:hover { background: var(--yesil); color: #fff; border-color: var(--yesil); }
+
+/* ---------- Fis grid (numara girdileri) ---------- */
+.fis-grid { display: grid; grid-template-columns: 110px 1fr 1fr 1.2fr; gap: 8px 14px; align-items: center; }
+.fis-grid .baslik { color: var(--metin2); font-size: 12px; font-weight: bold; }
+.fis-grid .sinif { font-weight: bold; }
+.fis-grid .x { color: #ADB5BD; text-align: center; }
+.fis-grid input { text-align: center; }
+.fis-grid .toplam { text-align: right; font-weight: bold; }
+.fis-toplam { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--cizgi); margin-top: 14px; padding-top: 14px; flex-wrap: wrap; gap: 10px; }
+.fis-toplam .buyuk { font-size: 20px; font-weight: bold; color: var(--yesil); }
+
+/* ---------- Flash ---------- */
+.flash { padding: 12px 16px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+.flash.basari { background: #D1E7DD; color: #0F5132; }
+.flash.hata { background: #F8D7DA; color: #842029; }
+.flash.uyari { background: #FFF3CD; color: #664D03; }
+
+/* ---------- Giris sayfasi ---------- */
+.giris-sayfa { display: flex; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #E8F3EC, #F1F4F1); }
+.giris-kart { background: #fff; border: 1px solid var(--cizgi); border-radius: 16px; padding: 36px; width: 380px; }
+.giris-kart img { display: block; margin: 0 auto 12px; width: 72px; }
+.giris-kart h1 { text-align: center; font-size: 22px; }
+.giris-kart .alt { text-align: center; color: var(--metin2); font-size: 13px; margin-bottom: 18px; }
+.giris-kart .btn { width: 100%; margin-top: 18px; }
+
+/* ---------- Sirens ---------- */
+.sirens { display: flex; gap: 10px; }
+.siren { width: 14px; height: 14px; border-radius: 50%; }
+
+/* ---------- Modal ---------- */
+.modal-arka { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: #fff; border-radius: 12px; padding: 24px; width: 360px; }
+
+@media (max-width: 800px) {
+  body { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .sidebar nav { display: flex; flex-wrap: wrap; }
+  .clock { display: none; }
+  .content { padding: 16px; }
+}

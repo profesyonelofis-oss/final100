@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Giriş - {{ FIRMA_ADI }}</title>
+  <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="giris-sayfa">
+    <div class="giris-kart">
+      <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
+      <h1>{{ FIRMA_ADI }}</h1>
+
+      {% with mesajlar = get_flashed_messages(with_categories=true) %}
+        {% for kategori, mesaj in mesajlar %}
+          <div class="flash {{ kategori }}">{{ mesaj }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      {% if kullanici_var %}
+      <form method="post">
+        <label for="kullanici_adi">KULLANICI ADI</label>
+        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
+        <label for="sifre">ŞİFRE</label>
+        <input type="password" id="sifre" name="sifre" required>
+        <button type="submit" class="btn">GİRİŞ YAP</button>
+      </form>
+      <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
+        Hesabınız yok mu? <a href="/kayit">Kayıt olun</a>
+      </p>
+      {% else %}
+      <div class="panel" style="padding:14px;">
+        <p style="font-size:14px; color:var(--metin2);">
+          İlk kullanım için yönetici hesabı oluşturmalısınız.
+        </p>
+        <a class="btn" href="/ilk-kurulum" style="text-align:center;">İLK KURULUM</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

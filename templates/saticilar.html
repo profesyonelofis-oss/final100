@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Satıcılar - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}SATICILAR{% endblock %}
+{% block sayfa_alti %}Satıcı bakiyeleri ve ödeme takibi{% endblock %}
+
+{% block icerik %}
+<div class="panel">
+  <div class="harf-filtre">
+    <a href="/saticilar" class="{{ 'aktif' if not harf }}">TÜMÜ</a>
+    {% for h in harfler %}
+    <a href="/saticilar?harf={{ h }}" class="{{ 'aktif' if harf == h }}">{{ h }}</a>
+    {% endfor %}
+  </div>
+
+  {% if saticilar %}
+  <table>
+    <thead>
+      <tr>
+        <th>SATICI</th><th>TELEFON</th>
+        <th class="sağ">TOPLAM KG</th><th class="sağ">TOPLAM TUTAR</th>
+        <th class="sağ">ÖDENEN</th><th class="sağ">KALAN BORÇ</th><th class="orta">İŞLEM</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in saticilar %}
+      <tr>
+        <td><a href="/satici/{{ s.ad }}"><strong>{{ s.ad }}</strong></a></td>
+        <td>{{ s.tel or '—' }}</td>
+        <td class="sağ">{{ fmt_tr(s.toplam_kg, False) }}</td>
+        <td class="sağ">{{ fmt_tr(s.toplam_tutar) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(s.odenen) }} ₺</td>
+        <td class="sağ {{ 'kirmizi-metin' if s.bakiye > 0 else 'yesil-metin' }}">{{ fmt_tr(s.bakiye) }} ₺</td>
+        <td class="orta">
+          <a class="btn ghost small" href="/satici/{{ s.ad }}">Detay</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--metin2);">Henüz satıcı kaydı yok.</p>
+  {% endif %}
+</div>
+{% endblock %}

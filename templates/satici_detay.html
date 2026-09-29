@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ ad }} - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}{{ ad|upper }}{% endblock %}
+{% block sayfa_alti %}Satıcı detay ve ödeme geçmişi{% endblock %}
+
+{% block icerik %}
+<div class="cards">
+  <div class="card mavi">
+    <div class="etiket">TOPLAM TUTAR</div>
+    <div class="deger">{{ fmt_tr(toplam_tutar) }} ₺</div>
+  </div>
+  <div class="card yesil">
+    <div class="etiket">TOPLAM ÖDENEN</div>
+    <div class="deger">{{ fmt_tr(toplam_odenen) }} ₺</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">KALAN BORÇ</div>
+    <div class="deger">{{ fmt_tr(kalan) }} ₺</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <h2>ÖDEME EKLE</h2>
+    <form method="post" action="/satici/{{ ad }}/odeme">
+      <label for="tutar">TUTAR (₺)</label>
+      <input type="text" id="tutar" name="tutar" placeholder="0" required>
+      <label for="tarih">TARİH</label>
+      <input type="date" id="tarih" name="tarih" value="{{ bugun }}">
+      <label for="aciklama">AÇIKLAMA</label>
+      <input type="text" id="aciklama" name="aciklama" placeholder="Örn: Elden ödeme">
+      <button type="submit" class="btn" style="margin-top:14px;">ÖDEME KAYDET</button>
+    </form>
+
+    {% if odemeler %}
+    <h2 style="margin-top:24px;">ÖDEME GEÇMİŞİ</h2>
+    <table>
+      <thead><tr><th>TARİH</th><th class="sağ">TUTAR</th><th>AÇIKLAMA</th></tr></thead>
+      <tbody>
+        {% for o in odemeler %}
+        <tr>
+          <td>{{ o[0] }}</td>
+          <td class="sağ">{{ fmt_tr(o[1]) }} ₺</td>
+          <td>{{ o[2] or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <form method="post" action="/satici-sil/{{ ad }}"
+          onsubmit="return confirm('{{ ad }} ve TÜM fişleri silinecek. Emin misiniz?')"
+          style="margin-top:24px;">
+      <button type="submit" class="btn tehlikeli">SATICIYI SİL</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>ALIM FİŞLERİ</h2>
+    {% if fisler %}
+    <table>
+      <thead>
+        <tr><th>#</th><th>TARİH</th><th class="sağ">KG</th><th class="sağ">TUTAR</th>
+            <th class="sağ">ÖDENEN</th><th class="sağ">KALAN</th><th class="orta">PDF</th></tr>
+      </thead>
+      <tbody>
+        {% for f in fisler %}
+        <tr>
+          <td>{{ f[0] }}</td>
+          <td>{{ f[3] }}</td>
+          <td class="sağ">{{ fmt_tr(f[4], False) }}</td>
+          <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+          <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+          <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
+          <td class="orta"><a class="btn ghost small" href="/alim-fis/{{ f[0] }}" target="_blank">PDF</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--metin2);">Bu satıcıya ait fiş yok.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

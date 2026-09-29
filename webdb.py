@@ -1,0 +1,839 @@
+# -*- coding: utf-8 -*-
+"""KARAOĞLU Zeytin Takip - WEB surumu veri katmani.
+
+Masaustu uygulamasindaki database.py ile ayni tablolari kullanir; ayrica:
+  - satis_fisi.firma_adi (masaustundeki gec kolon, web'de kullanilir)
+  - odemeler tablosu satici odeme kayitlari icin
+  - kullanicilar tablosu web girisi (sifre hash) icin
+Veritabani konumu: <klasor>/data/zeytin_takip.db (web klasorunun icinde tasinar)
+"""
+
+import hashlib
+import os
+import base64
+import secrets
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("KARAOGLU_DATA_DIR")
+                or (BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "zeytin_takip.db"
+
+SCHEMA_VERSION = 2
+KALIBRELER = ["Duble", "No:1", "No:2", "No:3", "No:4", "Yağlık"]
+CESITLER = ["Trilya", "Edremit", "Tekir", "Domat", "Uslu"]
+GIDER_TURLERI = ["Yakıt", "Bakım", "Muhasebe", "Elektrik", "Su", "Vergi",
+                 "İşçilik", "Nakliye", "Diğer"]
+
+
+DEFAULT_FIRMA_ADI = "KARAOĞLU"  # Ayarlar > Firma Adi'ndan degistirilir
+
+
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+# ---------------------------------------------------------------------------
+# Kurulum ve goc
+# ---------------------------------------------------------------------------
+
+def _create_schema(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alimlar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uretici_ad TEXT NOT NULL,
+            uretici_tel TEXT,
+            tarih TEXT NOT NULL,
+            kalibre TEXT NOT NULL,
+            brut_kilo REAL NOT NULL,
+            dara REAL NOT NULL,
+            net_kilo REAL NOT NULL,
+            fiyat_kg REAL NOT NULL,
+            toplam_tutar REAL NOT NULL,
+            zeytin_cesidi TEXT
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS giderler (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tarih TEXT NOT NULL,
+            tur TEXT NOT NULL,
+            tutar REAL NOT NULL,
+            aciklama TEXT
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS kalibre_fiyatlari (
+            kalibre TEXT PRIMARY KEY,
+            fiyat REAL NOT NULL
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS odemeler (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uretici_ad TEXT NOT NULL,
+            tarih TEXT NOT NULL,
+            tutar REAL NOT NULL,
+            aciklama TEXT
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS satis_fisi (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firma_adi TEXT DEFAULT '',
+            tarih TEXT NOT NULL,
+            toplam_kg REAL NOT NULL,
+            hesaplanan_tutar REAL NOT NULL,
+            alinan_para REAL NOT NULL,
+            fark REAL NOT NULL
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS satis_detay (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fis_id INTEGER NOT NULL,
+            kalibre TEXT NOT NULL,
+            kg REAL NOT NULL,
+            birim_fiyat REAL NOT NULL,
+            tutar REAL NOT NULL,
+            FOREIGN KEY(fis_id) REFERENCES satis_fisi(id) ON DELETE CASCADE
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alim_fisi (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uretici_ad TEXT NOT NULL,
+            uretici_tel TEXT,
+            tarih TEXT NOT NULL,
+            toplam_kg REAL NOT NULL,
+            hesaplanan_tutar REAL NOT NULL,
+            odenen_para REAL NOT NULL,
+            fark REAL NOT NULL
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alim_detay (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fis_id INTEGER NOT NULL,
+            zeytin_cesidi TEXT NOT NULL,
+            kalibre TEXT NOT NULL,
+            brut_kilo REAL NOT NULL,
+            dara REAL NOT NULL,
+            net_kilo REAL NOT NULL,
+            birim_fiyat REAL NOT NULL,
+            tutar REAL NOT NULL,
+            FOREIGN KEY(fis_id) REFERENCES alim_fisi(id) ON DELETE CASCADE
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ayarlar (
+            id INTEGER PRIMARY KEY,
+            komisyon_kg REAL NOT NULL DEFAULT 0.0
+        )""")
+    if cursor.execute("SELECT COUNT(*) FROM ayarlar").fetchone()[0] == 0:
+        cursor.execute("INSERT INTO ayarlar (id, komisyon_kg) VALUES (1, 0.0)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teslimat_notlari (
+            id INTEGER PRIMARY KEY, kg TEXT, para TEXT
+        )""")
+    if cursor.execute("SELECT COUNT(*) FROM teslimat_notlari").fetchone()[0] == 0:
+        cursor.execute("INSERT INTO teslimat_notlari (id, kg, para) VALUES (1, '', '')")
+
+    if cursor.execute("SELECT COUNT(*) FROM kalibre_fiyatlari").fetchone()[0] == 0:
+        cursor.executemany(
+            "INSERT INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, 0)",
+            [(k,) for k in KALIBRELER])
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS genel_ayarlar (
+            anahtar TEXT PRIMARY KEY,
+            deger TEXT
+        )""")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS kullanicilar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kullanici_adi TEXT UNIQUE NOT NULL,
+            sifre_hash TEXT NOT NULL,
+            sifre_gizli TEXT,
+            rol TEXT DEFAULT 'kullanici',
+            lisans_durumu TEXT DEFAULT 'beklemede',
+            lisans_bitis TEXT,
+            olusturma TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+    # eski DB'lerde kolonlar yoksa ekle
+    for kolon_sql in ("ALTER TABLE kullanicilar ADD COLUMN rol TEXT DEFAULT 'kullanici'",
+                      "ALTER TABLE kullanicilar ADD COLUMN lisans_durumu TEXT DEFAULT 'beklemede'",
+                      "ALTER TABLE kullanicilar ADD COLUMN lisans_bitis TEXT",
+                      "ALTER TABLE kullanicilar ADD COLUMN sifre_gizli TEXT"):
+        try:
+            cursor.execute(kolon_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_fisi_tarih ON alim_fisi(tarih)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_fisi_uretici ON alim_fisi(uretici_ad)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_satis_fisi_tarih ON satis_fisi(tarih)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_giderler_tarih ON giderler(tarih)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_detay_fis ON alim_detay(fis_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_satis_detay_fis ON satis_detay(fis_id)")
+
+
+def init_db():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _create_schema(cursor)
+        version = int(cursor.execute("PRAGMA user_version").fetchone()[0])
+        if version < SCHEMA_VERSION:
+            cursor.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Kullanicilar (web girisi)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Sifre saklama (GERI CUZULEBILIR): yonetici panelinde goruntulenebilmesi icin.
+# Anahtar data/ klasorunde tutulur; klasor hostinge tasinirsa anahtar da tasınır.
+# ---------------------------------------------------------------------------
+
+def _sifre_anahtari_yolu():
+    return DATA_DIR / "sifre_anahtari.key"
+
+
+def _sifre_anahtari():
+    """Anahtari oku; yoksa uretip data/ icine kaydet."""
+    yol = _sifre_anahtari_yolu()
+    if yol.exists():
+        return yol.read_text(encoding="utf-8").strip()
+    anahtar = secrets.token_urlsafe(32)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    yol.write_text(anahtar, encoding="utf-8")
+    try:
+        os.chmod(yol, 0o600)
+    except OSError:
+        pass
+    return anahtar
+
+
+def _xor_mask(sifre):
+    """Sifreyi anahtarla maskeler; sadece yonetici goruntulemek icin cozulur.
+    Gercek guvenlik saglamaz (anahtar ayni klasorde) - ama DB baskasi eline
+    gecse bile sifreler acik metin DEGIL, anahtar dosyasi olmadan okunamaz."""
+    if not sifre:
+        return ""
+    anahtar = _sifre_anahtari()
+    veri = sifre.encode("utf-8")
+    m_anahtar = anahtar.encode("utf-8")
+    kutulu = bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri))
+    return base64.urlsafe_b64encode(kutulu).decode("ascii")
+
+
+def _xor_unmask(kutulu):
+    if not kutulu:
+        return ""
+    anahtar = _sifre_anahtari()
+    try:
+        veri = base64.urlsafe_b64decode(kutulu.encode("ascii"))
+    except Exception:
+        return ""
+    m_anahtar = anahtar.encode("utf-8")
+    return bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri)).decode(
+        "utf-8", errors="replace")
+
+
+def get_user_sifre(kullanici_adi):
+    """Yonetici paneli icin saklanan sifreyi cozup dondurur; yoksa None."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT sifre_gizli FROM kullanicilar WHERE kullanici_adi = ?",
+        (kullanici_adi,)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    return _xor_unmask(row[0])
+
+
+def set_user_sifre(kullanici_adi, sifre):
+    """Kullanicinin sifresini hem hash hem geri cozulebilir sakla."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = ? "
+        "WHERE kullanici_adi = ?",
+        (_hash_password(sifre), _xor_mask(sifre), kullanici_adi))
+    conn.commit()
+    conn.close()
+
+
+def create_user(kullanici_adi, sifre):
+    """Yeni kullanici: hash + geri cozulebilir saklama."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli) "
+            "VALUES (?, ?, ?)",
+            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre)))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def _hash_password(sifre, salt=None):
+    if salt is None:
+        salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", sifre.encode("utf-8"),
+                            bytes.fromhex(salt), 120_000)
+    return salt + "$" + h.hex()
+
+
+def check_user(kullanici_adi, sifre):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT sifre_hash FROM kullanicilar WHERE kullanici_adi = ?",
+        (kullanici_adi,)).fetchone()
+    conn.close()
+    if not row:
+        return False
+    salt, _hex = row[0].split("$", 1)
+    return secrets.compare_digest(_hash_password(sifre, salt), row[0])
+
+
+def has_any_user():
+    conn = get_connection()
+    n = conn.execute("SELECT COUNT(*) FROM kullanicilar").fetchone()[0]
+    conn.close()
+    return n > 0
+
+
+def get_user(kullanici_adi):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, kullanici_adi, rol, lisans_durumu, lisans_bitis "
+        "FROM kullanicilar WHERE kullanici_adi = ?", (kullanici_adi,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"id": row[0], "ad": row[1], "rol": row[2] or "kullanici",
+            "lisans": row[3] or "beklemede", "bitis": row[4]}
+
+
+def get_all_users():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, kullanici_adi, rol, lisans_durumu, lisans_bitis, olusturma "
+        "FROM kullanicilar ORDER BY id").fetchall()
+    conn.close()
+    return rows
+
+
+def set_lisans(kullanici_adi, durum, bitis=None):
+    """durum: 'aktif' | 'beklemede' | 'reddedildi' | 'suresi_bitti'"""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE kullanicilar SET lisans_durumu = ?, lisans_bitis = ? "
+        "WHERE kullanici_adi = ?", (durum, bitis, kullanici_adi))
+    conn.commit()
+    conn.close()
+
+
+def set_rol(kullanici_adi, rol):
+    conn = get_connection()
+    conn.execute("UPDATE kullanicilar SET rol = ? WHERE kullanici_adi = ?",
+                 (rol, kullanici_adi))
+    conn.commit()
+    conn.close()
+
+
+def delete_user(kullanici_adi):
+    conn = get_connection()
+    conn.execute("DELETE FROM kullanicilar WHERE kullanici_adi = ?",
+                 (kullanici_adi,))
+    conn.commit()
+    conn.close()
+
+
+def admin_sayisi():
+    conn = get_connection()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM kullanicilar WHERE rol = 'admin'").fetchone()[0]
+    conn.close()
+    return n
+
+
+def lisans_suresi_dolmus_mu(bitis):
+    """bitis 'YYYY-MM-DD'; dolmussa True."""
+    if not bitis:
+        return False
+    try:
+        return datetime.strptime(bitis, "%Y-%m-%d").date() < datetime.now().date()
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Yardimcilar
+# ---------------------------------------------------------------------------
+
+def _tr_to_float(s, default=0.0):
+    try:
+        return float(str(s).replace(",", ".").strip() or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def fmt_tr(x, para=True):
+    """1234567.8 -> '1.234.567,80' (para) veya '1.234,568' (kg)."""
+    if x is None:
+        x = 0.0
+    s = f"{x:,.2f}" if para else f"{x:,.3f}"
+    return s.replace(",", "@").replace(".", ",").replace("@", ".")
+
+
+# ---------------------------------------------------------------------------
+# Ayarlar
+# ---------------------------------------------------------------------------
+
+def get_komisyon():
+    conn = get_connection()
+    row = conn.execute("SELECT komisyon_kg FROM ayarlar WHERE id = 1").fetchone()
+    conn.close()
+    return row[0] if row else 0.0
+
+
+def set_komisyon(miktar):
+    conn = get_connection()
+    conn.execute("UPDATE ayarlar SET komisyon_kg = ? WHERE id = 1",
+                 (_tr_to_float(miktar),))
+    conn.commit()
+    conn.close()
+
+
+def get_ayar(anahtar, varsayilan=""):
+    conn = get_connection()
+    row = conn.execute("SELECT deger FROM genel_ayarlar WHERE anahtar = ?",
+                       (anahtar,)).fetchone()
+    conn.close()
+    return row[0] if row and row[0] is not None else varsayilan
+
+
+def set_ayar(anahtar, deger):
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO genel_ayarlar (anahtar, deger) VALUES (?, ?)",
+                 (anahtar, str(deger if deger is not None else "")))
+    conn.commit()
+    conn.close()
+
+
+def get_firma_adi():
+    """Marka/firma adini dondurur (varsayilan: KARAOĞLU).
+
+    Eski surumlerde kaydedilmis 'KAYA AŞ' degeri otomatik olarak
+    KARAOĞLU'na tasinir (marka tamamen degistigi icin).
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT deger FROM genel_ayarlar WHERE anahtar = 'firma_adi'"
+    ).fetchone()
+    if row and row[0]:
+        deger = row[0]
+        conn.close()
+        if deger.strip() in ("KAYA AŞ", "KAYA AŞ".upper()):
+            deger = DEFAULT_FIRMA_ADI
+            set_firma_adi(deger)
+        return deger
+    conn.close()
+    return DEFAULT_FIRMA_ADI
+
+
+# ---------------------------------------------------------------------------
+# Logo
+# ---------------------------------------------------------------------------
+
+LOGO_FILE_NAME = "logo"  # uzanti set_logo ile eklenir (logo.png, logo.jpg ...)
+LOGO_STAMP_FILE = "logo_surum.txt"
+LOGO_MAX_BOYUT = 2 * 1024 * 1024  # 2 MB
+LOGO_IZINLI_UZANTILAR = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def get_logo_mtime():
+    """Logo dosyasinin surum zamanini dondurur (yoksa None).
+
+    Sablonlarda cache-kiran ?v= parametresi olarak kullanilir.
+    """
+    try:
+        return int((DATA_DIR / LOGO_STAMP_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def set_logo(veri, uzanti):
+    """Yuklenen logo icerigini kaydeder; surum zamanini gunceller."""
+    uzanti = uzanti.lower()
+    if uzanti not in LOGO_IZINLI_UZANTILAR:
+        raise ValueError("Desteklenmeyen dosya türü")
+    if not veri:
+        raise ValueError("Boş dosya")
+    if len(veri) > LOGO_MAX_BOYUT:
+        raise ValueError("Dosya çok büyük (en fazla 2 MB)")
+    hedef = DATA_DIR / (LOGO_FILE_NAME + uzanti)
+    hedef.write_bytes(veri)
+    # eski farkli uzantili logolari temizle
+    for eski in DATA_DIR.glob(LOGO_FILE_NAME + ".*"):
+        if eski != hedef:
+            try:
+                eski.unlink()
+            except OSError:
+                pass
+    (DATA_DIR / LOGO_STAMP_FILE).write_text(
+        str(int(datetime.now().timestamp())), encoding="utf-8")
+    return hedef
+
+
+def logo_var_mi():
+    return bool(get_logo_dosyasi())
+
+
+def get_logo_dosyasi():
+    """Kayitli logo dosya adini dondurur (yoksa None)."""
+    for uzanti in LOGO_IZINLI_UZANTILAR:
+        f = DATA_DIR / (LOGO_FILE_NAME + uzanti)
+        if f.is_file():
+            return LOGO_FILE_NAME + uzanti
+    return None
+
+
+def reset_logo():
+    """Logoyu varsayilan sembole dondurur."""
+    for eski in DATA_DIR.glob(LOGO_FILE_NAME + ".*"):
+        try:
+            eski.unlink()
+        except OSError:
+            pass
+    try:
+        (DATA_DIR / LOGO_STAMP_FILE).unlink()
+    except OSError:
+        pass
+
+
+def set_firma_adi(ad):
+    ad = (ad or "").strip()
+    if not ad:
+        ad = DEFAULT_FIRMA_ADI
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO genel_ayarlar (anahtar, deger) "
+        "VALUES ('firma_adi', ?)", (ad,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Kalibre fiyat ve isimleri
+# ---------------------------------------------------------------------------
+
+def get_kalibre_fiyatlari():
+    conn = get_connection()
+    rows = conn.execute("SELECT kalibre, fiyat FROM kalibre_fiyatlari").fetchall()
+    conn.close()
+    d = dict(rows)
+    for k in KALIBRELER:
+        d.setdefault(k, 0.0)
+    return d
+
+
+def update_kalibre_fiyat(kalibre, fiyat):
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, ?)",
+                 (kalibre, _tr_to_float(fiyat)))
+    conn.commit()
+    conn.close()
+
+
+def delete_kalibre(kalibre):
+    conn = get_connection()
+    conn.execute("DELETE FROM kalibre_fiyatlari WHERE kalibre = ?", (kalibre,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Alim fisleri
+# ---------------------------------------------------------------------------
+
+def add_alim_fisi(uretici_ad, uretici_tel, tarih, odenen_para, detaylar):
+    """detaylar: [{kalibre, zeytin_cesidi, brut, dara, net, fiyat}]"""
+    toplam_kg = sum(d["net"] for d in detaylar)
+    toplam_tutar = sum(d["net"] * d["fiyat"] for d in detaylar)
+    komisyon = get_komisyon()
+    hesaplanan = toplam_tutar - toplam_kg * komisyon
+    fark = hesaplanan - odenen_para
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO alim_fisi (uretici_ad, uretici_tel, tarih, toplam_kg,
+                               hesaplanan_tutar, odenen_para, fark)
+        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (uretici_ad, uretici_tel, tarih, toplam_kg, hesaplanan, odenen_para, fark))
+    fis_id = cursor.lastrowid
+    for d in detaylar:
+        cursor.execute("""
+            INSERT INTO alim_detay (fis_id, zeytin_cesidi, kalibre, brut_kilo,
+                                    dara, net_kilo, birim_fiyat, tutar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fis_id, d["zeytin_cesidi"], d["kalibre"], d["brut"], d["dara"],
+             d["net"], d["fiyat"], d["net"] * d["fiyat"]))
+    conn.commit()
+    conn.close()
+    return fis_id
+
+
+def update_alim_fisi(fis_id, uretici_ad, uretici_tel, tarih, odenen_para, detaylar):
+    toplam_kg = sum(d["net"] for d in detaylar)
+    toplam_tutar = sum(d["net"] * d["fiyat"] for d in detaylar)
+    komisyon = get_komisyon()
+    hesaplanan = toplam_tutar - toplam_kg * komisyon
+    fark = hesaplanan - odenen_para
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE alim_fisi SET uretici_ad = ?, uretici_tel = ?, tarih = ?,
+                             toplam_kg = ?, hesaplanan_tutar = ?,
+                             odenen_para = ?, fark = ?
+        WHERE id = ?""",
+        (uretici_ad, uretici_tel, tarih, toplam_kg, hesaplanan, odenen_para,
+         fark, fis_id))
+    cursor.execute("DELETE FROM alim_detay WHERE fis_id = ?", (fis_id,))
+    for d in detaylar:
+        cursor.execute("""
+            INSERT INTO alim_detay (fis_id, zeytin_cesidi, kalibre, brut_kilo,
+                                    dara, net_kilo, birim_fiyat, tutar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fis_id, d["zeytin_cesidi"], d["kalibre"], d["brut"], d["dara"],
+             d["net"], d["fiyat"], d["net"] * d["fiyat"]))
+    conn.commit()
+    conn.close()
+
+
+def get_all_alim_fisleri():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM alim_fisi ORDER BY tarih DESC, id DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def get_alim_fisleri_by_uretici(ad):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM alim_fisi WHERE uretici_ad = ? ORDER BY tarih DESC, id DESC",
+        (ad,)).fetchall()
+    conn.close()
+    return rows
+
+
+def get_alim_detay(fis_id):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM alim_detay WHERE fis_id = ?", (fis_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def delete_alim_fisi(fis_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM alim_detay WHERE fis_id = ?", (fis_id,))
+    conn.execute("DELETE FROM alim_fisi WHERE id = ?", (fis_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_satici(ad):
+    conn = get_connection()
+    rows = conn.execute("SELECT id FROM alim_fisi WHERE uretici_ad = ?", (ad,)).fetchall()
+    for (fis_id,) in rows:
+        conn.execute("DELETE FROM alim_detay WHERE fis_id = ?", (fis_id,))
+        conn.execute("DELETE FROM alim_fisi WHERE id = ?", (fis_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Satici bakiyeleri
+# ---------------------------------------------------------------------------
+
+def get_satici_bakiyeleri(tarih=None):
+    conn = get_connection()
+    if tarih:
+        rows = conn.execute("""
+            SELECT uretici_ad, uretici_tel, SUM(toplam_kg), SUM(hesaplanan_tutar),
+                   SUM(odenen_para), SUM(fark)
+            FROM alim_fisi WHERE tarih = ? GROUP BY uretici_ad""", (tarih,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT uretici_ad, uretici_tel, SUM(toplam_kg), SUM(hesaplanan_tutar),
+                   SUM(odenen_para), SUM(fark)
+            FROM alim_fisi GROUP BY uretici_ad""").fetchall()
+    conn.close()
+    return [
+        {"ad": r[0], "tel": r[1] or "", "toplam_kg": r[2] or 0.0,
+         "toplam_tutar": r[3] or 0.0, "odenen": r[4] or 0.0, "bakiye": r[5] or 0.0}
+        for r in sorted(rows, key=lambda r: r[0].lower())
+    ]
+
+
+def add_odeme(uretici_ad, tarih, tutar, aciklama=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO odemeler (uretici_ad, tarih, tutar, aciklama) VALUES (?, ?, ?, ?)",
+        (uretici_ad, tarih, _tr_to_float(tutar), aciklama))
+    conn.commit()
+    conn.close()
+
+
+def get_odemeler_by_uretici(ad):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT tarih, tutar, aciklama FROM odemeler WHERE uretici_ad = ? ORDER BY tarih DESC, id DESC",
+        (ad,)).fetchall()
+    conn.close()
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Giderler
+# ---------------------------------------------------------------------------
+
+def add_gider(tarih, tur, tutar, aciklama):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO giderler (tarih, tur, tutar, aciklama) VALUES (?, ?, ?, ?)",
+        (tarih, tur, _tr_to_float(tutar), aciklama))
+    conn.commit()
+    conn.close()
+
+
+def get_all_giderler():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM giderler ORDER BY tarih DESC, id DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def delete_gider(gider_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM giderler WHERE id = ?", (gider_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Satis (teslimat) fisleri
+# ---------------------------------------------------------------------------
+
+def add_satis_fisi(firma_adi, tarih, alinan_para, detaylar):
+    toplam_kg = sum(d["kg"] for d in detaylar)
+    hesaplanan = sum(d["kg"] * d["fiyat"] for d in detaylar)
+    fark = hesaplanan - alinan_para
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO satis_fisi (firma_adi, tarih, toplam_kg, hesaplanan_tutar,
+                                alinan_para, fark)
+        VALUES (?, ?, ?, ?, ?, ?)""",
+        (firma_adi, tarih, toplam_kg, hesaplanan, alinan_para, fark))
+    fis_id = cursor.lastrowid
+    for d in detaylar:
+        cursor.execute("""
+            INSERT INTO satis_detay (fis_id, kalibre, kg, birim_fiyat, tutar)
+            VALUES (?, ?, ?, ?, ?)""",
+            (fis_id, d["kalibre"], d["kg"], d["fiyat"], d["kg"] * d["fiyat"]))
+    conn.commit()
+    conn.close()
+    return fis_id
+
+
+def get_all_satis_fisleri():
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT id, firma_adi, tarih, toplam_kg, hesaplanan_tutar, alinan_para, fark
+        FROM satis_fisi ORDER BY tarih DESC, id DESC""").fetchall()
+    conn.close()
+    return rows
+
+
+def get_satis_detay(fis_id):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT kalibre, kg, birim_fiyat, tutar FROM satis_detay WHERE fis_id = ?",
+        (fis_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def delete_satis_fisi(fis_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM satis_detay WHERE fis_id = ?", (fis_id,))
+    conn.execute("DELETE FROM satis_fisi WHERE id = ?", (fis_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Teslimat notlari
+# ---------------------------------------------------------------------------
+
+def get_teslimat_notlari():
+    conn = get_connection()
+    row = conn.execute("SELECT kg, para FROM teslimat_notlari WHERE id = 1").fetchone()
+    conn.close()
+    return {"kg": row[0] if row else "", "para": row[1] if row else ""}
+
+
+def update_teslimat_notlari(kg, para):
+    conn = get_connection()
+    conn.execute("UPDATE teslimat_notlari SET kg = ?, para = ? WHERE id = 1",
+                 (str(kg or ""), str(para or "")))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Ozet istatistikler
+# ---------------------------------------------------------------------------
+
+def get_summary_stats():
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT SUM(toplam_kg), SUM(hesaplanan_tutar), SUM(odenen_para) FROM alim_fisi"
+    ).fetchone()
+    sum_kilo = row[0] or 0.0
+    sum_tutar = row[1] or 0.0
+    sum_odenen = row[2] or 0.0
+
+    row_g = conn.execute("SELECT SUM(tutar) FROM giderler").fetchone()
+    sum_gider = row_g[0] or 0.0
+
+    row_s = conn.execute(
+        "SELECT SUM(toplam_kg), SUM(alinan_para) FROM satis_fisi").fetchone()
+    teslim_kilo = row_s[0] or 0.0
+    teslim_para = row_s[1] or 0.0
+    conn.close()
+
+    return {
+        "toplam_kilo": sum_kilo,
+        "toplam_alim_tutar": sum_tutar,
+        "toplam_odenen": sum_odenen,
+        "kalan_bakiye": sum_tutar - sum_odenen,
+        "toplam_gider": sum_gider,
+        "toplam_maliyet": sum_tutar + sum_gider,
+        "birim_maliyet": (sum_tutar + sum_gider) / sum_kilo if sum_kilo > 0 else 0.0,
+        "teslim_kilo": teslim_kilo,
+        "teslim_para": teslim_para,
+        "depo_kalan_kilo": sum_kilo - teslim_kilo,
+    }

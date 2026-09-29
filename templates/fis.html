@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <title>Alım Fişi #{{ fis[0] }} - {{ FIRMA_ADI }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; background: #f1f4f1; }
+    .sayfa {
+      width: 210mm; min-height: 297mm; margin: 10mm auto; padding: 15mm 18mm;
+      background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.15);
+    }
+    .baslik-satir { display: flex; justify-content: space-between; align-items: flex-start; }
+    .marka { font-size: 22px; font-weight: bold; letter-spacing: 2px; }
+    .marka-kucuk { font-size: 11px; color: #6c757d; text-align: right; }
+    h1 { font-size: 18px; margin: 8mm 0 2mm; letter-spacing: 1px; }
+    .cizgi { border-bottom: 2px solid #1a1a1a; margin-bottom: 6mm; }
+    .bilgiler { display: flex; justify-content: space-between; gap: 6mm; margin-bottom: 8mm; font-size: 13px; }
+    .bilgiler b { font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { border-bottom: 1.5px solid #1a1a1a; text-align: left; padding: 3mm 2mm; font-size: 11px; letter-spacing: .5px; color: #495057; }
+    td { padding: 3mm 2mm; border-bottom: .5px solid #dee2e6; }
+    th.sağ, td.sağ { text-align: right; }
+    tfoot td { border-top: 1.5px solid #1a1a1a; font-weight: bold; border-bottom: none; }
+    .ozet { margin-top: 8mm; display: flex; justify-content: flex-end; }
+    .ozet table { width: 80mm; font-size: 13px; }
+    .ozet td { padding: 2mm; border-bottom: none; }
+    .ozet tr.kalan td { border-top: 1.5px solid #1a1a1a; font-weight: bold; font-size: 15px; }
+    .kirmizi { color: #dc3545; }
+    .yesil { color: #198754; }
+    .imzalar { margin-top: 22mm; display: flex; justify-content: space-between; font-size: 12px; color: #495057; }
+    .imzalar div { width: 70mm; border-top: 1px solid #adb5bd; padding-top: 2mm; text-align: center; }
+    .yazdir-alani { max-width: 210mm; margin: 0 auto 6mm; display: flex; gap: 8px; }
+    .yazdir-alani .btn { padding: 10px 22px; background: #198754; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; text-decoration: none; }
+    .yazdir-alani .btn.geri { background: transparent; color: #495057; border: 1px solid #dee2e6; }
+    @media print {
+      body { background: #fff; }
+      .sayfa { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+      .yazdir-alani { display: none; }
+    }
+    @page { size: A4; margin: 12mm; }
+  </style>
+</head>
+<body>
+  <div class="yazdir-alani">
+    <button class="btn" onclick="window.print()">🖨 YAZDIR / PDF KAYDET</button>
+    <a class="btn geri" href="/alim">← Geri Dön</a>
+  </div>
+
+  <div class="sayfa">
+    <div class="baslik-satir">
+      <img src="{{ LOGO_URL }}" alt="" style="height:14mm; width:auto; object-fit:contain;">
+      <div class="marka">{{ FIRMA_ADI }}</div>
+      <div class="marka-kucuk">{{ simdi.strftime('%d.%m.%Y %H:%M') }}</div>
+    </div>
+    <h1>ALIM FİŞİ #{{ fis[0] }}</h1>
+    <div class="cizgi"></div>
+
+    <div class="bilgiler">
+      <div><b>SATICI:</b> {{ fis[1] }}</div>
+      <div><b>TELEFON:</b> {{ fis[2] or '—' }}</div>
+      <div><b>TARİH:</b> {{ fis[3] }}</div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ZEYTİN ÇEŞİDİ</th><th>KALİBRE</th>
+          <th class="sağ">KG</th><th class="sağ">FİYAT (₺/KG)</th><th class="sağ">TUTAR (₺)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in detay %}
+        <tr>
+          <td>{{ d[2] }}</td><td>{{ d[3] }}</td>
+          <td class="sağ">{{ fmt_tr(d[6], False) }}</td>
+          <td class="sağ">{{ fmt_tr(d[7]) }}</td>
+          <td class="sağ">{{ fmt_tr(d[8]) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">TOPLAM: {{ detay|length }} kalem</td>
+          <td class="sağ">{{ fmt_tr(fis[4], False) }}</td>
+          <td></td>
+          <td class="sağ">{{ fmt_tr(fis[5]) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="ozet">
+      <table>
+        <tr><td>Hesaplanan Tutar</td><td class="sağ">{{ fmt_tr(fis[5]) }} ₺</td></tr>
+        <tr><td>Ödenen</td><td class="sağ">{{ fmt_tr(fis[6]) }} ₺</td></tr>
+        <tr class="kalan"><td class="{{ 'kirmizi' if fis[7] > 0 else 'yesil' }}">KALAN BORÇ</td>
+            <td class="sağ {{ 'kirmizi' if fis[7] > 0 else 'yesil' }}">{{ fmt_tr(fis[7]) }} ₺</td></tr>
+      </table>
+    </div>
+
+    <div class="imzalar">
+      <div>İmza (Satıcı)</div>
+      <div>İmza (Alıcı)</div>
+    </div>
+  </div>
+</body>
+</html>
