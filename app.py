@@ -449,15 +449,14 @@ def gider_sil(gider_id):
 def ayarlar():
     webdb.init_db()
     if request.method == "POST":
-        if "komisyon" in request.form:
-            webdb.set_komisyon(request.form["komisyon"])
         if "firma_adi" in request.form:
             webdb.set_firma_adi(request.form["firma_adi"])
-        flash("Ayarlar kaydedildi.", "basari")
+            # Firma adi degistince logolar yeni ada gore YENIDEN uretilir;
+            # secili stil korunur (kullanici farkli stil secerse degisir).
+            flash("Firma adı kaydedildi; logo yeni ada göre güncellendi.", "basari")
         return redirect(url_for("ayarlar"))
     firma_adi = webdb.get_firma_adi()
     return render_template("ayarlar.html",
-                           komisyon=webdb.get_komisyon(),
                            firma_adi=firma_adi,
                            logolar=logo_uret.tum_stiller(firma_adi),
                            onerilen=logo_uret.onerilen_stil(firma_adi),

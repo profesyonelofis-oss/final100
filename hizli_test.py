@@ -169,12 +169,13 @@ def main():
         kontrol("Kilit suresinde dogru sifre bile reddedilir (302 yok)", r8.status != 302, f"durum={r8.status}")
         r8.read()
 
-        print("\n[8] Ayarlar: logo uretim + secim, fiyat formu KALDIRILDI")
+        print("\n[8] Ayarlar: logo uretim + secim, fiyat/komisyon formu KALDIRILDI")
         req = urllib.request.Request(BASE + "/ayarlar", headers={"Cookie": cookie})
         govde9 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
         kontrol("Ayarlar sayfasinda 5 logo varyanti var",
                 govde9.count("/logo-sec") >= 5 and govde9.count("SEÇ") >= 5)
         kontrol("Kalibre fiyat formu KALDIRILDI", "fiyat_No:1" not in govde9)
+        kontrol("Komisyon formu KALDIRILDI", "KOMİSYON MİKTARI" not in govde9)
         kontrol("Onerilen logo isaretli", "★ önerilen" in govde9)
         # logo sec
         req = urllib.request.Request(BASE + "/logo-sec", data=urllib.parse.urlencode(
@@ -188,9 +189,22 @@ def main():
         kontrol("/logo SVG uretti (Altin stil)",
                 r10.headers.get("Content-Type", "").startswith("image/svg") and "svg" in govde10,
                 r10.headers.get("Content-Type", ""))
-        # firma adi degisince monogram da degismeli (KARAOGLU -> diger harfler)
-        req = urllib.request.Request(BASE + "/logo-sec", data=urllib.parse.urlencode(
-            {"stil": "Klasik"}).encode(), headers={"Cookie": cookie})
+
+        print("\n[9] Firma adi degisince logo YENIDEN uretilir (stil korunur)")
+        # yeni firma adi kaydet
+        req = urllib.request.Request(BASE + "/ayarlar", data=urllib.parse.urlencode(
+            {"firma_adi": "Zeytin AŞ"}).encode(), headers={"Cookie": cookie})
+        r11 = ac2.open(req, timeout=10)
+        kontrol("Firma adi kaydedildi", r11.status == 200)
+        # secili stil (Altin) korunmali ve monogram ZA olmali
+        req = urllib.request.Request(BASE + "/logo", headers={"Cookie": cookie})
+        r12 = ac2.open(req, timeout=10)
+        svg12 = r12.read().decode("utf-8", "replace")
+        kontrol("Logo yeni ada gore uretildi (ZA monogram)", ">ZA<" in svg12, svg12[100:200])
+        kontrol("Secili stil korundu (Altin renkleri)", "#B8860B" in svg12)
+        # eski ada don
+        req = urllib.request.Request(BASE + "/ayarlar", data=urllib.parse.urlencode(
+            {"firma_adi": "KARAOĞLU"}).encode(), headers={"Cookie": cookie})
         ac2.open(req, timeout=10)
 
     finally:

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Ayarlar - {{ FIRMA_ADI }}{% endblock %}
 {% block sayfa_basligi %}AYARLAR{% endblock %}
-{% block sayfa_alti %}Komisyon, logo ve marka ayarları{% endblock %}
+{% block sayfa_alti %}Logo ve marka ayarları{% endblock %}
 
 {% block icerik %}
 <div class="grid-2">
@@ -47,7 +47,8 @@
     <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
     <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
       Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim.
-      Değiştirince monogram ve logolar otomatik yenilenir.
+      Kaydettiğinizde <strong>logolar yeni ada göre şık biçimde yeniden üretilir</strong>
+      (seçili stil korunur).
     </p>
     <form method="post">
       <label for="firma_adi">FİRMA ADI</label>
@@ -58,19 +59,7 @@
   </div>
 
   <div class="panel">
-    <h2>KOMİSYON (₺/KG)</h2>
-    <form method="post">
-      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-        Satıcıya ödenecek tutar hesaplanırken KG başına bu kesinti yapılır:
-        <strong>Ödenecek = Tutar − (KG × Komisyon)</strong>
-      </p>
-      <label for="komisyon">KOMİSYON MİKTARI</label>
-      <input type="text" id="komisyon" name="komisyon"
-             value="{{ fmt_tr(komisyon) }}" inputmode="decimal">
-      <button type="submit" class="btn" style="margin-top:14px;">KOMİSYONU KAYDET</button>
-    </form>
-
-    <h2 style="margin-top:28px;">KALİBRE FİYATLARI</h2>
+    <h2>KALİBRE FİYATLARI</h2>
     <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
       Alım ve teslimat fişlerinde kullanılan güncel fiyatlar; kayıt
       ekranlarında her seferinde öneri olarak gelir, fişte değiştirilebilir.
