@@ -76,11 +76,24 @@
         </td>
         <td class="orta">
           {% if k[3] != 'aktif' %}
-          <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline-flex; gap:4px; align-items:center;">
-            <input type="number" name="ay" value="12" min="1" max="36"
-                   style="width:60px; padding:5px 6px;" title="Kaç ay açılsın?">
-            <button type="submit" class="btn small">Onayla</button>
-          </form>
+          <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
+              <input type="hidden" name="ay" value="1">
+              <button type="submit" class="btn small" title="1 ay aç">1 Ay</button>
+            </form>
+            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
+              <input type="hidden" name="ay" value="3">
+              <button type="submit" class="btn small" title="3 ay aç">3 Ay</button>
+            </form>
+            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
+              <input type="hidden" name="ay" value="6">
+              <button type="submit" class="btn small" title="6 ay aç">6 Ay</button>
+            </form>
+            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
+              <input type="hidden" name="ay" value="12">
+              <button type="submit" class="btn small" title="12 ay aç">12 Ay</button>
+            </form>
+          </div>
           {% else %}
           <form method="post" action="/kullanici/{{ k[1] }}/durdur" style="display:inline;"
                 onsubmit="return confirm('{{ k[1] }} üyeliği durdurulsun mu?')">
@@ -136,10 +149,11 @@
         <input type="text" id="havale_ad" name="havale_ad" value="{{ havale_ad }}"
                placeholder="KARAOĞLU ZEYTİNCİLİK A.Ş.">
       </div>
-      <div>
+      <div style="grid-column: 1 / -1;">
         <label for="not_bilgi">EK NOT</label>
-        <input type="text" id="not_bilgi" name="not_bilgi" value="{{ not_bilgi }}"
-               placeholder="Örn: Açıklamaya kullanıcı adınızı yazın">
+        <textarea id="not_bilgi" name="not_bilgi" rows="3"
+               placeholder="Örn: Açıklamaya kullanıcı adınızı yazın"
+               style="width:100%; resize:vertical; font-size:13px; line-height:1.5;">{{ not_bilgi }}</textarea>
       </div>
     </div>
     <button type="submit" class="btn" style="margin-top:14px;">BİLGİLERİ KAYDET</button>

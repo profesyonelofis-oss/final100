@@ -72,7 +72,7 @@
         {% if odeme_ucret %}<div style="font-size:11.5px;">Üyelik ücreti: <strong>{{ odeme_ucret }}</strong></div>{% endif %}
         {% if odeme_iban %}<div style="font-size:11px; opacity:.92; word-break:break-all;">IBAN: {{ odeme_iban }}</div>{% endif %}
         {% if odeme_havale_ad %}<div style="font-size:11px; opacity:.92;">Hesap sahibi: {{ odeme_havale_ad }}</div>{% endif %}
-        {% if odeme_not %}<div style="font-size:10.5px; opacity:.85; margin-top:3px; font-style:italic;">{{ odeme_not }}</div>{% endif %}
+        {% if odeme_not %}<div style="font-size:10.5px; opacity:.85; margin-top:3px; font-style:italic; white-space:normal; word-break:break-word; overflow-wrap:anywhere; line-height:1.5;">{{ odeme_not }}</div>{% endif %}
       </a>
     </div>
     {% endif %}
@@ -87,8 +87,8 @@
     </header>
     {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
     <!-- DENEME MODU BANNERI: aktif + geri sayim -->
-    <div id="deneme-banner" class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span id="deneme-mesaj">🧪 <strong>DENEME SÜRÜMÜ:</strong> 3 günlük denemeniz aktif — tüm sistemi kullanabilirsiniz.</span>
+    <div id="deneme-banner" class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span id="deneme-mesaj">⚠️ <strong>DİKKAT — DENEME SÜRÜMÜ:</strong> 3 günlük denemeniz aktif. Kalan süre aşağıda geriye doğru sayılıyor.</span>
       <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
     </div>
     {% elif USER and USER.lisans == 'deneme_bitti' %}
@@ -151,8 +151,8 @@
       if (!kalan) {
         mesajEl.innerHTML = '⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için hemen satın alın.';
       } else {
-        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> Deneme sürenizin bitimine ' +
-          kalan + ' kaldı — tüm sistemi kullanabilirsiniz.';
+        mesajEl.innerHTML = '⚠️ <strong>DİKKAT — DENEME SÜRÜMÜ:</strong> Deneme sürenizin bitimine ' +
+          kalan + ' kaldı! Süre bitmeden satın alın — verileriniz aynen korunur.';
       }
     }
     bannerGuncelle();
