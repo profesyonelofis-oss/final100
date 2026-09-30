@@ -18,6 +18,9 @@
   <div class="flash uyari" style="text-align:left;">
     ⏱ Deneme bitiş tarihiniz: <strong>{{ u.bitis }}</strong> — bitince yeni kayıt giremezsiniz.
   </div>
+  <div class="flash hata" style="text-align:left;">
+    ⏳ Kalan deneme süreniz: <strong id="deneme-kalan-sure">hesaplanıyor…</strong>
+  </div>
   {% endif %}
   <div class="flash bilgi" style="text-align:left;">
     Ödeme yaptıysanız aşağıdaki hesap bilgilerine havaleyi ulaştırıp
@@ -28,6 +31,31 @@
     <a class="btn ghost" href="#odeme-bilgileri" onclick="document.getElementById('odeme-bilgileri-kutu').scrollIntoView({behavior:'smooth'}); return false;">Ödeme Bilgileri</a>
   </div>
 </div>
+
+<script>
+/* Deneme paneli canli geri sayim (banner ile ayni mantik) */
+(function () {
+  var el = document.getElementById('deneme-kalan-sure');
+  if (!el) return;
+  var parca = "{{ u.bitis }}".split("-");
+  var bitis = new Date(parseInt(parca[0], 10), parseInt(parca[1], 10) - 1,
+                       parseInt(parca[2], 10), 23, 59, 59);
+  function guncelle() {
+    var ms = bitis - new Date();
+    if (ms <= 0) { el.textContent = 'DENEME SÜRENİZ DOLDU — hemen satın alın!'; return; }
+    var gun = Math.floor(ms / 86400000);
+    var saat = Math.floor((ms % 86400000) / 3600000);
+    var dakika = Math.floor((ms % 3600000) / 60000);
+    var parcalar = [];
+    if (gun > 0) parcalar.push(gun + ' gün');
+    if (saat > 0) parcalar.push(saat + ' saat');
+    if (gun === 0 && dakika > 0) parcalar.push(dakika + ' dakika');
+    el.textContent = parcalar.join(' ');
+  }
+  guncelle();
+  setInterval(guncelle, 30000);
+})();
+</script>
 
 {% elif u.lisans == 'aktif' %}
 
