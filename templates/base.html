@@ -86,8 +86,11 @@
     {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.tip == 'deneme' and odeme_bilgisi_var %}
     <!-- ODEME BILGILERI BANNERI: deneme uye giris yaptiginda hesap bilgileri -->
     <div class="flash bilgi" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span>💳 <strong>ÜYELİK ÜCRETİ:</strong> {{ odeme_ucret or '—' }} — IBAN: <code>{{ odeme_iban }}</code>{% if odeme_havale_ad %} — Hesap sahibi: <strong>{{ odeme_havale_ad }}</strong>{% endif %}</span>
-      <a class="btn small" href="/uyelik">Ödeme Yap & Bildir</a>
+      <span>💳 <strong>ÜYELİK ÜCRETİ:</strong> {{ odeme_ucret or '—' }} — IBAN: <code id="banner-iban">{{ odeme_iban }}</code>
+        {% if odeme_iban %}<button type="button" class="btn ghost small" onclick="ibanKopyala('banner-iban', this)" style="padding:2px 8px; font-size:11px;">📋 Kopyala</button>{% endif %}
+        {% if odeme_havale_ad %} — Hesap sahibi: <strong>{{ odeme_havale_ad }}</strong>{% endif %}
+      </span>
+      <a class="btn small" href="/uyelik">Ödeme Yap &amp; Bildir</a>
     </div>
     {% endif %}
     {% with mesajlar = get_flashed_messages(with_categories=true) %}

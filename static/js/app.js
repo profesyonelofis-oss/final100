@@ -1,4 +1,36 @@
 // KARAOGLU Zeytin Takip - web JS
+
+/* IBAN kopyalama: banner ve uyelik sayfasindaki Kopyala butonlari */
+function ibanKopyala(elementId, btn) {
+  var el = document.getElementById(elementId);
+  if (!el) return;
+  var metin = (el.textContent || "").trim().replace(/\s+/g, "");
+  function basari() {
+    if (!btn) return;
+    var eski = btn.textContent;
+    btn.textContent = "✓ Kopyalandı";
+    setTimeout(function () { btn.textContent = eski; }, 2000);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(metin).then(basari).catch(function () {
+      _ibanKopyalaYedek(metin, basari);
+    });
+  } else {
+    _ibanKopyalaYedek(metin, basari);
+  }
+}
+function _ibanKopyalaYedek(metin, basari) {
+  /* Eski tarayicilar / https olmadan calisan yedek yontem */
+  var ta = document.createElement("textarea");
+  ta.value = metin;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); basari(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   // Canli saat
   var clock = document.getElementById("clock");

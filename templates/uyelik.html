@@ -61,7 +61,9 @@
     <p style="font-size:18px; margin:6px 0;"><strong>Üyelik Ücreti:</strong> {{ ucret }}</p>
     {% endif %}
     {% if iban %}
-    <p style="font-size:15px; margin:6px 0;"><strong>IBAN:</strong> <code style="font-size:15px;">{{ iban }}</code></p>
+    <p style="font-size:15px; margin:6px 0;"><strong>IBAN:</strong> <code id="uyelik-iban" style="font-size:15px;">{{ iban }}</code>
+      <button type="button" class="btn ghost small" onclick="ibanKopyala('uyelik-iban', this)" style="padding:2px 10px; font-size:12px; margin-left:6px;">📋 Kopyala</button>
+    </p>
     {% endif %}
     {% if havale_ad %}
     <p style="font-size:15px; margin:6px 0;"><strong>Hesap Sahibi:</strong> {{ havale_ad }}</p>
