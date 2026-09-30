@@ -65,7 +65,7 @@
       </div>
       <div class="clock" id="clock">--:--:--</div>
     </header>
-    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis %}
+    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
     <!-- DENEME MODU BANNERI: aktif + bitis yakin (2 gunluk deneme) -->
     <div id="deneme-banner" class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
       <span id="deneme-mesaj">🧪 <strong>DENEME SÜRÜMÜ:</strong> 2 günlük denemeniz aktif — tüm sistemi kullanabilirsiniz.</span>
@@ -85,7 +85,7 @@
     {% block icerik %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-  {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis %}
+  {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
   <script>
   /* Deneme suresi sayaclari: banner'da kalan sure + 10 dakikada bir tekrarlayan bildirim */
   (function () {

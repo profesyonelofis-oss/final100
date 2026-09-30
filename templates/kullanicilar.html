@@ -67,7 +67,7 @@
           <code style="font-size:11px;">{{ cihazlar[k[1]][0] }}</code>
           <div style="font-size:11px; color:var(--metin2);">kayıt: {{ cihazlar[k[1]][4][:16] }}</div>
           <form method="post" action="/cihaz/{{ cihazlar[k[1]][0] }}/engel-kaldir"
-                onsubmit="return confirm('{{ k[1] }} kullanıcının cihaz engeli kaldırılsın mı? (Aynı cihazdan yeni üyelik açılabilir)')">
+                onsubmit="return confirm('{{ k[1] }} kullanıcının cihaz engeli kaldırılsın mı? (Aynı cihazdan açılacak yeni üyelik otomatik 6 AY tam üyelik olur; izin TEK KULLANIMLIKTIR)')">
             <button type="submit" class="btn ghost small" style="padding:2px 8px; font-size:11px;">Engeli Kaldır</button>
           </form>
           {% else %}

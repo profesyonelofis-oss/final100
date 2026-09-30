@@ -197,7 +197,7 @@ def kayit():
             flash("\u015eifreler birbiriyle uyu\u015fmuyor.", "hata")
         elif not cihaz_id:
             flash("Cihaz do\u011frulamas\u0131 al\u0131namad\u0131; taray\u0131c\u0131n\u0131z\u0131 yenileyin.", "hata")
-        elif webdb.cihaz_uyelik_var_mi(cihaz_id):
+        elif webdb.cihaz_uyelik_var_mi(cihaz_id) and not webdb.cihaz_izni_var_mi(cihaz_id):
             onceki = webdb.cihaz_adi_getir(cihaz_id)
             flash("Bu cihazdan daha \u00f6nce \u00fcyelik a\u00e7\u0131lm\u0131\u015f (%s). "
                   "Tekrar \u00fcyelik a\u00e7amazs\u0131n\u0131z; \u00f6deme yapt\u0131ktan sonra "
@@ -205,6 +205,15 @@ def kayit():
         elif not webdb.create_user(ad, s1, cihaz_id=cihaz_id,
                                    mac_adresi=mac, ip_adresi=ip):
             flash("Bu kullan\u0131c\u0131 ad\u0131 daha \u00f6nce al\u0131nm\u0131\u015f.", "hata")
+        elif webdb.cihaz_izni_var_mi(cihaz_id):
+            # Yonetici bu cihazin engelini kaldirmis: 6 aylik tam uyelik.
+            # Izin tek kullanimlik: uye acilinca silinir (ayni cihazdan
+            # tekrar uyelik acilamaz).
+            webdb.cihaz_izni_sil(cihaz_id)
+            flash("Kayd\u0131n\u0131z al\u0131nd\u0131! Y\u00f6netici izniyle "
+                  "6 ayl\u0131k tam \u00fcyeli\u011finiz ba\u015flad\u0131; t\u00fcm sistemi "
+                  "\u00fccretsiz kullanabilirsiniz.", "basari")
+            return redirect(url_for("giris"))
         else:
             flash("Kayd\u0131n\u0131z al\u0131nd\u0131! 2 g\u00fcnl\u00fck deneme s\u00fcr\u00fcminiz ba\u015flad\u0131; "
                   "t\u00fcm sistemi kullanabilirsiniz. Deneme bitince \u00fcyelik sayfas\u0131ndan "
@@ -669,7 +678,8 @@ def cihaz_engel_kaldir(cihaz_id):
         flash("Bu i\u015flem yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
         return redirect(url_for("genel_bakis"))
     webdb.cihaz_engeli_kaldir(cihaz_id)
-    flash("Cihaz engeli kald\u0131r\u0131ld\u0131; bu cihazdan yeni \u00fcyelik a\u00e7\u0131labilir.", "basari")
+    flash("Cihaz engeli kald\u0131r\u0131ld\u0131; bu cihazdan a\u00e7\u0131lacak yeni "
+          "\u00fcyelik otomatik 6 ayl\u0131k tam \u00fcyelik olur.", "basari")
     return redirect(url_for("kullanicilar"))
 
 

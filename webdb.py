@@ -177,6 +177,11 @@ def _create_schema(cursor):
             okundu INTEGER DEFAULT 0,
             zaman TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cihaz_izinleri (
+            cihaz_id TEXT PRIMARY KEY,
+            izin_zamani TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
 
     # eski DB'lerde kolonlar yoksa ekle
     for kolon_sql in ("ALTER TABLE kullanicilar ADD COLUMN rol TEXT DEFAULT 'kullanici'",
@@ -184,7 +189,8 @@ def _create_schema(cursor):
                       "ALTER TABLE kullanicilar ADD COLUMN lisans_bitis TEXT",
                       "ALTER TABLE kullanicilar ADD COLUMN sifre_gizli TEXT",
                       "ALTER TABLE kullanicilar ADD COLUMN cihaz_id TEXT",
-                      "ALTER TABLE kullanicilar ADD COLUMN deneme_bitti TEXT DEFAULT '0'"):
+                      "ALTER TABLE kullanicilar ADD COLUMN deneme_bitti TEXT DEFAULT '0'",
+                      "ALTER TABLE kullanicilar ADD COLUMN uyelik_tipi TEXT DEFAULT 'deneme'"):
         try:
             cursor.execute(kolon_sql)
         except sqlite3.OperationalError:
@@ -289,29 +295,42 @@ def set_user_sifre(kullanici_adi, sifre):
 
 
 def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
-                ip_adresi=None):
+                ip_adresi=None, uyelik_tipi=None):
     """Yeni kullanici: hash + geri cozulebilir saklama + otomatik 2 gun deneme.
 
     Deneme lisansi: lisans_durumu='aktif', lisans_bitis=bugun+2 gun.
     Cihaz bilgisi ayni zamanda cihaz_kayitlari tablosuna yazilir; ayni cihazdan
     yeni uyelik acilmasi engellenir.
+
+    uyelik_tipi:
+      - None  -> cihaz icin yonetici izni varsa 'ucretli' (6 ay), yoksa 'deneme'
+      - 'deneme' / 'ucretli' -> zorlanmis tip (dikkatli kullanin)
     """
     conn = get_connection()
     try:
+        izinli = cihaz_id and cihaz_izni_var_mi(cihaz_id)
         # Cihaz kilidi: ayni cihaz_id ile onceki uyelik varsa engelle
-        if cihaz_id:
+        # (yonetici izni vermis cihaz haric)
+        if cihaz_id and not izinli:
             var = conn.execute(
                 "SELECT 1 FROM cihaz_kayitlari WHERE cihaz_id = ?",
                 (cihaz_id,)).fetchone()
             if var:
                 return False
-        deneme_bitis = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+        if uyelik_tipi is None:
+            uyelik_tipi = "ucretli" if izinli else "deneme"
+        if uyelik_tipi == "ucretli":
+            # Yonetici izniyle acilan uyelik: 6 ay tam erisim, odeme gerekmez
+            lisans_bitis = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
+        else:
+            # Normal kayit: 2 gunluk deneme
+            lisans_bitis = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
         conn.execute(
             "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli, "
-            "lisans_durumu, lisans_bitis, cihaz_id) "
-            "VALUES (?, ?, ?, 'aktif', ?, ?)",
+            "lisans_durumu, lisans_bitis, cihaz_id, uyelik_tipi) "
+            "VALUES (?, ?, ?, 'aktif', ?, ?, ?)",
             (kullanici_adi, _hash_password(sifre), _xor_mask(sifre),
-             deneme_bitis, cihaz_id))
+             lisans_bitis, cihaz_id, uyelik_tipi))
         if cihaz_id:
             conn.execute(
                 "INSERT OR REPLACE INTO cihaz_kayitlari "
@@ -356,13 +375,14 @@ def has_any_user():
 def get_user(kullanici_adi):
     conn = get_connection()
     row = conn.execute(
-        "SELECT id, kullanici_adi, rol, lisans_durumu, lisans_bitis "
+        "SELECT id, kullanici_adi, rol, lisans_durumu, lisans_bitis, uyelik_tipi "
         "FROM kullanicilar WHERE kullanici_adi = ?", (kullanici_adi,)).fetchone()
     conn.close()
     if not row:
         return None
     return {"id": row[0], "ad": row[1], "rol": row[2] or "kullanici",
-            "lisans": row[3] or "beklemede", "bitis": row[4]}
+            "lisans": row[3] or "beklemede", "bitis": row[4],
+            "tip": row[5] if len(row) > 4 and row[5] else "deneme"}
 
 
 def get_all_users():
@@ -454,9 +474,34 @@ def get_cihaz_id_listesi():
 
 
 def cihaz_engeli_kaldir(cihaz_id):
-    """Yonetici izin verirse cihaz kaydini siler; ayni cihaz tekrar uyelik acabilir."""
+    """Yonetici izin verirse cihaz kaydini siler; ayni cihaz tekrar uyelik acabilir.
+
+    Engeli kaldirilan cihaz 'izinli' olarak isaretlenir; bu cihazdan acilan yeni
+    uyelik 2 gunluk deneme yerine otomatik 6 aylik tam uyelik olur.
+    """
     conn = get_connection()
     conn.execute("DELETE FROM cihaz_kayitlari WHERE cihaz_id = ?", (cihaz_id,))
+    conn.execute(
+        "INSERT OR REPLACE INTO cihaz_izinleri (cihaz_id) VALUES (?)", (cihaz_id,))
+    conn.commit()
+    conn.close()
+
+
+def cihaz_izni_var_mi(cihaz_id):
+    """Bu cihaz icin yonetici 'engel kaldirdi' izni var mi?"""
+    if not cihaz_id:
+        return False
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM cihaz_izinleri WHERE cihaz_id = ?", (cihaz_id,)).fetchone()
+    conn.close()
+    return bool(row)
+
+
+def cihaz_izni_sil(cihaz_id):
+    """Izin kaydini siler (uye acildiktan sonra 6 aylik uyelik zaten baslamis olur)."""
+    conn = get_connection()
+    conn.execute("DELETE FROM cihaz_izinleri WHERE cihaz_id = ?", (cihaz_id,))
     conn.commit()
     conn.close()
 
