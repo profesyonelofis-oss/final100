@@ -52,7 +52,7 @@
       {% endif %}
     </nav>
     <div class="sidebar-footer">
-      {% if not USER or USER.lisans == 'aktif' %}<a href="/yedek" class="btn ghost small">⬇ Yedek İndir</a>{% endif %}
+      {% if USER and USER.rol == 'admin' and USER.lisans == 'aktif' %}<a href="/yedek" class="btn ghost small">⬇ Yedek İndir</a>{% endif %}
       <a href="/cikis" class="btn ghost small danger">Çıkış</a>
     </div>
     <div class="ver">v1.0</div>
@@ -65,7 +65,13 @@
       </div>
       <div class="clock" id="clock">--:--:--</div>
     </header>
-    {% if USER and USER.lisans != 'aktif' %}
+    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis %}
+    <!-- DENEME MODU BANNERI: aktif + bitis yakin (2 gunluk deneme) -->
+    <div id="deneme-banner" class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span id="deneme-mesaj">🧪 <strong>DENEME SÜRÜMÜ:</strong> 2 günlük denemeniz aktif — tüm sistemi kullanabilirsiniz.</span>
+      <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+    </div>
+    {% elif USER and USER.lisans != 'aktif' %}
     <div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <span>⏳ <strong>ÖNİZLEME MODU:</strong> Üyeliğiniz onay bekliyor. Tüm bölümleri gezebilirsiniz; kayıt ekleme/düzenleme kapalıdır.</span>
       <a class="btn small" href="/uyelik">Üyelik</a>
@@ -79,6 +85,87 @@
     {% block icerik %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis %}
+  <script>
+  /* Deneme suresi sayaclari: banner'da kalan sure + 10 dakikada bir tekrarlayan bildirim */
+  (function () {
+    var bitisStr = "{{ USER.bitis }}";
+    var parca = bitisStr.split("-");
+    var bitisTarih = new Date(parseInt(parca[0], 10), parseInt(parca[1], 10) - 1,
+                             parseInt(parca[2], 10), 23, 59, 59);
+    var mesajEl = document.getElementById('deneme-mesaj');
+
+    function kalanGun() {
+      var ms = bitisTarih - new Date();
+      return Math.max(0, Math.ceil(ms / 86400000));
+    }
+
+    function bannerGuncelle() {
+      if (!mesajEl) return;
+      var gun = kalanGun();
+      var saat = Math.max(0, Math.floor((bitisTarih - new Date()) / 3600000));
+      if (saat <= 0) {
+        mesajEl.innerHTML = '⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için hemen satın alın.';
+      } else if (saat < 24) {
+        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> Son ' + saat + ' saat! ' +
+          'Süre bitmeden satın alın; verileriniz korunur.';
+      } else {
+        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> ' + gun +
+          ' gün kaldı — tüm sistemi kullanabilirsiniz.';
+      }
+    }
+    bannerGuncelle();
+    setInterval(bannerGuncelle, 60000);
+
+    /* 10 dakikada bir tekrarlayan bildirim (sayfada dolasirken hatirlatma) */
+    var ARALIK_MS = 10 * 60 * 1000;
+    function hatirlat() {
+      var saat = Math.max(0, Math.floor((bitisTarih - new Date()) / 3600000));
+      var mesaj;
+      if (saat <= 0) {
+        mesaj = '⏱ Deneme süreniz doldu! Verilerinizi görmeye devam edebilirsiniz ama '
+              + 'yeni kayıt giremezsiniz. Şimdi satın almak için Üyelik sayfasına gidin.';
+      } else if (saat < 24) {
+        mesaj = '🧪 Deneme sürümünün son ' + saat + ' saati! Süre bitmeden satın alırsanız '
+              + 'verileriniz aynen korunur.';
+      } else {
+        mesaj = '🧪 Deneme sürümündesiniz. ' + kalanGun() + ' gün sonra kapanacak — '
+              + 'şimdi satın alırsanız indirim fırsatını kaçırmazsınız.';
+      }
+      bildirGoster(mesaj);
+    }
+
+    function bildirGoster(mesaj) {
+      var varolan = document.getElementById('deneme-hatirlatici');
+      if (varolan) varolan.remove();
+      var b = document.createElement('div');
+      b.id = 'deneme-hatirlatici';
+      b.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);'
+        + 'background:#fff;border:2px solid var(--kirmizi);border-radius:12px;'
+        + 'padding:14px 18px;box-shadow:0 6px 24px rgba(0,0,0,.18);z-index:9999;'
+        + 'max-width:min(92vw,520px);font-size:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;';
+      b.innerHTML = '<span>' + mesaj + '</span>';
+      var al = document.createElement('a');
+      al.href = '/uyelik';
+      al.className = 'btn small';
+      al.style.background = 'var(--kirmizi)';
+      al.textContent = '🛒 SATIN AL';
+      b.appendChild(al);
+      var kapa = document.createElement('button');
+      kapa.textContent = '✕';
+      kapa.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--metin2);padding:4px;';
+      kapa.onclick = function () { b.remove(); };
+      b.appendChild(kapa);
+      document.body.appendChild(b);
+      /* 15 saniye sonra kendiliginden kaybolur (kapatilmadiysa) */
+      setTimeout(function () { if (b.parentNode) b.remove(); }, 15000);
+    }
+
+    setTimeout(hatirlat, ARALIK_MS);
+    setInterval(hatirlat, ARALIK_MS);
+  })();
+  </script>
+  {% endif %}
   <script>
   /* Mobil menu: hamburger ile ac/kapa */
   (function () {
