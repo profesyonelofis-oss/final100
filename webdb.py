@@ -13,7 +13,7 @@ import os
 import base64
 import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -160,11 +160,31 @@ def _create_schema(cursor):
             olusturma TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cihaz_kayitlari (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cihaz_id TEXT UNIQUE NOT NULL,
+            kullanici_adi TEXT NOT NULL,
+            mac_adresi TEXT,
+            ip_adresi TEXT,
+            kayit_zamani TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS odeme_bildirimleri (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kullanici_adi TEXT NOT NULL,
+            mesaj TEXT,
+            okundu INTEGER DEFAULT 0,
+            zaman TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
     # eski DB'lerde kolonlar yoksa ekle
     for kolon_sql in ("ALTER TABLE kullanicilar ADD COLUMN rol TEXT DEFAULT 'kullanici'",
                       "ALTER TABLE kullanicilar ADD COLUMN lisans_durumu TEXT DEFAULT 'beklemede'",
                       "ALTER TABLE kullanicilar ADD COLUMN lisans_bitis TEXT",
-                      "ALTER TABLE kullanicilar ADD COLUMN sifre_gizli TEXT"):
+                      "ALTER TABLE kullanicilar ADD COLUMN sifre_gizli TEXT",
+                      "ALTER TABLE kullanicilar ADD COLUMN cihaz_id TEXT",
+                      "ALTER TABLE kullanicilar ADD COLUMN deneme_bitti TEXT DEFAULT '0'"):
         try:
             cursor.execute(kolon_sql)
         except sqlite3.OperationalError:
@@ -268,14 +288,36 @@ def set_user_sifre(kullanici_adi, sifre):
     conn.close()
 
 
-def create_user(kullanici_adi, sifre):
-    """Yeni kullanici: hash + geri cozulebilir saklama."""
+def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
+                ip_adresi=None):
+    """Yeni kullanici: hash + geri cozulebilir saklama + otomatik 2 gun deneme.
+
+    Deneme lisansi: lisans_durumu='aktif', lisans_bitis=bugun+2 gun.
+    Cihaz bilgisi ayni zamanda cihaz_kayitlari tablosuna yazilir; ayni cihazdan
+    yeni uyelik acilmasi engellenir.
+    """
     conn = get_connection()
     try:
+        # Cihaz kilidi: ayni cihaz_id ile onceki uyelik varsa engelle
+        if cihaz_id:
+            var = conn.execute(
+                "SELECT 1 FROM cihaz_kayitlari WHERE cihaz_id = ?",
+                (cihaz_id,)).fetchone()
+            if var:
+                return False
+        deneme_bitis = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
         conn.execute(
-            "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli) "
-            "VALUES (?, ?, ?)",
-            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre)))
+            "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli, "
+            "lisans_durumu, lisans_bitis, cihaz_id) "
+            "VALUES (?, ?, ?, 'aktif', ?, ?)",
+            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre),
+             deneme_bitis, cihaz_id))
+        if cihaz_id:
+            conn.execute(
+                "INSERT OR REPLACE INTO cihaz_kayitlari "
+                "(cihaz_id, kullanici_adi, mac_adresi, ip_adresi) "
+                "VALUES (?, ?, ?, ?)",
+                (cihaz_id, kullanici_adi, mac_adresi, ip_adresi))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -374,6 +416,90 @@ def lisans_suresi_dolmus_mu(bitis):
         return datetime.strptime(bitis, "%Y-%m-%d").date() < datetime.now().date()
     except ValueError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Cihaz kilidi ve odeme bildirimleri
+# ---------------------------------------------------------------------------
+
+def cihaz_uyelik_var_mi(cihaz_id):
+    """Bu cihazdan daha once uyelik alinmis mi? (2 gun deneme tek seferlik)"""
+    if not cihaz_id:
+        return False
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM cihaz_kayitlari WHERE cihaz_id = ?", (cihaz_id,)).fetchone()
+    conn.close()
+    return bool(row)
+
+
+def cihaz_adi_getir(cihaz_id):
+    """Cihazin kayitli kullanici adini dondurur."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT kullanici_adi FROM cihaz_kayitlari WHERE cihaz_id = ?",
+        (cihaz_id,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def get_cihaz_id_listesi():
+    """Yonetici paneli icin tum cihaz kayitlari."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT cihaz_id, kullanici_adi, mac_adresi, ip_adresi, kayit_zamani "
+        "FROM cihaz_kayitlari ORDER BY id DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def cihaz_engeli_kaldir(cihaz_id):
+    """Yonetici izin verirse cihaz kaydini siler; ayni cihaz tekrar uyelik acabilir."""
+    conn = get_connection()
+    conn.execute("DELETE FROM cihaz_kayitlari WHERE cihaz_id = ?", (cihaz_id,))
+    conn.commit()
+    conn.close()
+
+
+def odeme_bildirimi_ekle(kullanici_adi, mesaj):
+    """Uyenin yoneticiye odeme bildirimi: uye adi + mesaj."""
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO odeme_bildirimleri (kullanici_adi, mesaj) VALUES (?, ?)",
+        (kullanici_adi, mesaj))
+    conn.commit()
+    conn.close()
+
+
+def get_odeme_bildirimleri(sadece_okunmamis=False):
+    """Yonetici paneli icin bildirim listesi."""
+    conn = get_connection()
+    if sadece_okunmamis:
+        rows = conn.execute(
+            "SELECT id, kullanici_adi, mesaj, zaman FROM odeme_bildirimleri "
+            "WHERE okundu = 0 ORDER BY id DESC").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, kullanici_adi, mesaj, okundu, zaman "
+            "FROM odeme_bildirimleri ORDER BY id DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def okunmamis_bildirim_sayisi():
+    conn = get_connection()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM odeme_bildirimleri WHERE okundu = 0").fetchone()[0]
+    conn.close()
+    return n
+
+
+def bildirim_okundu_yap(bildirim_id):
+    conn = get_connection()
+    conn.execute("UPDATE odeme_bildirimleri SET okundu = 1 WHERE id = ?",
+                 (bildirim_id,))
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------------------

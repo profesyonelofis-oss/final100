@@ -78,13 +78,21 @@ def giris_gerekli(f):
             session.clear()
             return redirect(url_for("giris"))
         if u["rol"] != "admin":
-            # sure dolan uyelik otomatik kilitlenir
+            # sure dolan (deneme veya ucretli) uyelik otomatik kilitlenir
             if webdb.lisans_suresi_dolmus_mu(u["bitis"]):
-                webdb.set_lisans(u["ad"], "suresi_bitti")
+                yeni_durum = "deneme_bitti" if u["lisans"] == "aktif" and (
+                    (datetime.now() - datetime.strptime(u["bitis"], "%Y-%m-%d")
+                     ).days <= 2) else "suresi_bitti"
+                webdb.set_lisans(u["ad"], yeni_durum)
                 u = webdb.get_user(session["kullanici"])
             if u["lisans"] != "aktif" and request.method == "POST":
-                flash("Üyeliğiniz onay bekliyor; kayıt ekleyemezsiniz. "
-                      "Ödeme sonrası tüm işlemler açılır.", "uyari")
+                if u["lisans"] == "deneme_bitti":
+                    flash("2 günlük deneme süreniz doldu. Ödeme yapıp üye "
+                          "adınızı bildirin; yönetici onayladıktan sonra "
+                          "sistem tekrar açılır.", "uyari")
+                else:
+                    flash("Üyeliğiniz onay bekliyor; kayıt ekleyemezsiniz. "
+                          "Ödeme sonrası tüm işlemler açılır.", "uyari")
                 return redirect(url_for("uyelik"))
         return f(*args, **kwargs)
     return sarmal
@@ -180,16 +188,39 @@ def kayit():
         ad = request.form.get("kullanici_adi", "").strip()
         s1 = request.form.get("sifre", "")
         s2 = request.form.get("sifre2", "")
+        cihaz_id = request.form.get("cihaz_id", "").strip()
+        ip = request.remote_addr or ""
+        mac = _mac_adresi_cikar()
         if not ad or len(s1) < 4:
             flash("Kullan\u0131c\u0131 ad\u0131 girin, \u015fifre en az 4 karakter olsun.", "hata")
         elif s1 != s2:
             flash("\u015eifreler birbiriyle uyu\u015fmuyor.", "hata")
-        elif not webdb.create_user(ad, s1):
+        elif not cihaz_id:
+            flash("Cihaz do\u011frulamas\u0131 al\u0131namad\u0131; taray\u0131c\u0131n\u0131z\u0131 yenileyin.", "hata")
+        elif webdb.cihaz_uyelik_var_mi(cihaz_id):
+            onceki = webdb.cihaz_adi_getir(cihaz_id)
+            flash("Bu cihazdan daha \u00f6nce \u00fcyelik a\u00e7\u0131lm\u0131\u015f (%s). "
+                  "Tekrar \u00fcyelik a\u00e7amazs\u0131n\u0131z; \u00f6deme yapt\u0131ktan sonra "
+                  "y\u00f6neticiyle ileti\u015fime ge\u00e7in." % (onceki or "bilinmeyen"), "hata")
+        elif not webdb.create_user(ad, s1, cihaz_id=cihaz_id,
+                                   mac_adresi=mac, ip_adresi=ip):
             flash("Bu kullan\u0131c\u0131 ad\u0131 daha \u00f6nce al\u0131nm\u0131\u015f.", "hata")
         else:
-            flash("Kayd\u0131n\u0131z al\u0131nd\u0131. Giri\u015f yapabilirsiniz.", "basari")
+            flash("Kayd\u0131n\u0131z al\u0131nd\u0131! 2 g\u00fcnl\u00fck deneme s\u00fcr\u00fcminiz ba\u015flad\u0131; "
+                  "t\u00fcm sistemi kullanabilirsiniz. Deneme bitince \u00fcyelik sayfas\u0131ndan "
+                  "\u00f6deme yapabilirsiniz.", "basari")
             return redirect(url_for("giris"))
     return render_template("kayit.html")
+
+
+def _mac_adresi_cikar():
+    """Sunucunun MAC adresini dondurur (Render konteynerinde ayni MAC cikar;
+    gercek cihaz ayrimi tarayicidan gelen cihaz_id ile yapilir)."""
+    try:
+        import uuid
+        return uuid.getnode().to_bytes(6, "big").hex(":")
+    except Exception:
+        return ""
 
 
 @app.route("/cikis")
@@ -234,6 +265,15 @@ def genel_bakis():
 def uyelik():
     webdb.init_db()
     u = webdb.get_user(session["kullanici"])
+    if request.method == "POST" and request.form.get("islem") == "odeme-bildir":
+        mesaj = request.form.get("bildirim_mesaj", "").strip()
+        if not mesaj:
+            flash("Lütfen ödeme bilgisi (havale saati, tutar, son 4 hane vb.) yazın.", "hata")
+        else:
+            webdb.odeme_bildirimi_ekle(u["ad"], mesaj)
+            flash("Ödeme bildiriminiz yöneticiye iletildi. Onaylandıktan "
+                  "sonra sistem açılacaktır.", "basari")
+        return redirect(url_for("uyelik"))
     return render_template("uyelik.html", u=u,
                            ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
@@ -594,13 +634,43 @@ def kullanicilar():
     sifreler = {}
     for k in webdb.get_all_users():
         sifreler[k[1]] = webdb.get_user_sifre(k[1]) or "-"
+    # Kullanici -> cihaz eslesmesi
+    cihazlar = {c[1]: c for c in webdb.get_cihaz_id_listesi()}
+    bildirimler = webdb.get_odeme_bildirimleri()
+    okunmamis = webdb.okunmamis_bildirim_sayisi()
     return render_template("kullanicilar.html",
                            kullanicilar=webdb.get_all_users(),
                            sifreler=sifreler,
+                           cihazlar=cihazlar,
+                           bildirimler=bildirimler,
+                           okunmamis=okunmamis,
                            ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
                            not_bilgi=webdb.get_ayar("uyelik_not"))
+
+
+@app.route("/bildirim/<int:bid>/okundu", methods=["POST"])
+@giris_gerekli
+def bildirim_okundu(bid):
+    if not _admin_mi():
+        flash("Bu i\u015flem yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
+        return redirect(url_for("genel_bakis"))
+    webdb.bildirim_okundu_yap(bid)
+    flash("Bildirim okundu olarak i\u015faretlendi.", "basari")
+    return redirect(url_for("kullanicilar"))
+
+
+@app.route("/cihaz/<cihaz_id>/engel-kaldir", methods=["POST"])
+@giris_gerekli
+def cihaz_engel_kaldir(cihaz_id):
+    """Yonetici onayli cihaz engeli kaldirma (ayni cihaz tekrar uyelik acabilir)."""
+    if not _admin_mi():
+        flash("Bu i\u015flem yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
+        return redirect(url_for("genel_bakis"))
+    webdb.cihaz_engeli_kaldir(cihaz_id)
+    flash("Cihaz engeli kald\u0131r\u0131ld\u0131; bu cihazdan yeni \u00fcyelik a\u00e7\u0131labilir.", "basari")
+    return redirect(url_for("kullanicilar"))
 
 
 @app.route("/kullanici/<ad>/onayla", methods=["POST"])

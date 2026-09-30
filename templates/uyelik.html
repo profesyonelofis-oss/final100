@@ -32,7 +32,13 @@
     kullanmaya başlamak için üyelik ücretinin onayı gerekiyor.
   </p>
 
-  {% if u.lisans == 'reddedildi' %}
+  {% if u.lisans == 'deneme_bitti' %}
+  <div class="flash uyari" style="text-align:left;">
+    ⏱ <strong>2 günlük deneme süreniz doldu.</strong> Aşağıdaki hesaba ödeme
+    yapıp bildirim formundan üye adınızı (<strong>{{ u.ad }}</strong>) belirterek
+    ödemenizi bildirin; yönetici onayladıktan sonra sistem tekrar açılır.
+  </div>
+  {% elif u.lisans == 'reddedildi' %}
   <div class="flash hata" style="text-align:left;">
     Üyeliğiniz durduruldu. Lütfen bizimle iletişime geçin.
   </div>
@@ -66,6 +72,22 @@
     {% if not ucret and not iban and not havale_ad %}
     <p style="color:var(--metin2);">Ödeme bilgileri henüz girilmedi. Yöneticiyle iletişime geçin.</p>
     {% endif %}
+  </div>
+
+  <div style="text-align:left; background:#FFF8E6; border:1px solid #FFE9A8;
+              border-radius:12px; padding:18px 22px; margin:14px 0;">
+    <h2 style="margin-bottom:10px;">ÖDEME YAPTIM — YÖNETİCİYE BİLDİR</h2>
+    <p style="font-size:13px; color:var(--metin2); margin-bottom:8px;">
+      Ödemenizi yaptıysanız üye adınızla birlikte bildirin; yönetici onayladığında
+      hesabınız açılır.
+    </p>
+    <form method="post" action="/uyelik">
+      <input type="hidden" name="islem" value="odeme-bildir">
+      <label for="bildirim_mesaj">ÖDEME BİLGİSİ (saat, tutar, son 4 hane vb.)</label>
+      <textarea id="bildirim_mesaj" name="bildirim_mesaj" rows="3" required
+                placeholder="Örn: 30.09.2026 14:30'da 250 TL havale yaptım. Üye adım: {{ u.ad }}"></textarea>
+      <button type="submit" class="btn" style="margin-top:10px;">📩 BİLDİRİMİ GÖNDER</button>
+    </form>
   </div>
 
   <p style="color:var(--metin2); font-size:13px;">

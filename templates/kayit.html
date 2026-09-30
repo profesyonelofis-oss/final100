@@ -19,20 +19,69 @@
         {% endfor %}
       {% endwith %}
 
-      <form method="post">
+      <form method="post" id="kayit-form">
+        <input type="hidden" name="cihaz_id" id="cihaz_id" value="">
         <label for="kullanici_adi">KULLANICI ADI</label>
         <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
         <label for="sifre">ŞİFRE (en az 4 karakter)</label>
         <input type="password" id="sifre" name="sifre" required minlength="4">
         <label for="sifre2">ŞİFRE (tekrar)</label>
         <input type="password" id="sifre2" name="sifre2" required minlength="4">
-        <button type="submit" class="btn">KAYIT OL</button>
+        <button type="submit" class="btn">KAYIT OL (2 GÜN ÜCRETSİZ DENEME)</button>
       </form>
+
+      <p style="text-align:center; margin-top:14px; font-size:12px; color:var(--metin2);">
+        Kayıt olduğunuzda 2 günlük deneme süreniz başlar; tüm sistemi
+        kullanabilirsiniz. Deneme bitiminde üyelik sayfasından ödeme yapıp
+        yönetici onayı ile devam edebilirsiniz. <strong>Bir cihazdan yalnızca
+        bir üyelik açılabilir.</strong>
+      </p>
 
       <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
         Hesabınız var mı? <a href="/giris">Giriş yapın</a>
       </p>
     </div>
   </div>
+  <script>
+  /* Cihaz parmak izi: tarayici/cihaz bazli benzersiz kimlik.
+     Canvas + ekran + platform karisimi; kalici, MAC benzeri kimlik. */
+  (function () {
+    function cihazIzi() {
+      var parcalar = [];
+      try {
+        var c = document.createElement('canvas');
+        var ctx = c.getContext('2d');
+        ctx.textBaseline = 'top';
+        ctx.font = '15px Arial';
+        ctx.fillStyle = '#f60';
+        ctx.fillRect(0, 0, 100, 25);
+        ctx.fillStyle = '#0af';
+        ctx.fillText('zeytinhesap, <@>()', 2, 2);
+        parcalar.push(c.toDataURL().slice(-120));
+      } catch (e) { parcalar.push('cnv-hata'); }
+      parcalar.push(navigator.userAgent);
+      parcalar.push(navigator.language || '');
+      parcalar.push(screen.width + 'x' + screen.height + 'x' +
+                    (screen.colorDepth || 24));
+      parcalar.push(navigator.hardwareConcurrency || 0);
+      parcalar.push(new Date().getTimezoneOffset());
+      var birlesik = parcalar.join('|');
+      var h = 5381;
+      for (var i = 0; i < birlesik.length; i++) {
+        h = ((h << 5) + h + birlesik.charCodeAt(i)) & 0xFFFFFFFF;
+      }
+      return 'C' + (h >>> 0).toString(36).toUpperCase();
+    }
+    var iz = cihazIzi();
+    /* Kalicilik: localStorage + cookie, silinirse yeniden uret */
+    var saklanan = null;
+    try { saklanan = localStorage.getItem('zc_id'); } catch (e) {}
+    if (!saklanan) {
+      try { localStorage.setItem('zc_id', iz); } catch (e) {}
+      document.cookie = 'zc_id=' + iz + ';path=/;max-age=31536000;samesite=Lax';
+    } else { iz = saklanan; }
+    document.getElementById('cihaz_id').value = iz;
+  })();
+  </script>
 </body>
 </html>

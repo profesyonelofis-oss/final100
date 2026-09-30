@@ -152,6 +152,7 @@ td.orta, th.orta { text-align: center; }
 .rozet { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
 .rozet.yesil { background: #D1E7DD; color: #0F5132; }
 .rozet.kirmizi { background: #F8D7DA; color: #842029; }
+.rozet.sari { background: #FFF3CD; color: #664D03; }
 .harf-filtre { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .harf-filtre a { padding: 5px 12px; border: 1px solid var(--input-cizgi); border-radius: 8px; text-decoration: none; color: #495057; font-size: 13px; }
 .harf-filtre a.aktif, .harf-filtre a:hover { background: var(--yesil); color: #fff; border-color: var(--yesil); }

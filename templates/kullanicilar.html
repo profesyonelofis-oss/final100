@@ -4,13 +4,46 @@
 {% block sayfa_alti %}Üyelik onayları ve yönetimi (yalnızca yönetici){% endblock %}
 
 {% block icerik %}
+{% if okunmamis %}
+<div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center;">
+  <span>💰 <strong>{{ okunmamis }} okunmamış ödeme bildirimi</strong> var — aşağıdaki listede işaretli.</span>
+</div>
+{% endif %}
+
+{% if bildirimler %}
+<div class="panel">
+  <h2>💰 ÖDEME BİLDİRİMLERİ</h2>
+  <table>
+    <thead><tr><th>#</th><th>ÜYE ADI</th><th>MESAJ</th><th>ZAMAN</th><th>DURUM</th><th class="orta">İŞLEM</th></tr></thead>
+    <tbody>
+      {% for b in bildirimler %}
+      <tr{% if not b[3] %} style="background:#FFF8E6;"{% endif %}>
+        <td>{{ b[0] }}</td>
+        <td><strong>{{ b[1] }}</strong></td>
+        <td style="max-width:320px;">{{ b[2] }}</td>
+        <td>{{ b[4] }}</td>
+        <td>{% if b[3] %}<span class="rozet">okundu</span>{% else %}<span class="rozet sari">YENİ</span>{% endif %}</td>
+        <td class="orta">
+          {% if not b[3] %}
+          <form method="post" action="/bildirim/{{ b[0] }}/okundu" style="display:inline;">
+            <button type="submit" class="btn ghost small">Okundu</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <div class="panel">
   <h2>KAYITLI KULLANICILAR</h2>
   {% if kullanicilar %}
   <table>
     <thead>
-      <tr><th>#</th><th>KULLANICI</th><th>ŞİFRE</th><th>ROL</th><th>ÜYELİK DURUMU</th>
-          <th>GEÇERLİLİK</th><th>KAYIT TARİHİ</th><th class="orta">İŞLEM</th></tr>
+      <tr><th>#</th><th>KULLANICI</th><th>ROL</th><th>ÜYELİK DURUMU</th>
+          <th>GEÇERLİLİK</th><th>CİHAZ</th><th class="orta">İŞLEM</th></tr>
     </thead>
     <tbody>
       {% for k in kullanicilar %}
@@ -18,20 +51,29 @@
         <td>{{ k[0] }}</td>
         <td><strong>{{ k[1] }}</strong></td>
         <td>
-          <span class="sifre-metin" style="color:var(--metin2);">••••••</span>
-        </td>
-        <td>
           {% if k[2] == 'admin' %}<span class="rozet yesil">YÖNETİCİ</span>
           {% else %}<span class="rozet kirmizi">KULLANICI</span>{% endif %}
         </td>
         <td>
           {% if k[3] == 'aktif' %}<span class="rozet yesil">AKTİF</span>
           {% elif k[3] == 'beklemede' %}<span class="rozet kirmizi">ONAY BEKLİYOR</span>
+          {% elif k[3] == 'deneme_bitti' %}<span class="rozet kirmizi">DENEME DOLDU</span>
           {% elif k[3] == 'suresi_bitti' %}<span class="rozet kirmizi">SÜRE DOLDU</span>
           {% else %}<span class="rozet kirmizi">DURDURULDU</span>{% endif %}
         </td>
         <td>{{ k[4] or '—' }}</td>
-        <td>{{ k[5] }}</td>
+        <td style="max-width:180px;">
+          {% if k[1] in cihazlar %}
+          <code style="font-size:11px;">{{ cihazlar[k[1]][0] }}</code>
+          <div style="font-size:11px; color:var(--metin2);">kayıt: {{ cihazlar[k[1]][4][:16] }}</div>
+          <form method="post" action="/cihaz/{{ cihazlar[k[1]][0] }}/engel-kaldir"
+                onsubmit="return confirm('{{ k[1] }} kullanıcının cihaz engeli kaldırılsın mı? (Aynı cihazdan yeni üyelik açılabilir)')">
+            <button type="submit" class="btn ghost small" style="padding:2px 8px; font-size:11px;">Engeli Kaldır</button>
+          </form>
+          {% else %}
+          <span style="color:var(--metin2); font-size:12px;">—</span>
+          {% endif %}
+        </td>
         <td class="orta">
           {% if k[3] != 'aktif' %}
           <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline-flex; gap:4px; align-items:center;">
