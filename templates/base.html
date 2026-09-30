@@ -85,25 +85,28 @@
       </div>
       <div class="clock" id="clock">--:--:--</div>
     </header>
-    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
-    <!-- DENEME MODU BANNERI: aktif + geri sayim -->
+    {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' %}
+    <!-- DENEME UYARISI: kayittan admin onayina kadar her deneme kullanicida gosterilir -->
+    {% if USER.lisans == 'aktif' and USER.bitis %}
     <div id="deneme-banner" class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
       <span id="deneme-mesaj">⚠️ <strong>DİKKAT — DENEME SÜRÜMÜ:</strong> 3 günlük denemeniz aktif. Kalan süre aşağıda geriye doğru sayılıyor.</span>
       <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
     </div>
-    {% elif USER and USER.lisans == 'deneme_bitti' %}
-    <!-- DENEME BITTI: sadece satın alma banneri -->
+    {% elif USER.lisans == 'deneme_bitti' %}
     <div class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span>⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için ödeme yapın — verileriniz aynen korunur.</span>
+      <span>⚠️ <strong>DİKKAT — DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için ödeme yapın — verileriniz aynen korunur.</span>
       <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
     </div>
+    {% endif %}
+    {% endif %}
+    {% if USER and USER.lisans == 'deneme_bitti' %}
     {% elif USER and USER.lisans != 'aktif' %}
     <div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <span>⏳ <strong>ÖNİZLEME MODU:</strong> Üyeliğiniz onay bekliyor. Tüm bölümleri gezebilirsiniz; kayıt ekleme/düzenleme kapalıdır.</span>
       <a class="btn small" href="/uyelik">Üyelik</a>
     </div>
     {% endif %}
-    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.tip == 'deneme' and odeme_bilgisi_var %}
+    {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' and odeme_bilgisi_var %}
     <!-- ODEME BILGILERI BANNERI: deneme uye giris yaptiginda hesap bilgileri -->
     <div class="flash bilgi" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
       <span>💳 <strong>ÜYELİK ÜCRETİ:</strong> {{ odeme_ucret or '—' }} — IBAN: <code id="banner-iban">{{ odeme_iban }}</code>

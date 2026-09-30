@@ -404,6 +404,15 @@ def set_lisans(kullanici_adi, durum, bitis=None):
     conn.close()
 
 
+def set_uyelik_tipi(kullanici_adi, tip):
+    """tip: 'deneme' | 'ucretli' — admin onayiyla ucretliye gecer."""
+    conn = get_connection()
+    conn.execute("UPDATE kullanicilar SET uyelik_tipi = ? WHERE kullanici_adi = ?",
+                 (tip, kullanici_adi))
+    conn.commit()
+    conn.close()
+
+
 def set_rol(kullanici_adi, rol):
     conn = get_connection()
     conn.execute("UPDATE kullanicilar SET rol = ? WHERE kullanici_adi = ?",

@@ -703,6 +703,8 @@ def kullanici_onayla(ad):
         ay = 12
     bitis = (datetime.now() + timedelta(days=30 * ay)).strftime("%Y-%m-%d")
     webdb.set_lisans(ad, "aktif", bitis)
+    # Uyelik ucretliye gecti: deneme uyarilari (kirmizi DIKKAT banneri) kalkar
+    webdb.set_uyelik_tipi(ad, "ucretli")
     flash("%s kullan\u0131c\u0131s\u0131n\u0131n \u00fcyeli\u011fi %d ay a\u00e7\u0131ld\u0131." % (ad, ay), "basari")
     return redirect(url_for("kullanicilar"))
 
