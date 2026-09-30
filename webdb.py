@@ -182,6 +182,16 @@ def _create_schema(cursor):
             cihaz_id TEXT PRIMARY KEY,
             izin_zamani TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+    # Gecis: bitisi deneme suresinin (3 gun) cok ucunda olan aktif hesaplar
+    # ucretli uyeliktir (admin onaylamis / izinle acilmis) — otomatik isaretle
+    try:
+        cursor.execute(
+            "UPDATE kullanicilar SET uyelik_tipi = 'ucretli' "
+            "WHERE uyelik_tipi = 'deneme' AND rol != 'admin' "
+            "AND lisans_durumu = 'aktif' AND lisans_bitis IS NOT NULL "
+            "AND julianday(lisans_bitis) - julianday('now') > 5")
+    except sqlite3.OperationalError:
+        pass
 
     # eski DB'lerde kolonlar yoksa ekle
     for kolon_sql in ("ALTER TABLE kullanicilar ADD COLUMN rol TEXT DEFAULT 'kullanici'",
