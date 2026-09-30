@@ -52,8 +52,17 @@
       {% endif %}
     </nav>
     <div class="sidebar-footer">
+      {% if USER %}
+      <div class="kullanici-kutu" style="display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%;">
+        <span title="Giriş yaptığınız kullanıcı adı" style="display:flex; align-items:center; gap:6px; min-width:0;">
+          <span aria-hidden="true">👤</span>
+          <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ USER.ad }}</strong>
+        </span>
+        <a href="/cikis" class="btn ghost small danger" title="Çıkış yap"
+           style="padding:3px 10px; flex-shrink:0;">Çıkış</a>
+      </div>
+      {% endif %}
       {% if USER and USER.rol == 'admin' and USER.lisans == 'aktif' %}<a href="/yedek" class="btn ghost small">⬇ Yedek İndir</a>{% endif %}
-      <a href="/cikis" class="btn ghost small danger">Çıkış</a>
     </div>
     <div class="ver">v1.0</div>
   </aside>

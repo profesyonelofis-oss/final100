@@ -93,11 +93,13 @@
       <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
     </form>
 
+    {% if USER and USER.rol == 'admin' %}
     <h2 style="margin-top:28px;">YEDEK</h2>
     <p style="color:var(--metin2); font-size:13px;">
       Veritabanınızı bilgisayarınıza indirebilirsiniz. Dosya: <code>data/zeytin_takip.db</code>
     </p>
     <a class="btn ghost" href="/yedek" style="margin-top:10px;">⬇ YEDEK İNDİR (.db)</a>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
