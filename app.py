@@ -8,6 +8,7 @@ Yayinlama icin README.md dosyasina bakiniz (wsgi.py + gunicorn/waitress).
 
 import io
 import os
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
@@ -144,6 +145,9 @@ def sabitler():
         "odeme_bilgisi_var": bool(webdb.get_ayar("uyelik_iban")
                                   or webdb.get_ayar("uyelik_ucret")
                                   or webdb.get_ayar("uyelik_havale_ad")),
+        # Admin icin okunmamis odeme bildirimi sayisi (menü rozeti + üst banner)
+        "okunmamis_bildirim": (webdb.okunmamis_bildirim_sayisi()
+                               if _user and _user["rol"] == "admin" else 0),
     }
 
 
@@ -277,6 +281,44 @@ def genel_bakis():
                            fisler_son=fisler_son, satislar_son=satislar_son)
 
 
+def _admin_bildirim_eposta(kullanici, mesaj):
+    """Odeme bildirimi geldiginde yoniciye e-posta gonderir.
+
+    Yapilandirma (env veya admin panelindeki ayarlar):
+      SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, ADMIN_EMAIL
+    Yapilandirilmamissa sessizce atlanir; hata uygulamayi etkilemez.
+    """
+    def _gonder():
+        try:
+            import smtplib, ssl
+            from email.mime.text import MIMEText
+            host = os.environ.get("SMTP_HOST") or webdb.get_ayar("smtp_host")
+            port = int(os.environ.get("SMTP_PORT")
+                       or webdb.get_ayar("smtp_port") or 587)
+            user = os.environ.get("SMTP_USER") or webdb.get_ayar("smtp_user")
+            sifre = os.environ.get("SMTP_PASS") or webdb.get_ayar("smtp_pass")
+            alici = os.environ.get("ADMIN_EMAIL") or webdb.get_ayar("admin_email")
+            if not (host and user and sifre and alici):
+                return  # e-posta yapilandirilmamis: panel bildirimi yeterli
+            govde = (
+                "KARAOĞLU Zeytin Takip — Ödeme Bildirimi\n\n"
+                "Kullanıcı: %s\n"
+                "Mesaj: %s\n\n"
+                "Onaylamak için: https://www.zeytinhesap.com/kullanicilar"
+            ) % (kullanici, mesaj)
+            eposta = MIMEText(govde, "plain", "utf-8")
+            eposta["Subject"] = "Ödeme bildirimi geldi: %s" % kullanici
+            eposta["From"] = user
+            eposta["To"] = alici
+            with smtplib.SMTP(host, port, timeout=15) as sunucu:
+                sunucu.starttls(context=ssl.create_default_context())
+                sunucu.login(user, sifre)
+                sunucu.sendmail(user, [alici], eposta.as_string())
+        except Exception as hata:
+            print("E-posta gonderilemedi:", hata, flush=True)
+    threading.Thread(target=_gonder, daemon=True).start()
+
+
 @app.route("/uyelik", methods=["GET", "POST"])
 @giris_sadece
 def uyelik():
@@ -288,6 +330,7 @@ def uyelik():
             flash("Lütfen ödeme bilgisi (havale saati, tutar, son 4 hane vb.) yazın.", "hata")
         else:
             webdb.odeme_bildirimi_ekle(u["ad"], mesaj)
+            _admin_bildirim_eposta(u["ad"], mesaj)
             flash("Ödeme bildiriminiz yöneticiye iletildi. Onaylandıktan "
                   "sonra sistem açılacaktır.", "basari")
         return redirect(url_for("uyelik"))
@@ -664,7 +707,12 @@ def kullanicilar():
                            ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
-                           not_bilgi=webdb.get_ayar("uyelik_not"))
+                           not_bilgi=webdb.get_ayar("uyelik_not"),
+                           smtp_host=webdb.get_ayar("smtp_host"),
+                           smtp_port=webdb.get_ayar("smtp_port"),
+                           smtp_user=webdb.get_ayar("smtp_user"),
+                           smtp_pass_kayitli=bool(webdb.get_ayar("smtp_pass")),
+                           admin_email=webdb.get_ayar("admin_email"))
 
 
 @app.route("/bildirim/<int:bid>/okundu", methods=["POST"])
@@ -764,6 +812,13 @@ def uyelik_ayarla():
     webdb.set_ayar("uyelik_iban", request.form.get("iban", ""))
     webdb.set_ayar("uyelik_havale_ad", request.form.get("havale_ad", ""))
     webdb.set_ayar("uyelik_not", request.form.get("not_bilgi", ""))
+    # E-posta bildirim ayarlari (sifre dolu yazilmadikca korunur)
+    webdb.set_ayar("smtp_host", request.form.get("smtp_host", "").strip())
+    webdb.set_ayar("smtp_port", request.form.get("smtp_port", "").strip())
+    webdb.set_ayar("smtp_user", request.form.get("smtp_user", "").strip())
+    if request.form.get("smtp_pass", "").strip():
+        webdb.set_ayar("smtp_pass", request.form.get("smtp_pass").strip())
+    webdb.set_ayar("admin_email", request.form.get("admin_email", "").strip())
     flash("\u00dcyelik bilgileri kaydedildi.", "basari")
     return redirect(url_for("kullanicilar"))
 

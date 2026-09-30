@@ -158,6 +158,45 @@
     </div>
     <button type="submit" class="btn" style="margin-top:14px;">BİLGİLERİ KAYDET</button>
   </form>
+
+  <h2 style="margin-top:28px;">E-POSTA BİLDİRİMİ (opsiyonel)</h2>
+  <p style="color:var(--metin2); font-size:13px;">
+    Ödeme bildirimi geldiğinde size e-posta gitsin istiyorsanız doldurun.
+    Gmail kullanıyorsanız: <strong>smtp.gmail.com</strong>, port <strong>587</strong>,
+    kullanıcı = Gmail adresiniz, şifre = <em>Uygulama Şifresi</em>
+    (Google Hesabım → Güvenlik → Uygulama şifreleri). Boş bırakırsanız
+    bildirimleri yalnızca bu paneldeki 🔔 rozetinden görürsünüz.
+  </p>
+  <form method="post" action="/uyelik-ayarla">
+    <div class="grid-2">
+      <div>
+        <label for="smtp_host">SMTP SUNUCU</label>
+        <input type="text" id="smtp_host" name="smtp_host" value="{{ smtp_host }}"
+               placeholder="smtp.gmail.com">
+      </div>
+      <div>
+        <label for="smtp_port">SMTP PORT</label>
+        <input type="number" id="smtp_port" name="smtp_port" value="{{ smtp_port }}"
+               placeholder="587">
+      </div>
+      <div>
+        <label for="smtp_user">SMTP KULLANICI (e-posta)</label>
+        <input type="text" id="smtp_user" name="smtp_user" value="{{ smtp_user }}"
+               placeholder="sizin@gmail.com">
+      </div>
+      <div>
+        <label for="smtp_pass">SMTP ŞİFRE (uygulama şifresi)</label>
+        <input type="password" id="smtp_pass" name="smtp_pass" value=""
+               placeholder="{% if smtp_pass_kayitli %}•••• kayıtlı (değiştirmek için yazın){% else %}uygulama şifresi{% endif %}">
+      </div>
+      <div>
+        <label for="admin_email">BİLDİRİM E-POSTASI (size gelsin)</label>
+        <input type="text" id="admin_email" name="admin_email" value="{{ admin_email }}"
+               placeholder="sizin@gmail.com">
+      </div>
+    </div>
+    <button type="submit" class="btn" style="margin-top:14px;">E-POSTA AYARLARINI KAYDET</button>
+  </form>
 </div>
 
 <script>

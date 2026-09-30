@@ -48,6 +48,7 @@
       {% if USER and USER.rol == 'admin' %}
       <a href="/kullanicilar" class="{{ 'active' if request.path == '/kullanicilar' }}">
         <span class="ico">🔐</span> Kullanıcılar
+        {% if okunmamis_bildirim %}<span style="background:var(--kirmizi); color:#fff; border-radius:99px; padding:1px 8px; font-size:11px; font-weight:700; margin-left:auto;">{{ okunmamis_bildirim }}</span>{% endif %}
       </a>
       {% endif %}
     </nav>
@@ -85,6 +86,13 @@
       </div>
       <div class="clock" id="clock">--:--:--</div>
     </header>
+    {% if USER and USER.rol == 'admin' and okunmamis_bildirim %}
+    <!-- ADMIN: yeni odeme bildirimi uyarisi -->
+    <a href="/kullanicilar" class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; text-decoration:none; color:inherit; flex-wrap:wrap;">
+      <span>🔔 <strong>{{ okunmamis_bildirim }} yeni ödeme bildirimi</strong> var — incelemek ve üyeliği açmak için tıklayın.</span>
+      <span class="btn small" style="background:var(--kirmizi);">Kullanıcılar</span>
+    </a>
+    {% endif %}
     {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' %}
     <!-- DENEME UYARISI: kayittan admin onayina kadar her deneme kullanicida gosterilir -->
     {% if USER.lisans == 'aktif' and USER.bitis %}
