@@ -155,6 +155,30 @@
                placeholder="Örn: Açıklamaya kullanıcı adınızı yazın"
                style="width:100%; resize:vertical; font-size:13px; line-height:1.5;">{{ not_bilgi }}</textarea>
       </div>
+      <div>
+        <label for="paket_1">PAKET: 1 AY FİYATI</label>
+        <input type="text" id="paket_1" name="paket_1" value="{{ paket_1 }}"
+               placeholder="Örn: 2.500 ₺">
+      </div>
+      <div>
+        <label for="paket_3">PAKET: 3 AY FİYATI</label>
+        <input type="text" id="paket_3" name="paket_3" value="{{ paket_3 }}"
+               placeholder="Örn: 6.500 ₺">
+      </div>
+      <div>
+        <label for="paket_6">PAKET: 6 AY FİYATI</label>
+        <input type="text" id="paket_6" name="paket_6" value="{{ paket_6 }}"
+               placeholder="Örn: 11.000 ₺">
+      </div>
+      <div>
+        <label for="paket_12">PAKET: 12 AY FİYATI</label>
+        <input type="text" id="paket_12" name="paket_12" value="{{ paket_12 }}"
+               placeholder="Örn: 18.000 ₺">
+      </div>
+      <div style="grid-column: 1 / -1; font-size:12px; color:var(--metin2);">
+        Paket fiyatları kayıt sayfasındaki "ÜYELİK PAKETLERİ" tablosunda görünür.
+        Boş bıraktığınız paket tabloda çıkmaz.
+      </div>
     </div>
     <button type="submit" class="btn" style="margin-top:14px;">BİLGİLERİ KAYDET</button>
   </form>

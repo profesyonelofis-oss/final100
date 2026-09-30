@@ -231,7 +231,13 @@ def kayit():
                   "t\u00fcm sistemi kullanabilirsiniz. Deneme bitince \u00fcyelik sayfas\u0131ndan "
                   "\u00f6deme yapabilirsiniz.", "basari")
             return redirect(url_for("giris"))
-    return render_template("kayit.html")
+    return render_template("kayit.html",
+                           paket_1=webdb.get_ayar("paket_1"),
+                           paket_3=webdb.get_ayar("paket_3"),
+                           paket_6=webdb.get_ayar("paket_6"),
+                           paket_12=webdb.get_ayar("paket_12"),
+                           odeme_bilgisi_var=bool(webdb.get_ayar("uyelik_iban")
+                                                  or webdb.get_ayar("uyelik_havale_ad")))
 
 
 def _mac_adresi_cikar():
@@ -712,7 +718,11 @@ def kullanicilar():
                            smtp_port=webdb.get_ayar("smtp_port"),
                            smtp_user=webdb.get_ayar("smtp_user"),
                            smtp_pass_kayitli=bool(webdb.get_ayar("smtp_pass")),
-                           admin_email=webdb.get_ayar("admin_email"))
+                           admin_email=webdb.get_ayar("admin_email"),
+                           paket_1=webdb.get_ayar("paket_1"),
+                           paket_3=webdb.get_ayar("paket_3"),
+                           paket_6=webdb.get_ayar("paket_6"),
+                           paket_12=webdb.get_ayar("paket_12"))
 
 
 @app.route("/bildirim/<int:bid>/okundu", methods=["POST"])
@@ -819,6 +829,9 @@ def uyelik_ayarla():
     if request.form.get("smtp_pass", "").strip():
         webdb.set_ayar("smtp_pass", request.form.get("smtp_pass").strip())
     webdb.set_ayar("admin_email", request.form.get("admin_email", "").strip())
+    # Uyelik paket fiyatlari (kayit sayfasindaki tablo)
+    for p in ("paket_1", "paket_3", "paket_6", "paket_12"):
+        webdb.set_ayar(p, request.form.get(p, "").strip())
     flash("\u00dcyelik bilgileri kaydedildi.", "basari")
     return redirect(url_for("kullanicilar"))
 

@@ -38,6 +38,45 @@
         yeni üyelik otomatik 6 aylık tam üyelik olur.
       </p>
 
+      {% if paket_1 or paket_3 or paket_6 or paket_12 %}
+      <!-- UYELIK PAKETLERI: admin panelinden duzenlenen fiyatlar -->
+      <div style="margin-top:18px; text-align:left; background:#F8F9FA;
+                  border:1px solid var(--cizgi); border-radius:10px; padding:12px 14px;">
+        <h2 style="font-size:14px; margin-bottom:8px; text-align:center;">ÜYELİK PAKETLERİ</h2>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <tr style="background:var(--yesil); color:#fff;">
+            <th style="padding:6px 8px; text-align:left; border-radius:6px 0 0 0;">PAKET</th>
+            <th style="padding:6px 8px; text-align:right;">SÜRE</th>
+            <th style="padding:6px 8px; text-align:right; border-radius:0 6px 0 0;">FİYAT</th>
+          </tr>
+          {% if paket_1 %}
+          <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cizgi);"> Başlangıç</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi);">1 Ay</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_1 }}</td></tr>
+          {% endif %}
+          {% if paket_3 %}
+          <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cizgi);"> Standart</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi);">3 Ay</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_3 }}</td></tr>
+          {% endif %}
+          {% if paket_6 %}
+          <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cizgi);"> Avantaj</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi);">6 Ay</td>
+              <td style="padding:6px 8px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_6 }}</td></tr>
+          {% endif %}
+          {% if paket_12 %}
+          <tr><td style="padding:6px 8px;"> En Avantajlı</td>
+              <td style="padding:6px 8px; text-align:right;">12 Ay</td>
+              <td style="padding:6px 8px; text-align:right; font-weight:700; color:var(--yesil);">{{ paket_12 }}</td></tr>
+          {% endif %}
+        </table>
+        <p style="font-size:11px; color:var(--metin2); margin:8px 0 0; text-align:center;">
+          Dilediğiniz paketi seçip havaleyi yaptıktan sonra "Ödeme Yaptım" ile bildirin —
+          yönetici onaylar, üyeliğiniz açılır.
+        </p>
+      </div>
+      {% endif %}
+
       <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
         Hesabınız var mı? <a href="/giris">Giriş yapın</a>
       </p>
