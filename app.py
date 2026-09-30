@@ -227,7 +227,7 @@ def kayit():
                   "\u00fccretsiz kullanabilirsiniz.", "basari")
             return redirect(url_for("giris"))
         else:
-            flash("Kayd\u0131n\u0131z al\u0131nd\u0131! 2 g\u00fcnl\u00fck deneme s\u00fcr\u00fcminiz ba\u015flad\u0131; "
+            flash("Kayd\u0131n\u0131z al\u0131nd\u0131! 3 g\u00fcnl\u00fck deneme s\u00fcr\u00fcminiz ba\u015flad\u0131; "
                   "t\u00fcm sistemi kullanabilirsiniz. Deneme bitince \u00fcyelik sayfas\u0131ndan "
                   "\u00f6deme yapabilirsiniz.", "basari")
             return redirect(url_for("giris"))
