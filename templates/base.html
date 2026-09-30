@@ -95,8 +95,21 @@
     {% elif USER.lisans == 'deneme_bitti' %}
     <div class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
       <span>⚠️ <strong>DİKKAT — DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için ödeme yapın — verileriniz aynen korunur.</span>
-      <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+      <span style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn small" onclick="var f=document.getElementById('hizli-odeme-form'); f.style.display = (f.style.display === 'none' || !f.style.display) ? 'flex' : 'none';"
+                style="background:#fff; color:var(--metin); border:1px solid var(--kirmizi);">💳 Ödeme Yaptım</button>
+        <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+      </span>
     </div>
+    <form id="hizli-odeme-form" method="post" action="/uyelik"
+          style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap; align-items:center;
+                 background:#fff; border:1px dashed var(--kirmizi); border-radius:10px; padding:10px 12px;">
+      <input type="hidden" name="islem" value="odeme-bildir">
+      <input type="text" name="bildirim_mesaj" required maxlength="300"
+             placeholder="Örn: 01.10 14:30 — 10000 TL havale — son 4 hane 1982"
+             style="flex:1; min-width:240px; padding:9px 10px; font-size:14px;">
+      <button type="submit" class="btn small">Yöneticiye Bildir</button>
+    </form>
     {% endif %}
     {% endif %}
     {% if USER and USER.lisans == 'deneme_bitti' %}
