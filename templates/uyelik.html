@@ -1,10 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Üyelik - {{ FIRMA_ADI }}{% endblock %}
 {% block sayfa_basligi %}ÜYELİK{% endblock %}
-{% block sayfa_alti %}{{ 'Üyeliğiniz aktif' if u.lisans == 'aktif' else 'Hesabınız onay bekliyor' }}{% endblock %}
+{% block sayfa_alti %}{% if u.lisans == 'aktif' %}{{ 'Deneme sürümünüz aktif' if u.tip == 'deneme' else 'Üyeliğiniz aktif' }}{% else %}Hesabınız onay bekliyor{% endif %}{% endblock %}
 
 {% block icerik %}
-{% if u.lisans == 'aktif' %}
+{% if u.lisans == 'aktif' and u.tip == 'deneme' %}
+<!-- DENEME SÜRÜMÜ: para ödenmedi, admin onayı yok -->
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">🧪</div>
+  <h2 style="font-size:20px; margin:10px 0;">DENEME SÜRÜMÜNÜZ AKTİF</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, 3 günlük deneme sürümünüz devam ediyor.
+    Tüm sistemi deneyebilirsiniz; ancak henüz <strong>üyeliğiniz satın alınmamış</strong> —
+    ödeme yapıp yönetici onayına sunmanız gerekiyor.
+  </p>
+  {% if u.bitis %}
+  <div class="flash uyari" style="text-align:left;">
+    ⏱ Deneme bitiş tarihiniz: <strong>{{ u.bitis }}</strong> — bitince yeni kayıt giremezsiniz.
+  </div>
+  {% endif %}
+  <div class="flash bilgi" style="text-align:left;">
+    Ödeme yaptıysanız aşağıdaki hesap bilgilerine havaleyi ulaştırıp
+    "ÖDEME YAPTIM" formundan bildirebilirsiniz; yönetici onayladığında üyeliğiniz açılır.
+  </div>
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap;">
+    <a class="btn" href="/">Uygulamaya Git</a>
+    <a class="btn ghost" href="#odeme-bilgileri" onclick="document.getElementById('odeme-bilgileri-kutu').scrollIntoView({behavior:'smooth'}); return false;">Ödeme Bilgileri</a>
+  </div>
+</div>
+
+{% elif u.lisans == 'aktif' %}
 
 <div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
   <div style="font-size:44px;">✅</div>
@@ -22,7 +47,7 @@
   </div>
 </div>
 
-{% else %}
+{% elif u.lisans != 'aktif' %}
 
 <div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
   <div style="font-size:44px;">⏳</div>
@@ -53,8 +78,13 @@
     ve tüm bölümler açılacaktır.
   </div>
   {% endif %}
+</div>
+{% endif %}
 
-  <div style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
+{% if u.tip == 'deneme' or u.lisans != 'aktif' %}
+<!-- ORTAK BOLUM: deneme (aktif/bitti) ve onay bekleyen kullanıcılara gosterilir -->
+
+  <div id="odeme-bilgileri-kutu" style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
               border-radius:12px; padding:18px 22px; margin:18px 0;">
     <h2 style="margin-bottom:10px;">ÖDEME BİLGİLERİ</h2>
     {% if ucret %}
@@ -99,9 +129,6 @@
 
   <div style="display:flex; gap:10px; justify-content:center; margin-top:14px;">
     <a class="btn" href="/uyelik">↻ Durumu Yenile</a>
-    <a class="btn ghost" href="/cikis">Çıkış</a>
   </div>
-</div>
-
 {% endif %}
 {% endblock %}
