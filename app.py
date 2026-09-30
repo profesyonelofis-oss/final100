@@ -344,7 +344,11 @@ def uyelik():
                            ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
-                           not_bilgi=webdb.get_ayar("uyelik_not"))
+                           not_bilgi=webdb.get_ayar("uyelik_not"),
+                           paket_1=webdb.get_ayar("paket_1"),
+                           paket_3=webdb.get_ayar("paket_3"),
+                           paket_6=webdb.get_ayar("paket_6"),
+                           paket_12=webdb.get_ayar("paket_12"))
 
 
 @app.route("/teslimat-notlari", methods=["POST"])

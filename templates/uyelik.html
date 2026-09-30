@@ -112,6 +112,54 @@
 {% if u.tip == 'deneme' or u.lisans != 'aktif' %}
 <!-- ORTAK BOLUM: deneme (aktif/bitti) ve onay bekleyen kullanıcılara gosterilir -->
 
+  {% if paket_1 or paket_3 or paket_6 or paket_12 %}
+  <!-- UYELIK PAKETLERI: tiklaninca bildirim formuna otomatik yazar -->
+  <div style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
+              border-radius:12px; padding:18px 22px; margin:18px 0;">
+    <h2 style="margin-bottom:10px;">ÜYELİK PAKETLERİ</h2>
+    <table style="width:100%; border-collapse:collapse; font-size:14px;">
+      <tr style="background:var(--yesil); color:#fff;">
+        <th style="padding:8px 10px; text-align:left;">PAKET</th>
+        <th style="padding:8px 10px; text-align:left;">SÜRE</th>
+        <th style="padding:8px 10px; text-align:right;">FİYAT</th>
+        <th style="padding:8px 10px;"></th>
+      </tr>
+      {% if paket_1 %}
+      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Başlangıç</td>
+          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">1 Ay</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_1 }}</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
+            <button type="button" class="btn small" onclick="paketSec('1 Ay', '{{ paket_1 }}')">SEÇ</button></td></tr>
+      {% endif %}
+      {% if paket_3 %}
+      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Standart</td>
+          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">3 Ay</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_3 }}</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
+            <button type="button" class="btn small" onclick="paketSec('3 Ay', '{{ paket_3 }}')">SEÇ</button></td></tr>
+      {% endif %}
+      {% if paket_6 %}
+      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Avantaj</td>
+          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">6 Ay</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_6 }}</td>
+          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
+            <button type="button" class="btn small" onclick="paketSec('6 Ay', '{{ paket_6 }}')">SEÇ</button></td></tr>
+      {% endif %}
+      {% if paket_12 %}
+      <tr><td style="padding:8px 10px; font-weight:700;">En Avantajlı ⭐</td>
+          <td style="padding:8px 10px; font-weight:700;">12 Ay</td>
+          <td style="padding:8px 10px; text-align:right; font-weight:700; color:var(--yesil);">{{ paket_12 }}</td>
+          <td style="padding:8px 10px; text-align:right;">
+            <button type="button" class="btn small" style="background:var(--yesil); color:#fff;" onclick="paketSec('12 Ay', '{{ paket_12 }}')">SEÇ</button></td></tr>
+      {% endif %}
+    </table>
+    <p style="font-size:12px; color:var(--metin2); margin:10px 0 0;">
+      Paketi SEÇ'iniz — seçiminiz aşağıdaki bildirim formuna otomatik yazılır;
+      havale bilgisini ekleyip göndermeniz yeterli.
+    </p>
+  </div>
+  {% endif %}
+
   <div id="odeme-bilgileri-kutu" style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
               border-radius:12px; padding:18px 22px; margin:18px 0;">
     <h2 style="margin-bottom:10px;">ÖDEME BİLGİLERİ</h2>
@@ -159,4 +207,22 @@
     <a class="btn" href="/uyelik">↻ Durumu Yenile</a>
   </div>
 {% endif %}
+
+<script>
+/* Paket secimi: secilen paketi bildirim formuna otomatik yazar */
+function paketSec(ad, fiyat) {
+  var ta = document.getElementById('bildirim_mesaj');
+  if (!ta) return;
+  var mevcut = ta.value.trim();
+  /* Daha once secilmis paket satirini degistir, yoksa ekle */
+  if (/Seçilen paket:/.test(mevcut)) {
+    mevcut = mevcut.replace(/Seçilen paket: [^\n]*/, 'Seçilen paket: ' + ad + ' — ' + fiyat);
+  } else {
+    mevcut = 'Seçilen paket: ' + ad + ' — ' + fiyat + (mevcut ? '\n' + mevcut : '');
+  }
+  ta.value = mevcut;
+  ta.focus();
+  ta.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+</script>
 {% endblock %}
