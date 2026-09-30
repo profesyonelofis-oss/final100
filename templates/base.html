@@ -66,15 +66,28 @@
       <div class="clock" id="clock">--:--:--</div>
     </header>
     {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
-    <!-- DENEME MODU BANNERI: aktif + bitis yakin (2 gunluk deneme) -->
+    <!-- DENEME MODU BANNERI: aktif + geri sayim -->
     <div id="deneme-banner" class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span id="deneme-mesaj">🧪 <strong>DENEME SÜRÜMÜ:</strong> 2 günlük denemeniz aktif — tüm sistemi kullanabilirsiniz.</span>
+      <span id="deneme-mesaj">🧪 <strong>DENEME SÜRÜMÜ:</strong> 3 günlük denemeniz aktif — tüm sistemi kullanabilirsiniz.</span>
+      <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+    </div>
+    {% elif USER and USER.lisans == 'deneme_bitti' %}
+    <!-- DENEME BITTI: sadece satın alma banneri -->
+    <div class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span>⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için ödeme yapın — verileriniz aynen korunur.</span>
       <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
     </div>
     {% elif USER and USER.lisans != 'aktif' %}
     <div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <span>⏳ <strong>ÖNİZLEME MODU:</strong> Üyeliğiniz onay bekliyor. Tüm bölümleri gezebilirsiniz; kayıt ekleme/düzenleme kapalıdır.</span>
       <a class="btn small" href="/uyelik">Üyelik</a>
+    </div>
+    {% endif %}
+    {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.tip == 'deneme' and odeme_bilgisi_var %}
+    <!-- ODEME BILGILERI BANNERI: deneme uye giris yaptiginda hesap bilgileri -->
+    <div class="flash bilgi" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span>💳 <strong>ÜYELİK ÜCRETİ:</strong> {{ odeme_ucret or '—' }} — IBAN: <code>{{ odeme_iban }}</code>{% if odeme_havale_ad %} — Hesap sahibi: <strong>{{ odeme_havale_ad }}</strong>{% endif %}</span>
+      <a class="btn small" href="/uyelik">Ödeme Yap & Bildir</a>
     </div>
     {% endif %}
     {% with mesajlar = get_flashed_messages(with_categories=true) %}
@@ -95,42 +108,44 @@
                              parseInt(parca[2], 10), 23, 59, 59);
     var mesajEl = document.getElementById('deneme-mesaj');
 
-    function kalanGun() {
+    function kalanMetin() {
+      /* Geri sayim: gun + saat + dakika, saniye saniye azalir */
       var ms = bitisTarih - new Date();
-      return Math.max(0, Math.ceil(ms / 86400000));
+      if (ms <= 0) return null;
+      var gun = Math.floor(ms / 86400000);
+      var saat = Math.floor((ms % 86400000) / 3600000);
+      var dakika = Math.floor((ms % 3600000) / 60000);
+      var parcalar = [];
+      if (gun > 0) parcalar.push(gun + ' gün');
+      if (saat > 0) parcalar.push(saat + ' saat');
+      if (gun === 0 && dakika > 0) parcalar.push(dakika + ' dakika');
+      return parcalar.join(' ');  
     }
 
     function bannerGuncelle() {
       if (!mesajEl) return;
-      var gun = kalanGun();
-      var saat = Math.max(0, Math.floor((bitisTarih - new Date()) / 3600000));
-      if (saat <= 0) {
+      var kalan = kalanMetin();
+      if (!kalan) {
         mesajEl.innerHTML = '⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için hemen satın alın.';
-      } else if (saat < 24) {
-        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> Son ' + saat + ' saat! ' +
-          'Süre bitmeden satın alın; verileriniz korunur.';
       } else {
-        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> ' + gun +
-          ' gün kaldı — tüm sistemi kullanabilirsiniz.';
+        mesajEl.innerHTML = '🧪 <strong>DENEME SÜRÜMÜ:</strong> Deneme sürenizin bitimine ' +
+          kalan + ' kaldı — tüm sistemi kullanabilirsiniz.';
       }
     }
     bannerGuncelle();
-    setInterval(bannerGuncelle, 60000);
+    setInterval(bannerGuncelle, 30000);  /* 30 sn'de bir geri sayimi tazele */
 
     /* 10 dakikada bir tekrarlayan bildirim (sayfada dolasirken hatirlatma) */
     var ARALIK_MS = 10 * 60 * 1000;
     function hatirlat() {
-      var saat = Math.max(0, Math.floor((bitisTarih - new Date()) / 3600000));
+      var kalan = kalanMetin();
       var mesaj;
-      if (saat <= 0) {
+      if (!kalan) {
         mesaj = '⏱ Deneme süreniz doldu! Verilerinizi görmeye devam edebilirsiniz ama '
               + 'yeni kayıt giremezsiniz. Şimdi satın almak için Üyelik sayfasına gidin.';
-      } else if (saat < 24) {
-        mesaj = '🧪 Deneme sürümünün son ' + saat + ' saati! Süre bitmeden satın alırsanız '
-              + 'verileriniz aynen korunur.';
       } else {
-        mesaj = '🧪 Deneme sürümündesiniz. ' + kalanGun() + ' gün sonra kapanacak — '
-              + 'şimdi satın alırsanız indirim fırsatını kaçırmazsınız.';
+        mesaj = '🧪 Deneme sürümünüzün bitimine ' + kalan + ' kaldı! '
+              + 'Süre bitmeden satın alırsanız verileriniz aynen korunur.';
       }
       bildirGoster(mesaj);
     }

@@ -82,12 +82,12 @@ def giris_gerekli(f):
             if webdb.lisans_suresi_dolmus_mu(u["bitis"]):
                 yeni_durum = "deneme_bitti" if u["lisans"] == "aktif" and (
                     (datetime.now() - datetime.strptime(u["bitis"], "%Y-%m-%d")
-                     ).days <= 2) else "suresi_bitti"
+                     ).days <= 3) else "suresi_bitti"
                 webdb.set_lisans(u["ad"], yeni_durum)
                 u = webdb.get_user(session["kullanici"])
             if u["lisans"] != "aktif" and request.method == "POST":
                 if u["lisans"] == "deneme_bitti":
-                    flash("2 günlük deneme süreniz doldu. Ödeme yapıp üye "
+                    flash("3 günlük deneme süreniz doldu. Ödeme yapıp üye "
                           "adınızı bildirin; yönetici onayladıktan sonra "
                           "sistem tekrar açılır.", "uyari")
                 else:
@@ -136,6 +136,14 @@ def sabitler():
         "simdi": datetime.now(),
         "aylar": ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
                   "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"],
+        # Odeme bilgileri (banner + uyelik sayfasi): admin ayarlardan girer
+        "odeme_ucret": webdb.get_ayar("uyelik_ucret"),
+        "odeme_iban": webdb.get_ayar("uyelik_iban"),
+        "odeme_havale_ad": webdb.get_ayar("uyelik_havale_ad"),
+        "odeme_not": webdb.get_ayar("uyelik_not"),
+        "odeme_bilgisi_var": bool(webdb.get_ayar("uyelik_iban")
+                                  or webdb.get_ayar("uyelik_ucret")
+                                  or webdb.get_ayar("uyelik_havale_ad")),
     }
 
 

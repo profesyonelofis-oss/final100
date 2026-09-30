@@ -296,9 +296,9 @@ def set_user_sifre(kullanici_adi, sifre):
 
 def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
                 ip_adresi=None, uyelik_tipi=None):
-    """Yeni kullanici: hash + geri cozulebilir saklama + otomatik 2 gun deneme.
+    """Yeni kullanici: hash + geri cozulebilir saklama + otomatik 3 gun deneme.
 
-    Deneme lisansi: lisans_durumu='aktif', lisans_bitis=bugun+2 gun.
+    Deneme lisansi: lisans_durumu='aktif', lisans_bitis=bugun+3 gun.
     Cihaz bilgisi ayni zamanda cihaz_kayitlari tablosuna yazilir; ayni cihazdan
     yeni uyelik acilmasi engellenir.
 
@@ -323,8 +323,8 @@ def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
             # Yonetici izniyle acilan uyelik: 6 ay tam erisim, odeme gerekmez
             lisans_bitis = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
         else:
-            # Normal kayit: 2 gunluk deneme
-            lisans_bitis = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+            # Normal kayit: 3 gunluk deneme
+            lisans_bitis = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
         conn.execute(
             "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli, "
             "lisans_durumu, lisans_bitis, cihaz_id, uyelik_tipi) "
@@ -443,7 +443,7 @@ def lisans_suresi_dolmus_mu(bitis):
 # ---------------------------------------------------------------------------
 
 def cihaz_uyelik_var_mi(cihaz_id):
-    """Bu cihazdan daha once uyelik alinmis mi? (2 gun deneme tek seferlik)"""
+    """Bu cihazdan daha once uyelik alinmis mi? (3 gun deneme tek seferlik)"""
     if not cihaz_id:
         return False
     conn = get_connection()
