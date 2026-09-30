@@ -10,39 +10,16 @@ Veritabani konumu: <klasor>/data/zeytin_takip.db (web klasorunun icinde tasinar)
 
 import hashlib
 import os
+import base64
 import secrets
 import sqlite3
-import time
 from datetime import datetime
 from pathlib import Path
 
-# Giris denemesi takibi (brute-force engeli) — bellek ici
-_giris_denemeleri = {}
-
 BASE_DIR = Path(__file__).resolve().parent
-
-
-def _hazirla_data_dir() -> Path:
-    """KARAOGLU_DATA_DIR varsa onu kullan; yok/izin yoksa data/ klasorune dus.
-
-    Render'da Persistent Disk bagliyken /data env olarak set edilir. Disk henuz
-    baglanmamissa (free plan) /data yazilamaz; uygulama cakilmasin diye varsayilan
-    klasore geri dusulur. Disk baglandiginda otomatik olarak /data kullanilir.
-    """
-    hedef = Path(os.environ.get("KARAOGLU_DATA_DIR") or (BASE_DIR / "data"))
-    try:
-        hedef.mkdir(parents=True, exist_ok=True)
-        deneme = hedef / ".yazma_testi"
-        deneme.write_text("ok", encoding="utf-8")
-        deneme.unlink()
-        return hedef
-    except OSError:
-        yedek_yol = BASE_DIR / "data"
-        yedek_yol.mkdir(parents=True, exist_ok=True)
-        return yedek_yol
-
-
-DATA_DIR = _hazirla_data_dir()
+DATA_DIR = Path(os.environ.get("KARAOGLU_DATA_DIR")
+                or (BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "zeytin_takip.db"
 
 SCHEMA_VERSION = 2
@@ -53,18 +30,6 @@ GIDER_TURLERI = ["Yakıt", "Bakım", "Muhasebe", "Elektrik", "Su", "Vergi",
 
 
 DEFAULT_FIRMA_ADI = "KARAOĞLU"  # Ayarlar > Firma Adi'ndan degistirilir
-
-# Ilk kurulumda otomatik girilecek varsayilan fiyat/komisyon (TL).
-# Panel > Ayarlar sayfasindan her zaman degistirilebilir.
-VARSAYILAN_KALIBRE_FIYATLARI = {
-    "Duble": 0.0,
-    "No:1": 0.0,
-    "No:2": 0.0,
-    "No:3": 0.0,
-    "No:4": 0.0,
-    "Yağlık": 0.0,
-}
-VARSAYILAN_KOMISYON = 0.0
 
 
 def get_connection():
@@ -163,8 +128,7 @@ def _create_schema(cursor):
             komisyon_kg REAL NOT NULL DEFAULT 0.0
         )""")
     if cursor.execute("SELECT COUNT(*) FROM ayarlar").fetchone()[0] == 0:
-        cursor.execute("INSERT INTO ayarlar (id, komisyon_kg) VALUES (1, ?)",
-                       (VARSAYILAN_KOMISYON,))
+        cursor.execute("INSERT INTO ayarlar (id, komisyon_kg) VALUES (1, 0.0)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teslimat_notlari (
@@ -175,8 +139,8 @@ def _create_schema(cursor):
 
     if cursor.execute("SELECT COUNT(*) FROM kalibre_fiyatlari").fetchone()[0] == 0:
         cursor.executemany(
-            "INSERT INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, ?)",
-            [(k, VARSAYILAN_KALIBRE_FIYATLARI.get(k, 0.0)) for k in KALIBRELER])
+            "INSERT INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, 0)",
+            [(k,) for k in KALIBRELER])
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS genel_ayarlar (
@@ -232,29 +196,86 @@ def init_db():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Sifre saklama (GUENLI): yalnizca PBKDF2-SHA256 hash saklanir; sifreler
-# hicbir sekilde geri cozulemez/ goruntulenebilir. Admin sifreyi unutan
-# kullanici icin "Sifre Degistir" ile yeni sifre belirler.
+# Sifre saklama (GERI CUZULEBILIR): yonetici panelinde goruntulenebilmesi icin.
+# Anahtar data/ klasorunde tutulur; klasor hostinge tasinirsa anahtar da tasınır.
+# ---------------------------------------------------------------------------
+
+def _sifre_anahtari_yolu():
+    return DATA_DIR / "sifre_anahtari.key"
+
+
+def _sifre_anahtari():
+    """Anahtari oku; yoksa uretip data/ icine kaydet."""
+    yol = _sifre_anahtari_yolu()
+    if yol.exists():
+        return yol.read_text(encoding="utf-8").strip()
+    anahtar = secrets.token_urlsafe(32)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    yol.write_text(anahtar, encoding="utf-8")
+    try:
+        os.chmod(yol, 0o600)
+    except OSError:
+        pass
+    return anahtar
+
+
+def _xor_mask(sifre):
+    """Sifreyi anahtarla maskeler; sadece yonetici goruntulemek icin cozulur.
+    Gercek guvenlik saglamaz (anahtar ayni klasorde) - ama DB baskasi eline
+    gecse bile sifreler acik metin DEGIL, anahtar dosyasi olmadan okunamaz."""
+    if not sifre:
+        return ""
+    anahtar = _sifre_anahtari()
+    veri = sifre.encode("utf-8")
+    m_anahtar = anahtar.encode("utf-8")
+    kutulu = bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri))
+    return base64.urlsafe_b64encode(kutulu).decode("ascii")
+
+
+def _xor_unmask(kutulu):
+    if not kutulu:
+        return ""
+    anahtar = _sifre_anahtari()
+    try:
+        veri = base64.urlsafe_b64decode(kutulu.encode("ascii"))
+    except Exception:
+        return ""
+    m_anahtar = anahtar.encode("utf-8")
+    return bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri)).decode(
+        "utf-8", errors="replace")
+
+
+def get_user_sifre(kullanici_adi):
+    """Yonetici paneli icin saklanan sifreyi cozup dondurur; yoksa None."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT sifre_gizli FROM kullanicilar WHERE kullanici_adi = ?",
+        (kullanici_adi,)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    return _xor_unmask(row[0])
+
 
 def set_user_sifre(kullanici_adi, sifre):
-    """Kullanicinin sifresini yalnizca hash olarak sakla."""
+    """Kullanicinin sifresini hem hash hem geri cozulebilir sakla."""
     conn = get_connection()
     conn.execute(
-        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = NULL "
+        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = ? "
         "WHERE kullanici_adi = ?",
-        (_hash_password(sifre), kullanici_adi))
+        (_hash_password(sifre), _xor_mask(sifre), kullanici_adi))
     conn.commit()
     conn.close()
 
 
 def create_user(kullanici_adi, sifre):
-    """Yeni kullanici: yalnizca hash saklanir."""
+    """Yeni kullanici: hash + geri cozulebilir saklama."""
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli) "
-            "VALUES (?, ?, NULL)",
-            (kullanici_adi, _hash_password(sifre)))
+            "VALUES (?, ?, ?)",
+            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre)))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -272,25 +293,6 @@ def _hash_password(sifre, salt=None):
 
 
 def check_user(kullanici_adi, sifre):
-    """Giris kontrolu; ard arda hatali denemelerde kisa kilit (brute-force engeli).
-
-    Kural: ayni kullanici icin 5 hatali denemeden sonra 30 saniya bekleme.
-    Durum bellekte tutulur (proses yeniden baslayinca sifirlanir).
-    """
-    anahtar = (kullanici_adi or "").strip().lower()
-    simdi = time.time()
-    sonHata, deneme = _giris_denemeleri.get(anahtar, (0.0, 0))
-    if deneme >= 5 and simdi - sonHata < 30:
-        return False  # kilit suresi: sessizce reddet
-    sonuc = _check_user_db(kullanici_adi, sifre)
-    if sonuc:
-        _giris_denemeleri.pop(anahtar, None)
-    else:
-        _giris_denemeleri[anahtar] = (simdi, deneme + 1)
-    return sonuc
-
-
-def _check_user_db(kullanici_adi, sifre):
     conn = get_connection()
     row = conn.execute(
         "SELECT sifre_hash FROM kullanicilar WHERE kullanici_adi = ?",
@@ -460,30 +462,14 @@ LOGO_IZINLI_UZANTILAR = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 def get_logo_mtime():
-    """Logo surum zamanini dondurur (yoksa None). Sablonlarda cache-kiran ?v=.
+    """Logo dosyasinin surum zamanini dondurur (yoksa None).
+
+    Sablonlarda cache-kiran ?v= parametresi olarak kullanilir.
     """
     try:
         return int((DATA_DIR / LOGO_STAMP_FILE).read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
-
-
-def get_uretilmis_logo_stili():
-    """Secili uretilmis logo stil adini dondurur (yoksa None).
-
-    Yeni sistemde logo, firma adindan otomatik URETILIR (SVG).
-    Eski dosya yuklemeli logo varsa onu gecerli sayar (geriye uyum).
-    """
-    if get_logo_dosyasi():  # eski yuklemeli logo oncelikli
-        return None
-    return get_ayar("logo_stil") or None
-
-
-def set_uretilmis_logo_stili(stil_adi):
-    """Secilen logo stilini kaydeder ve surum zamanini gunceller."""
-    set_ayar("logo_stil", (stil_adi or "").strip())
-    (DATA_DIR / LOGO_STAMP_FILE).write_text(
-        str(int(datetime.now().timestamp())), encoding="utf-8")
 
 
 def set_logo(veri, uzanti):
@@ -545,6 +531,93 @@ def set_firma_adi(ad):
         "VALUES ('firma_adi', ?)", (ad,))
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Otomatik logo (firma adindan SVG uretici)
+# ---------------------------------------------------------------------------
+
+OTO_LOGO_STILLER = {
+    "klasik": {"ad": "Klasik", "sekil": "daire", "bg": "#198754",
+               "fg": "#FFFFFF", "cizgi": None},
+    "koyu":   {"ad": "Koyu",   "sekil": "daire", "bg": "#14532D",
+               "fg": "#FFFFFF", "cizgi": None},
+    "altin":  {"ad": "Altın",  "sekil": "daire", "bg": "#B08D1E",
+               "fg": "#FFFFFF", "cizgi": None},
+}
+OTO_LOGO_ANAHTARI = "oto_logo_stil"
+
+
+def get_oto_logo_stil():
+    """Secili otomatik logo stil anahtarini dondurur (yoksa/kaldırıldıysa '')."""
+    stil = get_ayar(OTO_LOGO_ANAHTARI, "")
+    return stil if stil in OTO_LOGO_STILLER else ""
+
+
+def set_oto_logo_stil(stil):
+    """Otomatik logo stilini kaydeder; '' verildiginde secim kaldirilir."""
+    stil = (stil or "").strip().lower()
+    if stil and stil not in OTO_LOGO_STILLER:
+        raise ValueError("Geçersiz logo stili")
+    set_ayar(OTO_LOGO_ANAHTARI, stil)
+
+
+def _oto_logo_parcalari(firma_adi):
+    """Firma adindan (bas harfler, alt etiket) uretir.
+    'KARAOĞLU' -> ('KA', 'KARAOĞLU'); 'Ali Veli Ltd' -> ('AV', 'ALİ VELİ L')."""
+    kelimeler = [k for k in (firma_adi or "").split() if k]
+    if not kelimeler:
+        kelimeler = [DEFAULT_FIRMA_ADI]
+    if len(kelimeler) >= 2:
+        bas = (kelimeler[0][0] + kelimeler[1][0]).upper()
+    else:
+        w = kelimeler[0]
+        bas = w[:2].upper() if len(w) >= 2 else w.upper()
+    # Turkce buyutme (upper() bazi ortamlarda I->I yapiyor; garantiye alalim)
+    ceviri = str.maketrans("abcçdefgğhıijklmnoöprsştuüvyz",
+                           "ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ")
+    # Turkce buyutme (ı->I degil İ, i->I degil I...): once cevir sonra upper
+    ceviri = str.maketrans("abcçdefgğhıijklmnoöprsştuüvyz",
+                           "ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ")
+    bas = bas.translate(ceviri).upper()
+    alt = " ".join(kelimeler)[:14].translate(ceviri).upper()
+    return bas, alt
+
+
+def oto_logo_svg(stil, firma_adi=None):
+    """Otomatik logoyu SVG metni olarak uretir; stil bilinmiyorsa None."""
+    s = OTO_LOGO_STILLER.get((stil or "").strip().lower())
+    if not s:
+        return None
+    if firma_adi is None:
+        firma_adi = get_firma_adi()
+    from xml.sax.saxutils import escape
+    bas, alt = _oto_logo_parcalari(firma_adi)
+    bas_e, alt_e = escape(bas), escape(alt)
+    fs_bas = 36 if len(bas) <= 2 else 28
+    fs_alt = 10 if len(alt) <= 12 else 8
+    if s["sekil"] == "kare":
+        if s["cizgi"]:
+            zemin = ('<rect x="6" y="6" width="88" height="88" rx="18" '
+                     'fill="%s" stroke="%s" stroke-width="4"/>'
+                     % (s["bg"], s["cizgi"]))
+        else:
+            zemin = ('<rect x="2" y="2" width="96" height="96" rx="18" '
+                     'fill="%s"/>' % s["bg"])
+    else:
+        zemin = '<circle cx="50" cy="50" r="48" fill="%s"/>' % s["bg"]
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        + zemin
+        + '<text x="50" y="45" font-family="Arial, Helvetica, sans-serif" '
+          'font-size="%d" font-weight="bold" fill="%s" text-anchor="middle" '
+          'dominant-baseline="middle">%s</text>'
+        % (fs_bas, s["fg"], bas_e)
+        + '<text x="50" y="70" font-family="Arial, Helvetica, sans-serif" '
+          'font-size="%d" font-weight="bold" letter-spacing="1" fill="%s" '
+          'text-anchor="middle">%s</text>'
+        % (fs_alt, s["fg"], alt_e)
+        + '</svg>')
 
 
 # ---------------------------------------------------------------------------

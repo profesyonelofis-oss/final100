@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Alım Fişi #{{ fis[0] }} - {{ FIRMA_ADI }}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -30,14 +31,27 @@
     .yesil { color: #198754; }
     .imzalar { margin-top: 22mm; display: flex; justify-content: space-between; font-size: 12px; color: #495057; }
     .imzalar div { width: 70mm; border-top: 1px solid #adb5bd; padding-top: 2mm; text-align: center; }
-    .yazdir-alani { max-width: 210mm; margin: 0 auto 6mm; display: flex; gap: 8px; align-items: center; }
-    .yazdir-alani .btn { padding: 10px 22px; background: #198754; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
+    .yazdir-alani { max-width: 210mm; margin: 0 auto 6mm; display: flex; gap: 8px; }
+    .yazdir-alani .btn { padding: 10px 22px; background: #198754; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; text-decoration: none; }
     .yazdir-alani .btn.geri { background: transparent; color: #495057; border: 1px solid #dee2e6; }
-    .yazdir-alani .not { font-size: 12px; color: #6c757d; margin-left: auto; text-align: right; }
     @media print {
       body { background: #fff; }
       .sayfa { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
       .yazdir-alani { display: none; }
+    }
+    /* Mobil: fis sayfasi telefonda sigsin (yazdirma bozulmadan) */
+    @media (max-width: 800px) {
+      .sayfa {
+        width: auto; min-height: auto; margin: 8px; padding: 10px 12px;
+        box-shadow: 0 1px 6px rgba(0,0,0,.12);
+      }
+      .bilgiler { flex-direction: column; gap: 3mm; }
+      .ozet { justify-content: stretch; }
+      .ozet table { width: 100%; }
+      .imzalar { margin-top: 12mm; }
+      .yazdir-alani { flex-wrap: wrap; margin: 10px 12px; }
+      .yazdir-alani .btn { flex: 1; text-align: center; }
+      h1 { font-size: 16px; }
     }
     @page { size: A4; margin: 12mm; }
   </style>
@@ -46,10 +60,6 @@
   <div class="yazdir-alani">
     <button class="btn" onclick="window.print()">🖨 YAZDIR / PDF KAYDET</button>
     <a class="btn geri" href="/alim">← Geri Dön</a>
-    <div class="not">
-      Yazıcıdan çıktı alabilir veya "PDF olarak kaydet" ile müşteriye gönderebilirsiniz.
-      {%- if fis[7] > 0 %}<br><b style="color:#dc3545;">Not: Bu fişte {{ fmt_tr(fis[7]) }} ₺ kalan borç var.</b>{% endif -%}
-    </div>
   </div>
 
   <div class="sayfa">
@@ -108,7 +118,5 @@
       <div>İmza (Alıcı)</div>
     </div>
   </div>
-
-  {% if yazdir %}<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>{% endif %}
 </body>
 </html>

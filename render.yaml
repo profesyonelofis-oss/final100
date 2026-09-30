@@ -1,17 +1,28 @@
 # Render.com Blueprint dosyasi
 # Render panelinde: New + -> Blueprint -> bu depoyu sec; tum ayarlar otomatik gelir.
 # Detay: https://render.com/docs/blueprint-spec
+#
+# UCRETLI KURULUM (veri kaybi olmasin):
+#   - plan: starter  ($7/ay, uyku modu YOK)
+#   - disk  : 1 GB Persistent Disk ($0.25/ay) -> data/ bu diskte KALICI
+#   - KARAOGLU_DATA_DIR: veritabani/logolar bu diskteki /var/data icinde tutulur
 services:
   - type: web
     name: karaoglu-zeytin-takip
     runtime: python
-    plan: free                      # ucretli plana gecmek icin: starter
+    plan: starter                   # $7/ay (ucretsiz planda: free)
     pythonVersion: "3.12.4"
     buildCommand: pip install -r requirements.txt
     startCommand: waitress-serve --host=0.0.0.0 --port=$PORT --listen=0.0.0.0:$PORT wsgi:app
     healthCheckPath: /saglik
+    disk:                           # KALICI DISK - veriler silinmez
+      name: karaoglu-data
+      diskSizeGB: 1                 # $0.25/ay; DB'niz ~100 KB, cok bol
+      mountPath: /var/data
     envVars:
       - key: KARAOGLU_SECRET_KEY
         generateValue: true         # rastgele gizli anahtar (oturumlar icin)
+      - key: KARAOGLU_DATA_DIR
+        value: /var/data            # veritabanini kalici diske yonlendirir
       - key: PYTHON_VERSION
         value: "3.12.4"

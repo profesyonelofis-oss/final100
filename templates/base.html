@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-  <aside class="sidebar">
+  <button class="menu-btn" id="menu-btn" aria-label="Menüyü aç/kapat" aria-expanded="false">☰</button>
+  <div class="menu-kararti" id="menu-kararti"></div>
+  <aside class="sidebar" id="sidebar">
     <div class="logo-area" onclick="location.href='/'">
       <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
       <div>
@@ -26,7 +28,7 @@
         <span class="ico">📊</span> Hesap Tablosu
       </a>
       <a href="/alim" class="{{ 'active' if request.path == '/alim' }}">
-        <span class="ico">🌿</span> Zeytin Alımı
+        <span class="ico">🫒</span> Zeytin Alımı
       </a>
       <a href="/saticilar" class="{{ 'active' if request.path == '/saticilar' }}">
         <span class="ico">👥</span> Satıcılar
@@ -77,6 +79,30 @@
     {% block icerik %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script>
+  /* Mobil menu: hamburger ile ac/kapa */
+  (function () {
+    var btn = document.getElementById('menu-btn');
+    var sidebar = document.getElementById('sidebar');
+    var kararti = document.getElementById('menu-kararti');
+    if (!btn || !sidebar) return;
+    function kapat() {
+      sidebar.classList.remove('acik');
+      kararti.classList.remove('goster');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+    btn.addEventListener('click', function () {
+      var acik = sidebar.classList.toggle('acik');
+      kararti.classList.toggle('goster', acik);
+      btn.setAttribute('aria-expanded', acik ? 'true' : 'false');
+    });
+    kararti.addEventListener('click', kapat);
+    /* Menu linkine tiklaninca mobilde menuyu kapat */
+    sidebar.querySelectorAll('nav a, .sidebar-footer a').forEach(function (a) {
+      a.addEventListener('click', function () { if (window.innerWidth <= 900) kapat(); });
+    });
+  })();
+  </script>
   {% if USER and USER.lisans != 'aktif' %}
   <script>
   /* Onizleme modu: tum yazma formlarini pasiflestir (sunucu tarafinda da engelli) */

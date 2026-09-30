@@ -15,7 +15,6 @@ from functools import wraps
 from flask import (Flask, Response, flash, redirect, render_template, request,
                    send_file, session, url_for)
 
-import logo_uret
 import webdb
 import webpdf
 
@@ -107,14 +106,20 @@ def sabitler():
     if session.get("kullanici"):
         _user = webdb.get_user(session["kullanici"])
     _logo_dosyasi = webdb.get_logo_dosyasi()
-    _uretilmis = webdb.get_uretilmis_logo_stili()
+    _oto_stil = webdb.get_oto_logo_stil()
+    # Cache-kirici: yuklu logoda surum zamanini, otomatikte firma adinin
+    # kisa ozetini (hash) kullan (ad degisince logo da tazelenir).
+    _firma = webdb.get_firma_adi()
+    _v_oto = str(abs(hash(_firma)) % 100000)
     return {
         "USER": _user,
-        "FIRMA_ADI": webdb.get_firma_adi(),
-        # Logo onceligi: eski yuklemeli dosya > uretilmis stil > varsayilan PNG
+        "FIRMA_ADI": _firma,
         "LOGO_URL": ("/logo?v=%d" % (webdb.get_logo_mtime() or 0))
-                    if (_logo_dosyasi or _uretilmis)
-                    else url_for("static", filename="logo_default.png"),
+                    if _logo_dosyasi
+                    else ("/logo-otomatik?stil=%s&v=%s"
+                          % (_oto_stil, _v_oto)
+                          if _oto_stil
+                          else url_for("static", filename="logo_default.png")),
         "fmt_tr": webdb.fmt_tr,
         "KALIBRELER": webdb.KALIBRELER,
         "CESITLER": webdb.CESITLER,
@@ -139,11 +144,7 @@ def giris():
         if webdb.check_user(ad, sifre):
             session["kullanici"] = ad
             u = webdb.get_user(ad)
-            if u["rol"] == "admin" and u["lisans"] != "aktif":
-                # yoneticinin uyeligi her zaman aktiftir (eski kurulumlar da duzelir)
-                webdb.set_lisans(ad, "aktif",
-                                 (datetime.now() + timedelta(days=3650)).strftime("%Y-%m-%d"))
-            elif u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
+            if u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
                 webdb.set_lisans(ad, "suresi_bitti")
             return redirect(url_for("genel_bakis"))
         flash("Kullanıcı adı veya şifre hatalı.", "hata")
@@ -165,10 +166,8 @@ def ilk_kurulum():
             flash("Şifreler birbiriyle uyuşmuyor.", "hata")
         else:
             webdb.create_user(ad, s1)
-            # ilk hesap otomatik olarak yonetici (admin) olur ve uyeligi AKTIF baslar
+            # ilk hesap otomatik olarak yonetici (admin) olur
             webdb.set_rol(ad, "admin")
-            webdb.set_lisans(ad, "aktif",
-                             (datetime.now() + timedelta(days=3650)).strftime("%Y-%m-%d"))
             flash("Kurulum tamamlandı, giriş yapabilirsiniz.", "basari")
             return redirect(url_for("giris"))
     return render_template("ilk_kurulum.html")
@@ -209,11 +208,9 @@ def saglik():
 
     Veritabanini hazirlar ve 200 dondurur; Render "Application Loading"
     ekranindan kurtulmak icin servisin yant verdigini dogrular.
-    Yanit, yayindaki kod surumunu (commit) de tasir.
     """
     webdb.init_db()
-    surum = (os.environ.get("RENDER_GIT_COMMIT") or "yerel")[:7]
-    return Response("ok " + surum, mimetype="text/plain")
+    return Response("ok", mimetype="text/plain")
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +295,7 @@ def alim():
                         odenen = toplam
                     fis_id = webdb.add_alim_fisi(ad, tel, tarih, odenen, detaylar)
                     flash(f"Alım fişi #{fis_id} kaydedildi.", "basari")
-                    # yeni fis dogrudan yazdirma modunda acilir (musteriye verilecek cikti)
-                    return redirect(url_for("alim_fis_pdf", fis_id=fis_id, yazdir=1))
+                    return redirect(url_for("alim_fis_pdf", fis_id=fis_id))
     fisler = webdb.get_all_alim_fisleri()
     fiyatlar = webdb.get_kalibre_fiyatlari()
     komisyon = webdb.get_komisyon()
@@ -460,19 +456,27 @@ def gider_sil(gider_id):
 def ayarlar():
     webdb.init_db()
     if request.method == "POST":
+        for kalibre in webdb.KALIBRELER:
+            if f"fiyat_{kalibre}" in request.form:
+                webdb.update_kalibre_fiyat(kalibre,
+                                           request.form[f"fiyat_{kalibre}"])
+        if "komisyon" in request.form:
+            webdb.set_komisyon(request.form["komisyon"])
         if "firma_adi" in request.form:
             webdb.set_firma_adi(request.form["firma_adi"])
-            # Firma adi degistince logolar yeni ada gore YENIDEN uretilir;
-            # secili stil korunur (kullanici farkli stil secerse degisir).
-            flash("Firma adı kaydedildi; logo yeni ada göre güncellendi.", "basari")
+        if "oto_logo_stil" in request.form:
+            try:
+                webdb.set_oto_logo_stil(request.form["oto_logo_stil"])
+            except ValueError as e:
+                flash(str(e), "hata")
+        flash("Ayarlar kaydedildi.", "basari")
         return redirect(url_for("ayarlar"))
-    firma_adi = webdb.get_firma_adi()
-    return render_template("ayarlar.html",
-                           firma_adi=firma_adi,
-                           logolar=logo_uret.tum_stiller(firma_adi),
-                           onerilen=logo_uret.onerilen_stil(firma_adi),
-                           secili_stil=webdb.get_uretilmis_logo_stili(),
-                           logo_yuklu=webdb.logo_var_mi())
+    return render_template("ayarlar.html", fiyatlar=webdb.get_kalibre_fiyatlari(),
+                           komisyon=webdb.get_komisyon(),
+                           firma_adi=webdb.get_firma_adi(),
+                           logo_yuklu=webdb.logo_var_mi(),
+                           oto_stil=webdb.get_oto_logo_stil(),
+                           oto_stiller=webdb.OTO_LOGO_STILLER)
 
 
 # ---------------------------------------------------------------------------
@@ -505,23 +509,14 @@ _LOGO_MIMELER = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
 
 @app.route("/logo")
 def logo():
-    """Logoyu servis eder.
-
-    Oncelik: eski yuklemeli dosya > firma adindan uretilmis SVG > varsayilan PNG.
-    """
+    """Yuklenen logoyu servis eder; yoksa varsayilan logoya yonlenir."""
     dosya = webdb.get_logo_dosyasi()
-    if dosya:
-        yol = webdb.DATA_DIR / dosya
-        resp = send_file(yol, mimetype=_LOGO_MIMELER[Path(dosya).suffix.lower()])
-        resp.headers["Cache-Control"] = "public, max-age=3600"
-        return resp
-    stil = webdb.get_uretilmis_logo_stili()
-    if stil:
-        svg = logo_uret.svg_ure(webdb.get_firma_adi(), stil)
-        resp = Response(svg, mimetype="image/svg+xml")
-        resp.headers["Cache-Control"] = "public, max-age=3600"
-        return resp
-    return redirect(url_for("static", filename="logo_default.png"))
+    if not dosya:
+        return redirect(url_for("static", filename="logo_default.png"))
+    yol = webdb.DATA_DIR / dosya
+    resp = send_file(yol, mimetype=_LOGO_MIMELER[Path(dosya).suffix.lower()])
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
 
 
 @app.route("/logo-yukle", methods=["POST"])
@@ -544,22 +539,40 @@ def logo_yukle():
 @giris_gerekli
 def logo_sifirla():
     webdb.reset_logo()
-    webdb.set_uretilmis_logo_stili("")
     flash("Logo varsayılana döndürüldü.", "basari")
     return redirect(url_for("ayarlar"))
 
 
-@app.route("/logo-sec", methods=["POST"])
+# ---------------------------------------------------------------------------
+# Otomatik logo (firma adindan uretilir; dosya yuklemeye gerek yok)
+# ---------------------------------------------------------------------------
+
+@app.route("/logo-otomatik")
+def logo_otomatik():
+    """Otomatik uretilen SVG logoyu servis eder. Query: stil, ad (onizleme), v."""
+    stil = request.args.get("stil") or "klasik"
+    ad = request.args.get("ad") or webdb.get_firma_adi()
+    svg = webdb.oto_logo_svg(stil, ad)
+    if svg is None:
+        return redirect(url_for("static", filename="logo_default.png"))
+    resp = Response(svg, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.route("/logo-otomatik-sec", methods=["POST"])
 @giris_gerekli
-def logo_sec():
-    """Uretilmis logolardan birini secer (firma adina gore otomatik logo)."""
-    stil = (request.form.get("stil") or "").strip()
-    gecerli = logo_uret.secili_stil_adi()
-    if stil not in gecerli:
-        flash("Geçersiz logo seçimi.", "hata")
-        return redirect(url_for("ayarlar"))
-    webdb.set_uretilmis_logo_stili(stil)
-    flash("Logo seçildi.", "basari")
+def logo_otomatik_sec():
+    """Otomatik uretilen logolari aktif/pasif yapar.
+    stil bos gonderilirse otomatik logo kapatilir."""
+    try:
+        webdb.set_oto_logo_stil(request.form.get("stil", ""))
+        if request.form.get("stil", "").strip():
+            flash("Otomatik logo seçildi.", "basari")
+        else:
+            flash("Otomatik logo kapatıldı.", "basari")
+    except ValueError as e:
+        flash(str(e), "hata")
     return redirect(url_for("ayarlar"))
 
 
@@ -578,9 +591,12 @@ def kullanicilar():
     if not _admin_mi():
         flash("Bu b\u00f6l\u00fcm yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
         return redirect(url_for("genel_bakis"))
-    # GUVENLIK: sifreler artik gosterilmez (hash-only saklama).
+    sifreler = {}
+    for k in webdb.get_all_users():
+        sifreler[k[1]] = webdb.get_user_sifre(k[1]) or "-"
     return render_template("kullanicilar.html",
                            kullanicilar=webdb.get_all_users(),
+                           sifreler=sifreler,
                            ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
@@ -676,9 +692,68 @@ def yedek():
                              f"attachment; filename=zeytin_takip_yedek_{stamp}.db"})
 
 
+# ---------------------------------------------------------------------------
+# Otomatik yedek (bilgisayardaki zamanlanmis gorev icin)
+# ---------------------------------------------------------------------------
+
+def _yedek_anahtari_dogru_mu():
+    """Otomatik yedek isteginin anahtarini kontrol eder.
+    Anahtar: data/ klasorundeki secret_key (KARAOGLU_SECRET_KEY env'i de kabul)."""
+    verilen = (request.args.get("anahtar") or
+               request.headers.get("X-Yedek-Anahtar") or "")
+    beklenen = os.environ.get("KARAOGLU_SECRET_KEY")
+    if not beklenen:
+        try:
+            beklenen = (webdb.DATA_DIR / "secret_key").read_text(
+                encoding="utf-8").strip()
+        except OSError:
+            beklenen = ""
+    return bool(beklenen) and bool(verilen) and verilen == beklenen
+
+
+@app.route("/yedek-otomatik")
+def yedek_otomatik():
+    """Gizli anahtarla cagrilan otomatik yedek ucu.
+
+    Render silinmelerine karsi bilgisayardaki zamanlanmis gorev her gun
+    bu adrese baglanip veritabanini indirir. Anahtar bilmeyen indiremez.
+    Kullanim:
+      /yedek-otomatik?anahtar=<SECRET_KEY>
+    Yani t:
+      ?durum  -> son yedek zamanini dondurur (anahtar gerekli)
+    """
+    if request.args.get("durum"):
+        if not _yedek_anahtari_dogru_mu():
+            return Response("Yetkisiz", status=403)
+        try:
+            stamp = (webdb.DATA_DIR / "son_otomatik_yedek.txt").read_text(
+                encoding="utf-8").strip()
+        except OSError:
+            stamp = ""
+        return Response(stamp or "henuz-yedek-alinmadi", mimetype="text/plain")
+    if not _yedek_anahtari_dogru_mu():
+        return Response("Yetkisiz", status=403)
+    # Yedekten hemen once once DB'yi guvenli şekilde diskte sabitle
+    try:
+        conn = webdb.get_connection()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+    except Exception:
+        pass
+    with open(webdb.DB_PATH, "rb") as f:
+        veri = f.read()
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    try:
+        (webdb.DATA_DIR / "son_otomatik_yedek.txt").write_text(
+            stamp, encoding="utf-8")
+    except OSError:
+        pass
+    return Response(veri, mimetype="application/octet-stream",
+                    headers={"Content-Disposition":
+                             f"attachment; filename=zeytin_takip_yedek_{stamp}.db"})
+
+
 if __name__ == "__main__":
     webdb.init_db()
     port = int(os.environ.get("PORT", 5000))
-    # Yerel gelistirme: FLASK_DEBUG=1 ile dosya kaydinda otomatik yeniden yukler.
-    debug = os.environ.get("FLASK_DEBUG", "") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=False)

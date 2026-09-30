@@ -31,6 +31,25 @@ body {
   top: 0;
   height: 100vh;
 }
+.oto-logo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.oto-logo-kart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px;
+  border: 1px solid var(--cizgi);
+  border-radius: 10px;
+  background: var(--kart);
+}
+.oto-logo-kart.secili { border-color: var(--yesil); border-width: 2px; }
+.oto-logo-ad { font-size: 13px; font-weight: bold; color: var(--metin); }
+.oto-logo-etiket { font-size: 12px; font-weight: bold; color: var(--yesil); }
 .logo-area {
   display: flex; align-items: center; gap: 10px;
   padding: 18px 16px 14px;
@@ -169,10 +188,151 @@ td.orta, th.orta { text-align: center; }
 .modal-arka { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .modal { background: #fff; border-radius: 12px; padding: 24px; width: 360px; }
 
+/* ---------- Eski mobil duzen (dar ekran duzenlemesi asagida detayli) ---------- */
+@media (max-width: 800px) {
+  .clock { display: none; }
+}
+
+/* ============================================================
+   MOZ / TABLET UYUMU (telefon + tablet + dokunmatik)
+   ============================================================ */
+
+/* --- Hamburger dugme: yalnizca mobilde gorunur --- */
+.menu-btn {
+  display: none;
+  position: fixed;
+  top: 10px; left: 10px;
+  z-index: 60;
+  width: 46px; height: 46px;
+  border: 1px solid var(--cizgi);
+  border-radius: 10px;
+  background: var(--kart);
+  font-size: 22px; line-height: 1;
+  color: var(--yesil);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+.menu-kararti {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 55;
+}
+.menu-kararti.goster { display: block; }
+
+@media (max-width: 900px) {
+  .menu-btn { display: block; }
+
+  /* Kenar cubugu: mobilde soldan kayan panel */
+  body { flex-direction: column; }
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 270px; max-width: 82vw;
+    height: 100vh;
+    z-index: 58;
+    transform: translateX(-105%);
+    transition: transform .22s ease;
+    box-shadow: 4px 0 18px rgba(0,0,0,.15);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar.acik { transform: translateX(0); }
+
+  /* Icerik tam genislik + hamburger payi */
+  .content {
+    padding: 64px 12px 90px;   /* ustte hamburger + altta bosluk */
+    width: 100%;
+    max-width: 100%;
+  }
+  .topbar h1 { font-size: 20px; }
+
+  /* Dokunmatik hedefler: en az 44px */
+  .btn { padding: 12px 18px; font-size: 15px; }
+  .btn.small { padding: 9px 14px; font-size: 13px; }
+  .sidebar nav a { padding: 13px 14px; font-size: 15px; }
+
+  /* iOS odak zoom'unu engelle: girdi fontu >= 16px olmali */
+  input[type=text], input[type=number], input[type=date],
+  input[type=password], input[type=time], input[type=file],
+  select, textarea { font-size: 16px; padding: 11px 12px; }
+
+  /* Ozet kartlari telefonda 2 sutun */
+  .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .card { padding: 12px 14px; }
+  .card .deger { font-size: 19px; }
+
+  /* Tablolar yatay kaydirilabilir; tasarmi bozmasin */
+  .panel { padding: 14px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 560px; }
+  th, td { padding: 10px 8px; }
+
+  /* Iki sutunlu grid'ler tek sutuna insin */
+  .grid-2 { grid-template-columns: 1fr; gap: 14px; }
+
+  /* Fis grid: 4 kolon telefonda sikisir; KG/Fiyat/Toplam yanyana kalsin */
+  .fis-grid {
+    grid-template-columns: 72px 1fr 1fr 84px;
+    gap: 8px 8px;
+  }
+  .fis-grid .baslik { font-size: 11px; }
+
+  /* fis-toplam dikey hizalama */
+  .fis-toplam { flex-direction: column; align-items: stretch; text-align: center; gap: 12px; }
+  .fis-toplam > div { text-align: center !important; }
+
+  /* Giris kartlari telefona sigsin */
+  .giris-kart { width: 100%; max-width: 380px; padding: 26px 20px; margin: 0 12px; }
+  .giris-sayfa { padding: 16px 0; }
+
+  /* Modal telefona sigsin */
+  .modal { width: calc(100vw - 32px); max-width: 360px; }
+
+  /* Harf filtresi ve radio satirlari sarsin */
+  .harf-filtre a { padding: 8px 14px; font-size: 14px; }
+  .radio-row { flex-wrap: wrap; gap: 10px 16px; }
+  .radio-row label { padding: 6px 0; }
+
+  /* Saat mobilde gizli; logo metni kuculsin */
+  .logo-title { font-size: 17px; }
+  .logo-sub { font-size: 11px; }
+  .logo-area img { width: 36px; height: 36px; }
+  .logo-area { padding: 14px 14px 10px; }
+
+  /* Ayarlar sayfasindaki logo onizleme satiri sarsin */
+  .oto-logo-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+
+  /* Uzun inline flex satirlari (butonlar vb.) sarsin */
+  .panel div[style*="display:flex"] { flex-wrap: wrap; }
+
+  /* Bildirim/uyari bandi telefonda dikey hizalansin */
+  .flash { font-size: 13px; }
+}
+
+/* --- Tablet (641-1024px): iki sutunlu kartlar, buyuk dokunma alani --- */
+@media (min-width: 901px) and (max-width: 1024px) {
+  .sidebar { width: 200px; }
+  .content { padding: 20px 18px; }
+  .clock { font-size: 24px; padding: 6px 12px; }
+  .cards { grid-template-columns: repeat(3, 1fr); }
+  .fis-grid { grid-template-columns: 96px 1fr 1fr 100px; }
+}
+
+/* --- Cok dar telefon (<=380px): kartlar tek sutun --- */
+@media (max-width: 380px) {
+  .cards { grid-template-columns: 1fr; }
+  .menu-btn { top: 8px; left: 8px; }
+}
+
+/* --- Yatay telefonda sidebar acikken icerige pay birakma (masaustunde hamburger yok) --- */
+@media (min-width: 901px) {
+  .menu-btn, .menu-kararti { display: none !important; }
+  .sidebar { transform: none !important; position: sticky; }
+}
+
 @media (max-width: 800px) {
   body { flex-direction: column; }
   .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
   .sidebar nav { display: flex; flex-wrap: wrap; }
-  .clock { display: none; }
   .content { padding: 16px; }
 }
