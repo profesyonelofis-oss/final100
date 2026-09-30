@@ -76,6 +76,21 @@ body {
 .sidebar-footer .btn { flex: 1; text-align: center; }
 .ver { text-align: center; color: #ADB5BD; font-size: 11px; padding: 6px 0 12px; }
 
+/* Sidebar satin alma banneri (admin panelinden duzenlenir) */
+.satin-al-banner {
+  display: block;
+  margin: auto 12px 14px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #FFF8E6, #FFEFc2);
+  border: 1.5px solid #E8B931;
+  border-radius: 10px;
+  color: #5c4a00;
+  text-decoration: none;
+  line-height: 1.45;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.satin-al-banner:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(232,185,49,.35); }
+
 /* ---------- Icerik ---------- */
 .content { flex: 1; padding: 22px 28px; max-width: 1400px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
