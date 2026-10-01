@@ -321,6 +321,53 @@ def _admin_bildirim_eposta(kullanici, mesaj):
     threading.Thread(target=_gonder, daemon=True).start()
 
 
+@app.route("/admin-smtp-durum", methods=["GET", "POST"])
+@giris_gerekli
+def admin_smtp_durum():
+    """Yalnizca yonetici: SMTP env degiskenlerini kontrol eder,
+    baglanti testi yapar ve (POST ile) test e-postasi gonderir."""
+    if not _admin_mi():
+        flash("Bu islem yalnizca yonetici icindir.", "hata")
+        return redirect(url_for("genel_bakis"))
+
+    env = {
+        "SMTP_HOST": os.environ.get("SMTP_HOST"),
+        "SMTP_PORT": os.environ.get("SMTP_PORT"),
+        "SMTP_USER": os.environ.get("SMTP_USER"),
+        "SMTP_PASS": ("***tanimli***" if os.environ.get("SMTP_PASS") else None),
+        "ADMIN_EMAIL": os.environ.get("ADMIN_EMAIL"),
+    }
+    eksik = [k for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASS") if not env.get(k)]
+    sonuc = None
+    if request.method == "POST":
+        try:
+            import smtplib, ssl
+            from email.mime.text import MIMEText
+            host = env["SMTP_HOST"]
+            port = int(env["SMTP_PORT"] or 587)
+            user = os.environ.get("SMTP_USER")
+            sifre = os.environ.get("SMTP_PASS")
+            alici = env["ADMIN_EMAIL"] or "kuzeykaraoglu2017@gmail.com"
+            govde = (
+                "KARAOĞLU Zeytin Takip — SMTP Test\n\n"
+                "Bu bir test e-postasidir. SMTP yapilandirmaniz calisiyor demektir.\n"
+                "Zaman: %s\n" % datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            )
+            eposta = MIMEText(govde, "plain", "utf-8")
+            eposta["Subject"] = "SMTP Test - Zeytinhesap"
+            eposta["From"] = user
+            eposta["To"] = alici
+            with smtplib.SMTP(host, port, timeout=20) as sunucu:
+                sunucu.starttls(context=ssl.create_default_context())
+                sunucu.login(user, sifre)
+                sunucu.sendmail(user, [alici], eposta.as_string())
+            sonuc = ("OK", "Test e-postasi %s adresine gonderildi. "
+                     "Kutunuzu (ve spam klasorunu) kontrol edin." % alici)
+        except Exception as hata:
+            sonuc = ("HATA", "Gonderim basarisiz: %s" % hata)
+    return render_template("smtp_durum.html", env=env, eksik=eksik, sonuc=sonuc)
+
+
 @app.route("/uyelik", methods=["GET", "POST"])
 @giris_sadece
 def uyelik():

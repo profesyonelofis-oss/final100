@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}SMTP Durumu - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}SMTP DURUMU{% endblock %}
+{% block sayfa_alti %}Ödeme bildirimi e-posta teşhisi (yalnızca yönetici){% endblock %}
+
+{% block icerik %}
+<div class="panel" style="max-width:640px;">
+  <h2>ENV DEĞİŞKENLERİ</h2>
+  <table>
+    <thead><tr><th>DEĞİŞKEN</th><th>DURUM</th></tr></thead>
+    <tbody>
+      {% for k, v in env.items() %}
+      <tr>
+        <td><code>{{ k }}</code></td>
+        <td>
+          {% if v %}
+          <span class="yesil-metin">✓ tanımlı</span>
+          {% if k != 'SMTP_PASS' %}<span style="color:var(--metin2);"> — {{ v }}</span>{% endif %}
+          {% else %}
+          <span class="kirmizi-metin">✗ tanımlı değil</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if eksik %}
+  <div class="flash uyari" style="margin-top:14px;">
+    Eksik: {{ eksik|join(', ') }}. Render Dashboard → Service → Environment bölümünden
+    tanımlayın (örn. Gmail için: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587,
+    SMTP_USER=e-posta adresin, SMTP_PASS=uygulama şifresi).
+    Değişiklikten sonra servis yeniden deploy edilir.
+  </div>
+  {% else %}
+  <div class="flash bilgi" style="margin-top:14px;">
+    Tüm gerekli değişkenler tanımlı — aşağıdan test gönderebilirsin.
+  </div>
+  {% endif %}
+
+  {% if sonuc %}
+  <div class="flash {{ 'basari' if sonuc[0] == 'OK' else 'hata' }}" style="margin-top:10px;">
+    {{ sonuc[1] }}
+  </div>
+  {% endif %}
+
+  <h2 style="margin-top:24px;">TEST E-POSTASI</h2>
+  <form method="post">
+    <button type="submit" class="btn" {% if eksik %}disabled{% endif %}>
+      TEST E-POSTASI GÖNDER
+    </button>
+    {% if eksik %}<span style="color:var(--metin2); font-size:13px;">(env değişkenleri tanımlanmadan gönderilemez)</span>{% endif %}
+  </form>
+</div>
+{% endblock %}
