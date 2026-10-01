@@ -112,53 +112,31 @@
 {% if u.tip == 'deneme' or u.lisans != 'aktif' %}
 <!-- ORTAK BOLUM: deneme (aktif/bitti) ve onay bekleyen kullanıcılara gosterilir -->
 
-  {% if paket_1 or paket_3 or paket_6 or paket_12 %}
-  <!-- UYELIK PAKETLERI: tiklaninca bildirim formuna otomatik yazar -->
+  <!-- GUN BAZLI UYELIK HESAPLAYICI: secilen sure bildirim formuna yazar -->
   <div style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
               border-radius:12px; padding:18px 22px; margin:18px 0;">
-    <h2 style="margin-bottom:10px;">ÜYELİK PAKETLERİ</h2>
-    <table style="width:100%; min-width:0; border-collapse:collapse; font-size:14px;">
-      <tr style="background:var(--yesil); color:#fff;">
-        <th style="padding:8px 10px; text-align:left;">PAKET</th>
-        <th style="padding:8px 10px; text-align:left;">SÜRE</th>
-        <th style="padding:8px 10px; text-align:right;">FİYAT</th>
-        <th style="padding:8px 10px;"></th>
-      </tr>
-      {% if paket_1 %}
-      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Başlangıç</td>
-          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">1 Ay</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_1 }}</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
-            <button type="button" class="btn small" onclick="paketSec('1 Ay', '{{ paket_1 }}')">SEÇ</button></td></tr>
-      {% endif %}
-      {% if paket_3 %}
-      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Standart</td>
-          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">3 Ay</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_3 }}</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
-            <button type="button" class="btn small" onclick="paketSec('3 Ay', '{{ paket_3 }}')">SEÇ</button></td></tr>
-      {% endif %}
-      {% if paket_6 %}
-      <tr><td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">Avantaj</td>
-          <td style="padding:8px 10px; border-bottom:1px solid var(--cizgi);">6 Ay</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi); font-weight:700;">{{ paket_6 }}</td>
-          <td style="padding:8px 10px; text-align:right; border-bottom:1px solid var(--cizgi);">
-            <button type="button" class="btn small" onclick="paketSec('6 Ay', '{{ paket_6 }}')">SEÇ</button></td></tr>
-      {% endif %}
-      {% if paket_12 %}
-      <tr><td style="padding:8px 10px; font-weight:700;">En Avantajlı ⭐</td>
-          <td style="padding:8px 10px; font-weight:700;">12 Ay</td>
-          <td style="padding:8px 10px; text-align:right; font-weight:700; color:var(--yesil);">{{ paket_12 }}</td>
-          <td style="padding:8px 10px; text-align:right;">
-            <button type="button" class="btn small" style="background:var(--yesil); color:#fff;" onclick="paketSec('12 Ay', '{{ paket_12 }}')">SEÇ</button></td></tr>
-      {% endif %}
-    </table>
+    <h2 style="margin-bottom:10px;">ÜYELİK ÜCRETİ — GÜN BAZLI</h2>
+    <p style="font-size:13px; color:var(--metin2); margin:0 0 10px;">
+      Günlük ücret: <strong>{{ gunluk_ucret }} ₺</strong> — kaç gün kullanacaksanız,
+      fiyat otomatik hesaplanır.
+    </p>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label for="gun-sayisi" style="font-size:13px;">Kaç gün kullanacaksınız?</label>
+      <input type="number" id="gun-sayisi" min="1" max="730" value="30"
+             style="width:90px; padding:8px 10px; font-size:15px;"
+             oninput="gunHesapla()">
+      <span style="font-size:13px;">gün</span>
+      <span style="font-size:18px; margin-left:auto;">
+        Toplam: <strong id="gun-fiyat" style="color:var(--yesil); font-size:22px;">—</strong>
+      </span>
+    </div>
+    <button type="button" class="btn small" onclick="gunBildir()"
+            style="margin-top:10px;">Bu süreyi bildirime ekle</button>
     <p style="font-size:12px; color:var(--metin2); margin:10px 0 0;">
-      Paketi SEÇ'iniz — seçiminiz aşağıdaki bildirim formuna otomatik yazılır;
-      havale bilgisini ekleyip göndermeniz yeterli.
+      "Bu süreyi bildirime ekle" derseniz seçiminiz aşağıdaki bildirim formuna
+      otomatik yazılır; havale bilgisini ekleyip göndermeniz yeterli.
     </p>
   </div>
-  {% endif %}
 
   <div id="odeme-bilgileri-kutu" style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
               border-radius:12px; padding:18px 22px; margin:18px 0;">
@@ -209,20 +187,34 @@
 {% endif %}
 
 <script>
-/* Paket secimi: secilen paketi bildirim formuna otomatik yazar */
-function paketSec(ad, fiyat) {
+/* Gun bazli uyelik: hesaplama + bildirim formuna otomatik ekleme */
+function gunHesapla() {
+  var gunEl = document.getElementById('gun-sayisi');
+  var fiyatEl = document.getElementById('gun-fiyat');
+  if (!gunEl || !fiyatEl) return;
+  var gun = parseInt(gunEl.value, 10);
+  var gunluk = parseFloat("{{ gunluk_ucret }}");
+  if (!gun || gun < 1) { fiyatEl.textContent = '—'; return; }
+  fiyatEl.textContent = (gun * gunluk).toLocaleString('tr-TR') + ' ₺';
+}
+function gunBildir() {
   var ta = document.getElementById('bildirim_mesaj');
-  if (!ta) return;
+  var gunEl = document.getElementById('gun-sayisi');
+  if (!ta || !gunEl) return;
+  var gun = parseInt(gunEl.value, 10);
+  if (!gun || gun < 1) { alert('Önce geçerli bir gün sayısı girin.'); return; }
+  var gunluk = parseFloat("{{ gunluk_ucret }}");
+  var satir = 'Kullanmak istediğim süre: ' + gun + ' gün — Toplam: ' +
+              (gun * gunluk).toLocaleString('tr-TR') + ' ₺';
   var mevcut = ta.value.trim();
-  /* Daha once secilmis paket satirini degistir, yoksa ekle */
-  if (/Seçilen paket:/.test(mevcut)) {
-    mevcut = mevcut.replace(/Seçilen paket: [^\n]*/, 'Seçilen paket: ' + ad + ' — ' + fiyat);
+  if (/Kullanmak istediğim süre:/.test(mevcut)) {
+    ta.value = mevcut.replace(/Kullanmak istediğim süre: [^\n]*/, satir);
   } else {
-    mevcut = 'Seçilen paket: ' + ad + ' — ' + fiyat + (mevcut ? '\n' + mevcut : '');
+    ta.value = satir + (mevcut ? '\n' + mevcut : '');
   }
-  ta.value = mevcut;
   ta.focus();
   ta.scrollIntoView({behavior: 'smooth', block: 'center'});
 }
+gunHesapla();
 </script>
 {% endblock %}

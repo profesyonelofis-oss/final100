@@ -76,24 +76,14 @@
         </td>
         <td class="orta">
           {% if k[3] != 'aktif' %}
-          <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
-            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
-              <input type="hidden" name="ay" value="1">
-              <button type="submit" class="btn small" title="1 ay aç">1 Ay</button>
-            </form>
-            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
-              <input type="hidden" name="ay" value="3">
-              <button type="submit" class="btn small" title="3 ay aç">3 Ay</button>
-            </form>
-            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
-              <input type="hidden" name="ay" value="6">
-              <button type="submit" class="btn small" title="6 ay aç">6 Ay</button>
-            </form>
-            <form method="post" action="/kullanici/{{ k[1] }}/onayla" style="display:inline;">
-              <input type="hidden" name="ay" value="12">
-              <button type="submit" class="btn small" title="12 ay aç">12 Ay</button>
-            </form>
-          </div>
+          <form method="post" action="/kullanici/{{ k[1] }}/onayla" class="gun-onay-form"
+                style="display:inline-flex; gap:4px; align-items:center; flex-wrap:wrap;">
+            <input type="number" name="gun" value="30" min="1" max="730"
+                   style="width:70px; padding:6px; font-size:13px;" title="Kaç gün açılsın?"
+                   oninput="gunFiyatGoster(this)">
+            <span class="gun-fiyat" style="font-size:12px; color:var(--metin2); white-space:nowrap;"></span>
+            <button type="submit" class="btn small">Onayla</button>
+          </form>
           {% else %}
           <form method="post" action="/kullanici/{{ k[1] }}/durdur" style="display:inline;"
                 onsubmit="return confirm('{{ k[1] }} üyeliği durdurulsun mu?')">
@@ -156,28 +146,16 @@
                style="width:100%; resize:vertical; font-size:13px; line-height:1.5;">{{ not_bilgi }}</textarea>
       </div>
       <div>
-        <label for="paket_1">PAKET: 1 AY FİYATI</label>
-        <input type="text" id="paket_1" name="paket_1" value="{{ paket_1 }}"
-               placeholder="Örn: 2.500 ₺">
-      </div>
-      <div>
-        <label for="paket_3">PAKET: 3 AY FİYATI</label>
-        <input type="text" id="paket_3" name="paket_3" value="{{ paket_3 }}"
-               placeholder="Örn: 6.500 ₺">
-      </div>
-      <div>
-        <label for="paket_6">PAKET: 6 AY FİYATI</label>
-        <input type="text" id="paket_6" name="paket_6" value="{{ paket_6 }}"
-               placeholder="Örn: 11.000 ₺">
-      </div>
-      <div>
-        <label for="paket_12">PAKET: 12 AY FİYATI</label>
-        <input type="text" id="paket_12" name="paket_12" value="{{ paket_12 }}"
-               placeholder="Örn: 18.000 ₺">
+        <label for="gunluk_ucret">GÜNLÜK ÜCRET (₺)</label>
+        <input type="number" id="gunluk_ucret" name="gunluk_ucret" value="{{ gunluk_ucret }}"
+               min="1" placeholder="200">
+        <div style="font-size:12px; color:var(--metin2); margin-top:4px;">
+          Müşteri kaç gün yazarsa fiyat otomatik: gün × {{ gunluk_ucret }} ₺
+        </div>
       </div>
       <div style="grid-column: 1 / -1; font-size:12px; color:var(--metin2);">
-        Paket fiyatları kayıt sayfasındaki "ÜYELİK PAKETLERİ" tablosunda görünür.
-        Boş bıraktığınız paket tabloda çıkmaz.
+        Üyelik açarken GÜN yazın: onayladığınızda hesap o kadar gün açık kalır ve
+        müşteriye ödenecek tutar otomatik hesaplanır (gün × günlük ücret).
       </div>
     </div>
     <button type="submit" class="btn" style="margin-top:14px;">BİLGİLERİ KAYDET</button>
@@ -224,6 +202,21 @@
 </div>
 
 <script>
+/* Gun bazli uyelik: gun girdisini TL'ye cevirip yaninda goster */
+function gunFiyatGoster(input) {
+  var gun = parseInt(input.value, 10);
+  var gunluk = parseFloat("{{ gunluk_ucret }}") || 200;
+  var goster = input.closest('form').querySelector('.gun-fiyat');
+  if (!goster) return;
+  goster.textContent = (gun && gun > 0)
+    ? '= ' + (gun * gunluk).toLocaleString('tr-TR') + ' ₺'
+    : '';
+}
+/* Sayfa acilirken mevcut formlarin fiyatlarini doldur */
+document.querySelectorAll('.gun-onay-form input[name=gun]').forEach(function (inp) {
+  gunFiyatGoster(inp);
+});
+
 function sifreFormAc(ad) {
   var f = document.getElementById('sifre-form-' + ad);
   f.style.display = (f.style.display === 'none') ? 'inline-flex' : 'none';
