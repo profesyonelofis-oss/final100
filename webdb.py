@@ -953,17 +953,24 @@ def get_satici_bakiyeleri(tarih=None):
     if tarih:
         rows = conn.execute("""
             SELECT uretici_ad, uretici_tel, SUM(toplam_kg), SUM(hesaplanan_tutar),
-                   SUM(odenen_para), SUM(fark)
+                   SUM(odenen_para)
             FROM alim_fisi WHERE tarih = ? GROUP BY uretici_ad""", (tarih,)).fetchall()
     else:
         rows = conn.execute("""
             SELECT uretici_ad, uretici_tel, SUM(toplam_kg), SUM(hesaplanan_tutar),
-                   SUM(odenen_para), SUM(fark)
+                   SUM(odenen_para)
             FROM alim_fisi GROUP BY uretici_ad""").fetchall()
+    # Fis uzerinde odenen + sonradan yapilan odemeler (odemeler tablosu)
+    ek_odemeler = {}
+    for ad, toplam in conn.execute(
+            "SELECT uretici_ad, SUM(tutar) FROM odemeler GROUP BY uretici_ad"):
+        ek_odemeler[ad] = toplam or 0.0
     conn.close()
     return [
         {"ad": r[0], "tel": r[1] or "", "toplam_kg": r[2] or 0.0,
-         "toplam_tutar": r[3] or 0.0, "odenen": r[4] or 0.0, "bakiye": r[5] or 0.0}
+         "toplam_tutar": r[3] or 0.0,
+         "odenen": (r[4] or 0.0) + ek_odemeler.get(r[0], 0.0),
+         "bakiye": (r[3] or 0.0) - (r[4] or 0.0) - ek_odemeler.get(r[0], 0.0)}
         for r in sorted(rows, key=lambda r: r[0].lower())
     ]
 
@@ -1097,11 +1104,15 @@ def get_summary_stats():
     sum_tutar = row[1] or 0.0
     sum_odenen = row[2] or 0.0
 
+    # Sonradan yapilan satici odemeleri de toplam odenene dahil
+    row_o = conn.execute("SELECT COALESCE(SUM(tutar), 0) FROM odemeler").fetchone()
+    sum_odenen += row_o[0] or 0.0
+
     row_g = conn.execute("SELECT SUM(tutar) FROM giderler").fetchone()
     sum_gider = row_g[0] or 0.0
 
     row_s = conn.execute(
-        "SELECT SUM(toplam_kg), SUM(alinan_para) FROM satis_fisi").fetchone()
+        "SELECT SUM(toplam_kg), SUM(hesaplanan_tutar) FROM satis_fisi").fetchone()
     teslim_kilo = row_s[0] or 0.0
     teslim_para = row_s[1] or 0.0
     conn.close()
