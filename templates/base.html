@@ -3,7 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{% block meta_aciklama %}KARAOĞLU Zeytin Takip — zeytin alım satımını kolaylaştıran online program. Alım fişi, satıcı borç takibi, teslimat, gider ve kârlılık raporları tek yerde. 3 gün ücretsiz deneyin.{% endblock %}">
   <title>{% block title %}{{ FIRMA_ADI }}{% endblock %}</title>
+  <meta property="og:title" content="{% block og_baslik %}KARAOĞLU Zeytin Takip{% endblock %}">
+  <meta property="og:description" content="{% block og_aciklama %}Zeytin alım satımını kolaylaştıran online program. Fiş, satıcı borç takibi, teslimat ve kârlılık raporları tek yerde. 3 gün ücretsiz deneyin.{% endblock %}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.zeytinhesap.com{{ request.path }}">
+  <meta property="og:image" content="https://www.zeytinhesap.com/static/og-image.png">
+  <meta property="og:site_name" content="KARAOĞLU Zeytin Takip">
+  <meta property="og:locale" content="tr_TR">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{% block twitter_baslik %}KARAOĞLU Zeytin Takip{% endblock %}">
+  <meta name="twitter:description" content="Zeytin alım satımını kolaylaştıran online program. 3 gün ücretsiz deneyin.">
+  <meta name="twitter:image" content="https://www.zeytinhesap.com/static/og-image.png">
+  <link rel="canonical" href="https://www.zeytinhesap.com{{ request.path }}">
   <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>

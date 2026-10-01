@@ -154,6 +154,30 @@ def sabitler():
 # Giris / kurulum
 # ---------------------------------------------------------------------------
 
+# --- SEO: robots.txt + sitemap.xml + landing sayfasi -----------------------
+
+@app.route("/robots.txt")
+def robots_txt():
+    icerik = "User-agent: *\nAllow: /\nDisallow: /kullanicilar\nDisallow: /admin-smtp-durum\n\nSitemap: https://www.zeytinhesap.com/sitemap.xml\n"
+    return Response(icerik, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    sayfalar = [
+        "https://www.zeytinhesap.com/",
+        "https://www.zeytinhesap.com/kayit",
+        "https://www.zeytinhesap.com/giris",
+    ]
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    satirlar = ['<?xml version="1.0" encoding="UTF-8"?>',
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for s in sayfalar:
+        satirlar.append("  <url><loc>%s</loc><lastmod>%s</lastmod></url>" % (s, bugun))
+    satirlar.append("</urlset>")
+    return Response("\n".join(satirlar), mimetype="application/xml")
+
+
 @app.route("/giris", methods=["GET", "POST"])
 def giris():
     webdb.init_db()
