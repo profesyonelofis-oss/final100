@@ -585,8 +585,9 @@ def raporlar():
     satislar = webdb.get_all_satis_fisleri()
     giderler = webdb.get_all_giderler()
     stats = webdb.get_summary_stats()
+    odeme_ozeti = webdb.get_satici_odeme_ozeti()
     return render_template("raporlar.html", fisler=fisler, satislar=satislar,
-                           giderler=giderler, s=stats)
+                           giderler=giderler, s=stats, odeme_ozeti=odeme_ozeti)
 
 
 # ---------------------------------------------------------------------------

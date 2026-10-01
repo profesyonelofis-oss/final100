@@ -86,4 +86,31 @@
     </tbody>
   </table>
 </div>
+
+<div class="panel">
+  <h2>SATICI ÖDEME ÖZETİ</h2>
+  <p style="color:var(--metin2); font-size:13px; margin-bottom:10px;">
+    Satıcı detay sayfasından sonradan kaydedilen ödemeler. Fiş sırasında
+    yapılan peşin ödemeler yukarıdaki alım fişlerinin ÖDENEN sütunundadır.
+  </p>
+  {% if odeme_ozeti %}
+  <table>
+    <thead><tr><th>SATICI</th><th>TELEFON</th><th class="sağ">ÖDEME SAYISI</th>
+      <th class="sağ">TOPLAM ÖDEME</th><th class="sağ">SON ÖDEME TARİHİ</th></tr></thead>
+    <tbody>
+      {% for o in odeme_ozeti %}
+      <tr>
+        <td><strong>{{ o.ad }}</strong></td>
+        <td>{{ o.tel or '—' }}</td>
+        <td class="sağ">{{ o.adet }}</td>
+        <td class="sağ yesil-metin">{{ fmt_tr(o.toplam) }} ₺</td>
+        <td class="sağ">{{ o.son_tarih }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--metin2);">Henüz sonradan kaydedilen satıcı ödemesi yok.</p>
+  {% endif %}
+</div>
 {% endblock %}

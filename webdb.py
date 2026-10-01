@@ -996,6 +996,32 @@ def get_odemeler_by_uretici(ad):
     return rows
 
 
+def get_satici_odeme_ozeti():
+    """Rapor sayfasi icin satici odeme ozeti.
+
+    Her satıcı icin sonradan yapilan odemelerin (odemeler tablosu) toplamini,
+    sayisini ve son odeme tarihini dondurur. Fis uzerindeki pesin odemeler
+    (odenen_para) ayri olarak alim fisleri tablolarinda gorunur.
+    """
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT o.uretici_ad, a.uretici_tel,
+               COALESCE(SUM(o.tutar), 0),
+               COUNT(o.id),
+               MAX(o.tarih)
+        FROM odemeler o
+        LEFT JOIN alim_fisi a ON a.uretici_ad = o.uretici_ad
+        GROUP BY o.uretici_ad
+        ORDER BY o.uretici_ad COLLATE NOCASE
+    """).fetchall()
+    conn.close()
+    return [
+        {"ad": r[0], "tel": r[1] or "", "toplam": r[2] or 0.0,
+         "adet": r[3] or 0, "son_tarih": r[4] or ""}
+        for r in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Giderler
 # ---------------------------------------------------------------------------
