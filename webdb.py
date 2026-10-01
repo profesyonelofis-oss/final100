@@ -909,6 +909,104 @@ def get_all_alim_fisleri():
     return rows
 
 
+def get_alim_fisleri_aralik(baslangic, bitis):
+    """Tarih araligindaki alim fisleri (baslangic/bitis dahil, YYYY-MM-DD)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM alim_fisi WHERE tarih BETWEEN ? AND ? "
+        "ORDER BY tarih DESC, id DESC", (baslangic, bitis)).fetchall()
+    conn.close()
+    return rows
+
+
+def get_satis_fisleri_aralik(baslangic, bitis):
+    """Tarih araligindaki teslimat (satis) fisleri."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, firma_adi, tarih, toplam_kg, hesaplanan_tutar, alinan_para, fark "
+        "FROM satis_fisi WHERE tarih BETWEEN ? AND ? "
+        "ORDER BY tarih DESC, id DESC", (baslangic, bitis)).fetchall()
+    conn.close()
+    return rows
+
+
+def get_giderler_aralik(baslangic, bitis):
+    """Tarih araligindaki gider kayitlari."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM giderler WHERE tarih BETWEEN ? AND ? "
+        "ORDER BY tarih DESC, id DESC", (baslangic, bitis)).fetchall()
+    conn.close()
+    return rows
+
+
+def get_satici_odeme_ozeti_aralik(baslangic, bitis):
+    """Tarih araligindaki satici odemelerinin ozeti."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT o.uretici_ad, a.uretici_tel,
+               COALESCE(SUM(o.tutar), 0),
+               COUNT(o.id),
+               MAX(o.tarih)
+        FROM odemeler o
+        LEFT JOIN alim_fisi a ON a.uretici_ad = o.uretici_ad
+        WHERE o.tarih BETWEEN ? AND ?
+        GROUP BY o.uretici_ad
+        ORDER BY o.uretici_ad COLLATE NOCASE
+    """, (baslangic, bitis)).fetchall()
+    conn.close()
+    return [
+        {"ad": r[0], "tel": r[1] or "", "toplam": r[2] or 0.0,
+         "adet": r[3] or 0, "son_tarih": r[4] or ""}
+        for r in rows
+    ]
+
+
+def get_summary_stats_aralik(baslangic, bitis):
+    """Tarih araligina gore ozet istatistikleri (get_summary_stats gibi).
+
+    Satici kalan bakiye araliktaki fis ve odemelerden hesaplanir.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT SUM(toplam_kg), SUM(hesaplanan_tutar), SUM(odenen_para) "
+        "FROM alim_fisi WHERE tarih BETWEEN ? AND ?",
+        (baslangic, bitis)).fetchone()
+    sum_kilo = row[0] or 0.0
+    sum_tutar = row[1] or 0.0
+    sum_odenen = row[2] or 0.0
+
+    row_o = conn.execute(
+        "SELECT COALESCE(SUM(tutar), 0) FROM odemeler "
+        "WHERE tarih BETWEEN ? AND ?", (baslangic, bitis)).fetchone()
+    sum_odenen += row_o[0] or 0.0
+
+    row_g = conn.execute(
+        "SELECT SUM(tutar) FROM giderler WHERE tarih BETWEEN ? AND ?",
+        (baslangic, bitis)).fetchone()
+    sum_gider = row_g[0] or 0.0
+
+    row_s = conn.execute(
+        "SELECT SUM(toplam_kg), SUM(hesaplanan_tutar) FROM satis_fisi "
+        "WHERE tarih BETWEEN ? AND ?", (baslangic, bitis)).fetchone()
+    teslim_kilo = row_s[0] or 0.0
+    teslim_para = row_s[1] or 0.0
+    conn.close()
+
+    return {
+        "toplam_kilo": sum_kilo,
+        "toplam_alim_tutar": sum_tutar,
+        "toplam_odenen": sum_odenen,
+        "kalan_bakiye": sum_tutar - sum_odenen,
+        "toplam_gider": sum_gider,
+        "toplam_maliyet": sum_tutar + sum_gider,
+        "birim_maliyet": (sum_tutar + sum_gider) / sum_kilo if sum_kilo > 0 else 0.0,
+        "teslim_kilo": teslim_kilo,
+        "teslim_para": teslim_para,
+        "depo_kalan_kilo": sum_kilo - teslim_kilo,
+    }
+
+
 def get_alim_fisleri_by_uretici(ad):
     conn = get_connection()
     rows = conn.execute(

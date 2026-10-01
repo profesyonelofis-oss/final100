@@ -4,6 +4,53 @@
 {% block sayfa_alti %}Dönem özeti ve tüm kayıtlar{% endblock %}
 
 {% block icerik %}
+<div class="panel" style="margin-bottom:18px;">
+  <h2>DÖNEM FİLTRESİ</h2>
+  <form method="get" style="display:flex; flex-wrap:wrap; gap:12px; align-items:end;">
+    <div>
+      <label for="donem">DÖNEM</label>
+      <select id="donem" name="donem" onchange="donemDegisti()">
+        <option value="hepsi" {% if donem == 'hepsi' %}selected{% endif %}>Tümü</option>
+        <option value="buay" {% if donem == 'buay' %}selected{% endif %}>Bu ay</option>
+        <option value="gecenay" {% if donem == 'gecenay' %}selected{% endif %}>Geçen ay</option>
+        <option value="ozel" {% if donem == 'ozel' %}selected{% endif %}>Özel aralık</option>
+      </select>
+    </div>
+    <div id="ozel-alanlar" style="display:{{ 'flex' if donem == 'ozel' else 'none' }}; gap:12px; align-items:end;">
+      <div>
+        <label for="baslangic">BAŞLANGIÇ</label>
+        <input type="date" id="baslangic" name="baslangic" value="{{ f_baslangic or '' }}">
+      </div>
+      <div>
+        <label for="bitis">BİTİŞ</label>
+        <input type="date" id="bitis" name="bitis" value="{{ f_bitis or '' }}">
+      </div>
+    </div>
+    <button type="submit" class="btn">FİLTRELE</button>
+    {% if donem != 'hepsi' %}
+    <a class="btn ghost" href="/raporlar">Filtreyi Temizle</a>
+    {% endif %}
+  </form>
+</div>
+<script>
+  function donemDegisti() {
+    var d = document.getElementById('donem').value;
+    document.getElementById('ozel-alanlar').style.display = d === 'ozel' ? 'flex' : 'none';
+  }
+</script>
+
+{% if donem != 'hepsi' %}
+<div class="panel" style="margin-bottom:10px; padding:10px 14px;">
+  {% if donem == 'buay' %}
+  <strong>Bu ay:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% elif donem == 'gecenay' %}
+  <strong>Geçen ay:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% elif donem == 'ozel' %}
+  <strong>Özel aralık:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="cards">
   <div class="card mavi">
     <div class="etiket">TOPLAM ALIM</div>

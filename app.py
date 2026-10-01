@@ -581,13 +581,50 @@ def ayarlar():
 @giris_gerekli
 def raporlar():
     webdb.init_db()
-    fisler = webdb.get_all_alim_fisleri()
-    satislar = webdb.get_all_satis_fisleri()
-    giderler = webdb.get_all_giderler()
-    stats = webdb.get_summary_stats()
-    odeme_ozeti = webdb.get_satici_odeme_ozeti()
+    # Donem filtresi: buay / gecenay / ozel (baslangic-bitis) / hepsi
+    donem = request.args.get("donem", "hepsi").strip()
+    bugun = datetime.now().date()
+    ay_basi = bugun.replace(day=1)
+    if donem == "buay":
+        baslangic, bitis = ay_basi, bugun
+    elif donem == "gecenay":
+        gecen_ay_sonu = ay_basi - timedelta(days=1)
+        baslangic, bitis = gecen_ay_sonu.replace(day=1), gecen_ay_sonu
+    elif donem == "ozel":
+        try:
+            baslangic = datetime.strptime(request.args.get("baslangic", ""),
+                                          "%Y-%m-%d").date()
+            bitis = datetime.strptime(request.args.get("bitis", ""),
+                                      "%Y-%m-%d").date()
+        except ValueError:
+            baslangic, bitis = None, None
+        if not baslangic or not bitis or baslangic > bitis:
+            flash("Gecerli bir baslangic/bitis tarihi girin.", "hata")
+            return redirect(url_for("raporlar"))
+    else:
+        baslangic, bitis = None, None
+
+    if baslangic and bitis:
+        fisler = webdb.get_alim_fisleri_aralik(baslangic.isoformat(),
+                                               bitis.isoformat())
+        satislar = webdb.get_satis_fisleri_aralik(baslangic.isoformat(),
+                                                  bitis.isoformat())
+        giderler = webdb.get_giderler_aralik(baslangic.isoformat(),
+                                             bitis.isoformat())
+        stats = webdb.get_summary_stats_aralik(baslangic.isoformat(),
+                                               bitis.isoformat())
+        odeme_ozeti = webdb.get_satici_odeme_ozeti_aralik(baslangic.isoformat(),
+                                                          bitis.isoformat())
+    else:
+        fisler = webdb.get_all_alim_fisleri()
+        satislar = webdb.get_all_satis_fisleri()
+        giderler = webdb.get_all_giderler()
+        stats = webdb.get_summary_stats()
+        odeme_ozeti = webdb.get_satici_odeme_ozeti()
+
     return render_template("raporlar.html", fisler=fisler, satislar=satislar,
-                           giderler=giderler, s=stats, odeme_ozeti=odeme_ozeti)
+                           giderler=giderler, s=stats, odeme_ozeti=odeme_ozeti,
+                           donem=donem, f_baslangic=baslangic, f_bitis=bitis)
 
 
 # ---------------------------------------------------------------------------
