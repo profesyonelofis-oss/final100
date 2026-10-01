@@ -550,7 +550,7 @@ def gider_sil(gider_id):
 
 
 # ---------------------------------------------------------------------------
-# Ayarlar (fiyat + komisyon)
+# Ayarlar (logo + firma adi)
 # ---------------------------------------------------------------------------
 
 @app.route("/ayarlar", methods=["GET", "POST"])
@@ -558,12 +558,6 @@ def gider_sil(gider_id):
 def ayarlar():
     webdb.init_db()
     if request.method == "POST":
-        for kalibre in webdb.KALIBRELER:
-            if f"fiyat_{kalibre}" in request.form:
-                webdb.update_kalibre_fiyat(kalibre,
-                                           request.form[f"fiyat_{kalibre}"])
-        if "komisyon" in request.form:
-            webdb.set_komisyon(request.form["komisyon"])
         if "firma_adi" in request.form:
             webdb.set_firma_adi(request.form["firma_adi"])
         if "oto_logo_stil" in request.form:
@@ -573,9 +567,7 @@ def ayarlar():
                 flash(str(e), "hata")
         flash("Ayarlar kaydedildi.", "basari")
         return redirect(url_for("ayarlar"))
-    return render_template("ayarlar.html", fiyatlar=webdb.get_kalibre_fiyatlari(),
-                           komisyon=webdb.get_komisyon(),
-                           firma_adi=webdb.get_firma_adi(),
+    return render_template("ayarlar.html", firma_adi=webdb.get_firma_adi(),
                            logo_yuklu=webdb.logo_var_mi(),
                            oto_stil=webdb.get_oto_logo_stil(),
                            oto_stiller=webdb.OTO_LOGO_STILLER)

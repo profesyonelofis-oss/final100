@@ -1,105 +1,71 @@
 {% extends "base.html" %}
 {% block title %}Ayarlar - {{ FIRMA_ADI }}{% endblock %}
 {% block sayfa_basligi %}AYARLAR{% endblock %}
-{% block sayfa_alti %}Kalibre fiyatları ve komisyon{% endblock %}
+{% block sayfa_alti %}Logo ve firma adı{% endblock %}
 
 {% block icerik %}
-<div class="grid-2">
-  <div class="panel">
-    <h2>KALİBRE FİYATLARI (₺/KG)</h2>
-    <form method="post">
-      {% for k in KALIBRELER %}
-      <label for="fiyat_{{ k }}">{{ k }}</label>
-      <input type="text" id="fiyat_{{ k }}" name="fiyat_{{ k }}"
-             value="{{ fmt_tr(fiyatlar.get(k, 0)) }}" inputmode="decimal">
-      {% endfor %}
-      <button type="submit" class="btn" style="margin-top:14px;">FİYATLARI KAYDET</button>
-    </form>
-  </div>
-
-  <div class="panel">
-    <h2>KOMİSYON (₺/KG)</h2>
-    <form method="post">
-      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-        Satıcıya ödenecek tutar hesaplanırken KG başına bu kesinti yapılır:
-        <strong>Ödenecek = Tutar − (KG × Komisyon)</strong>
-      </p>
-      <label for="komisyon">KOMİSYON MİKTARI</label>
-      <input type="text" id="komisyon" name="komisyon"
-             value="{{ fmt_tr(komisyon) }}" inputmode="decimal">
-      <button type="submit" class="btn" style="margin-top:14px;">KOMİSYONU KAYDET</button>
-    </form>
-
-    <h2 style="margin-top:28px;">LOGO (OTOMATİK ÜRETİLEN)</h2>
-    <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-      Logo, firma adınızdan otomatik üretilir — dosya yüklemenize gerek yok.
-      Üç stilden birini seçin; kenar çubuğunda, giriş ekranında ve fişlerde görünür.
-      Firma adını değiştirdiğinizde logo da otomatik güncellenir.
-    </p>
-    <div class="oto-logo-grid">
-      {% for anahtar, s in oto_stiller.items() %}
-      <div class="oto-logo-kart{% if oto_stil == anahtar %} secili{% endif %}">
-        <img src="/logo-otomatik?stil={{ anahtar }}&amp;ad={{ firma_adi|urlencode }}"
-             alt="{{ s.ad }} logosu" width="84" height="84">
-        <div class="oto-logo-ad">{{ s.ad }}</div>
-        {% if oto_stil == anahtar %}
-        <span class="oto-logo-etiket">✓ SEÇİLİ</span>
-        {% else %}
-        <form method="post" action="/logo-otomatik-sec">
-          <input type="hidden" name="stil" value="{{ anahtar }}">
-          <button type="submit" class="btn small">SEÇ</button>
-        </form>
-        {% endif %}
-      </div>
-      {% endfor %}
-    </div>
-    {% if oto_stil %}
-    <form method="post" action="/logo-otomatik-sec" style="margin-top:8px;">
-      <input type="hidden" name="stil" value="">
-      <button type="submit" class="btn ghost small">Otomatik Logoyu Kaldır</button>
-    </form>
-    {% endif %}
-
-    <h2 style="margin-top:28px;">LOGO (KENDİ DOSYANIZ)</h2>
-    <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-      Kendi logo dosyanızı yüklemek isterseniz buradan yükleyebilirsiniz.
-      PNG, JPG, GIF veya WEBP &middot; en fazla 2 MB. Kare görsel önerilir.
-      <strong>Dosya yüklerseniz otomatik logonun yerine geçer.</strong>
-    </p>
-    <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
-      <img src="{{ LOGO_URL }}" alt="Mevcut logo"
-           style="width:64px; height:64px; object-fit:contain;
-                  border:1px solid var(--cizgi); border-radius:8px; background:#fff;">
-      {% if logo_yuklu %}
-      <form method="post" action="/logo-sifirla"
-            onsubmit="return confirm('Logo varsayılan sembole döndürülsün mü?')">
-        <button type="submit" class="btn ghost small">Varsayılana Döndür</button>
+<div class="panel" style="max-width:720px;">
+  <h2>LOGO (OTOMATİK ÜRETİLEN)</h2>
+  <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+    Logo, firma adınızdan otomatik üretilir — dosya yüklemenize gerek yok.
+    Üç stilden birini seçin; kenar çubuğunda, giriş ekranında ve fişlerde görünür.
+    Firma adını değiştirdiğinizde logo da otomatik güncellenir.
+  </p>
+  <div class="oto-logo-grid">
+    {% for anahtar, s in oto_stiller.items() %}
+    <div class="oto-logo-kart{% if oto_stil == anahtar %} secili{% endif %}">
+      <img src="/logo-otomatik?stil={{ anahtar }}&amp;ad={{ firma_adi|urlencode }}"
+           alt="{{ s.ad }} logosu" width="84" height="84">
+      <div class="oto-logo-ad">{{ s.ad }}</div>
+      {% if oto_stil == anahtar %}
+      <span class="oto-logo-etiket">✓ SEÇİLİ</span>
+      {% else %}
+      <form method="post" action="/logo-otomatik-sec">
+        <input type="hidden" name="stil" value="{{ anahtar }}">
+        <button type="submit" class="btn small">SEÇ</button>
       </form>
       {% endif %}
     </div>
-    <form method="post" action="/logo-yukle" enctype="multipart/form-data">
-      <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/*" required>
-      <button type="submit" class="btn" style="margin-top:10px;">LOGOYU YÜKLE</button>
-    </form>
+    {% endfor %}
+  </div>
+  {% if oto_stil %}
+  <form method="post" action="/logo-otomatik-sec" style="margin-top:8px;">
+    <input type="hidden" name="stil" value="">
+    <button type="submit" class="btn ghost small">Otomatik Logoyu Kaldır</button>
+  </form>
+  {% endif %}
 
-    <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
-    <form method="post">
-      <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
-        Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim:
-      </p>
-      <label for="firma_adi">FİRMA ADI</label>
-      <input type="text" id="firma_adi" name="firma_adi" value="{{ firma_adi }}"
-             placeholder="Örn: KARAOĞLU" maxlength="40">
-      <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
+  <h2 style="margin-top:28px;">LOGO (KENDİ DOSYANIZ)</h2>
+  <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+    Kendi logo dosyanızı yüklemek isterseniz buradan yükleyebilirsiniz.
+    PNG, JPG, GIF veya WEBP &middot; en fazla 2 MB. Kare görsel önerilir.
+    <strong>Dosya yüklerseniz otomatik logonun yerine geçer.</strong>
+  </p>
+  <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
+    <img src="{{ LOGO_URL }}" alt="Mevcut logo"
+         style="width:64px; height:64px; object-fit:contain;
+                border:1px solid var(--cizgi); border-radius:8px; background:#fff;">
+    {% if logo_yuklu %}
+    <form method="post" action="/logo-sifirla"
+          onsubmit="return confirm('Logo varsayılan sembole döndürülsün mü?')">
+      <button type="submit" class="btn ghost small">Varsayılana Döndür</button>
     </form>
-
-    {% if USER and USER.rol == 'admin' %}
-    <h2 style="margin-top:28px;">YEDEK</h2>
-    <p style="color:var(--metin2); font-size:13px;">
-      Veritabanınızı bilgisayarınıza indirebilirsiniz. Dosya: <code>data/zeytin_takip.db</code>
-    </p>
-    <a class="btn ghost" href="/yedek" style="margin-top:10px;">⬇ YEDEK İNDİR (.db)</a>
     {% endif %}
   </div>
+  <form method="post" action="/logo-yukle" enctype="multipart/form-data">
+    <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/*" required>
+    <button type="submit" class="btn" style="margin-top:10px;">LOGOYU YÜKLE</button>
+  </form>
+
+  <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
+  <form method="post">
+    <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
+      Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim:
+    </p>
+    <label for="firma_adi">FİRMA ADI</label>
+    <input type="text" id="firma_adi" name="firma_adi" value="{{ firma_adi }}"
+           placeholder="Örn: KARAOĞLU" maxlength="40">
+    <button type="submit" class="btn" style="margin-top:14px;">FİRMA ADINI KAYDET</button>
+  </form>
 </div>
 {% endblock %}
