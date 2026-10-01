@@ -51,36 +51,6 @@
         yeni üyelik otomatik 6 aylık tam üyelik olur.
       </p>
 
-      <!-- GUN BAZLI UYELIK HESAPLAYICI: gunluk ucret x gun sayisi -->
-      <div style="margin-top:18px; text-align:left; background:#F8F9FA;
-                  border:1px solid var(--cizgi); border-radius:10px; padding:12px 14px;">
-        <h2 style="font-size:14px; margin-bottom:8px; text-align:center;">ÜYELİK ÜCRETİ — GÜN BAZLI</h2>
-        <p style="font-size:12px; color:var(--metin2); margin:0 0 10px; text-align:center;">
-          Günlük ücret: <strong>{{ gunluk_ucret }} ₺</strong> — istediğiniz gün kadar kullanın,
-          fiyat otomatik hesaplanır.
-        </p>
-        <div style="display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;">
-          <label for="gun-sayisi" style="font-size:13px;">Kaç gün kullanacaksınız?</label>
-          <input type="number" id="gun-sayisi" min="1" max="730" value="30"
-                 style="width:90px; padding:8px 10px; font-size:15px;"
-                 oninput="gunHesapla()">
-          <span style="font-size:13px;">gün</span>
-        </div>
-        <p style="text-align:center; margin:10px 0 0; font-size:18px;">
-          Toplam: <strong id="gun-fiyat" style="color:var(--yesil); font-size:22px;">—</strong>
-        </p>
-      </div>
-      <script>
-      function gunHesapla() {
-        var gun = parseInt(document.getElementById('gun-sayisi').value, 10);
-        var gunluk = parseFloat("{{ gunluk_ucret }}");
-        var el = document.getElementById('gun-fiyat');
-        if (!gun || gun < 1) { el.textContent = '—'; return; }
-        el.textContent = (gun * gunluk).toLocaleString('tr-TR') + ' ₺';
-      }
-      gunHesapla();
-      </script>
-
       <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
         Hesabınız var mı? <a href="/giris">Giriş yapın</a>
       </p>
