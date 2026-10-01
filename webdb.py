@@ -940,6 +940,9 @@ def delete_satici(ad):
     for (fis_id,) in rows:
         conn.execute("DELETE FROM alim_detay WHERE fis_id = ?", (fis_id,))
         conn.execute("DELETE FROM alim_fisi WHERE id = ?", (fis_id,))
+    # Satıcının sonradan yapılan ödemelerini de sil; yoksa raporda
+    # hayalet bakiye kalır (ödeme tutarı fişsiz kalır).
+    conn.execute("DELETE FROM odemeler WHERE uretici_ad = ?", (ad,))
     conn.commit()
     conn.close()
 
