@@ -138,12 +138,11 @@ def sabitler():
         "aylar": ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
                   "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"],
         # Odeme bilgileri (banner + uyelik sayfasi): admin ayarlardan girer
-        "odeme_ucret": webdb.get_ayar("uyelik_ucret"),
         "odeme_iban": webdb.get_ayar("uyelik_iban"),
         "odeme_havale_ad": webdb.get_ayar("uyelik_havale_ad"),
         "odeme_not": webdb.get_ayar("uyelik_not"),
+        "odeme_gunluk": webdb.get_ayar("gunluk_ucret") or "200",
         "odeme_bilgisi_var": bool(webdb.get_ayar("uyelik_iban")
-                                  or webdb.get_ayar("uyelik_ucret")
                                   or webdb.get_ayar("uyelik_havale_ad")),
         # Admin icin okunmamis odeme bildirimi sayisi (menü rozeti + üst banner)
         "okunmamis_bildirim": (webdb.okunmamis_bildirim_sayisi()
@@ -295,14 +294,14 @@ def _admin_bildirim_eposta(kullanici, mesaj):
         try:
             import smtplib, ssl
             from email.mime.text import MIMEText
-            host = os.environ.get("SMTP_HOST") or webdb.get_ayar("smtp_host")
-            port = int(os.environ.get("SMTP_PORT")
-                       or webdb.get_ayar("smtp_port") or 587)
-            user = os.environ.get("SMTP_USER") or webdb.get_ayar("smtp_user")
-            sifre = os.environ.get("SMTP_PASS") or webdb.get_ayar("smtp_pass")
-            alici = os.environ.get("ADMIN_EMAIL") or webdb.get_ayar("admin_email")
+            # E-posta ayarlari: Render ortam degiskenlerinden (admin panelde ayar YOK)
+            host = os.environ.get("SMTP_HOST")
+            port = int(os.environ.get("SMTP_PORT") or 587)
+            user = os.environ.get("SMTP_USER")
+            sifre = os.environ.get("SMTP_PASS")
+            alici = os.environ.get("ADMIN_EMAIL") or "kuzeykaraoglu2017@gmail.com"
             if not (host and user and sifre and alici):
-                return  # e-posta yapilandirilmamis: panel bildirimi yeterli
+                return  # SMTP bilgileri girilmemis: panel bildirimi yeterli
             govde = (
                 "KARAOĞLU Zeytin Takip — Ödeme Bildirimi\n\n"
                 "Kullanıcı: %s\n"
@@ -338,7 +337,6 @@ def uyelik():
                   "sonra sistem açılacaktır.", "basari")
         return redirect(url_for("uyelik"))
     return render_template("uyelik.html", u=u,
-                           ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
                            not_bilgi=webdb.get_ayar("uyelik_not"),
@@ -708,15 +706,9 @@ def kullanicilar():
                            cihazlar=cihazlar,
                            bildirimler=bildirimler,
                            okunmamis=okunmamis,
-                           ucret=webdb.get_ayar("uyelik_ucret"),
                            iban=webdb.get_ayar("uyelik_iban"),
                            havale_ad=webdb.get_ayar("uyelik_havale_ad"),
                            not_bilgi=webdb.get_ayar("uyelik_not"),
-                           smtp_host=webdb.get_ayar("smtp_host"),
-                           smtp_port=webdb.get_ayar("smtp_port"),
-                           smtp_user=webdb.get_ayar("smtp_user"),
-                           smtp_pass_kayitli=bool(webdb.get_ayar("smtp_pass")),
-                           admin_email=webdb.get_ayar("admin_email"),
                            gunluk_ucret=webdb.get_ayar("gunluk_ucret") or "200")
 
 
@@ -821,17 +813,9 @@ def uyelik_ayarla():
     if not _admin_mi():
         flash("Bu i\u015flem yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
         return redirect(url_for("genel_bakis"))
-    webdb.set_ayar("uyelik_ucret", request.form.get("ucret", ""))
     webdb.set_ayar("uyelik_iban", request.form.get("iban", ""))
     webdb.set_ayar("uyelik_havale_ad", request.form.get("havale_ad", ""))
     webdb.set_ayar("uyelik_not", request.form.get("not_bilgi", ""))
-    # E-posta bildirim ayarlari (sifre dolu yazilmadikca korunur)
-    webdb.set_ayar("smtp_host", request.form.get("smtp_host", "").strip())
-    webdb.set_ayar("smtp_port", request.form.get("smtp_port", "").strip())
-    webdb.set_ayar("smtp_user", request.form.get("smtp_user", "").strip())
-    if request.form.get("smtp_pass", "").strip():
-        webdb.set_ayar("smtp_pass", request.form.get("smtp_pass").strip())
-    webdb.set_ayar("admin_email", request.form.get("admin_email", "").strip())
     # Gunluk ucret (gun bazli odeme sisteminin temel fiyati)
     webdb.set_ayar("gunluk_ucret", request.form.get("gunluk_ucret", "200").strip() or "200")
     flash("\u00dcyelik bilgileri kaydedildi.", "basari")

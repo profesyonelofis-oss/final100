@@ -141,9 +141,7 @@
   <div id="odeme-bilgileri-kutu" style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
               border-radius:12px; padding:18px 22px; margin:18px 0;">
     <h2 style="margin-bottom:10px;">ÖDEME BİLGİLERİ</h2>
-    {% if ucret %}
-    <p style="font-size:18px; margin:6px 0;"><strong>Üyelik Ücreti:</strong> {{ ucret }}</p>
-    {% endif %}
+    <p style="font-size:18px; margin:6px 0;"><strong>Günlük Ücret:</strong> {{ gunluk_ucret }} ₺</p>
     {% if iban %}
     <p style="font-size:15px; margin:6px 0;"><strong>IBAN:</strong> <code id="uyelik-iban" style="font-size:15px;">{{ iban }}</code>
       <button type="button" class="btn ghost small" onclick="ibanKopyala('uyelik-iban', this)" style="padding:2px 10px; font-size:12px; margin-left:6px;">📋 Kopyala</button>
@@ -155,7 +153,7 @@
     {% if not_bilgi %}
     <p style="font-size:14px; color:var(--metin2); margin:10px 0 0;">{{ not_bilgi }}</p>
     {% endif %}
-    {% if not ucret and not iban and not havale_ad %}
+    {% if not iban and not havale_ad %}
     <p style="color:var(--metin2);">Ödeme bilgileri henüz girilmedi. Yöneticiyle iletişime geçin.</p>
     {% endif %}
   </div>

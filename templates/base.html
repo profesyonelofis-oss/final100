@@ -70,7 +70,7 @@
     <div class="satin-al-alan">
       <a href="/uyelik" class="satin-al-banner" title="Satın almak için tıklayın">
         <div style="font-weight:700; font-size:12.5px; margin-bottom:3px;">🛒 SATIN AL</div>
-        {% if odeme_ucret %}<div style="font-size:11.5px;">Üyelik ücreti: <strong>{{ odeme_ucret }}</strong></div>{% endif %}
+        <div style="font-size:11.5px;">Günlük ücret: <strong>{{ odeme_gunluk }} ₺</strong> — istediğiniz kadar gün</div>
         {% if odeme_iban %}<div style="font-size:11px; opacity:.92; word-break:break-all;">IBAN: {{ odeme_iban }}</div>{% endif %}
         {% if odeme_havale_ad %}<div style="font-size:11px; opacity:.92;">Hesap sahibi: {{ odeme_havale_ad }}</div>{% endif %}
         {% if odeme_not %}<div style="font-size:10.5px; opacity:.85; margin-top:3px; font-style:italic; white-space:normal; word-break:break-word; overflow-wrap:anywhere; line-height:1.5;">{{ odeme_not }}</div>{% endif %}
@@ -130,7 +130,7 @@
     {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' and odeme_bilgisi_var %}
     <!-- ODEME BILGILERI BANNERI: deneme uye giris yaptiginda hesap bilgileri -->
     <div class="flash bilgi" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span>💳 <strong>ÜYELİK ÜCRETİ:</strong> {{ odeme_ucret or '—' }} — IBAN: <code id="banner-iban">{{ odeme_iban }}</code>
+      <span>💳 <strong>GÜNLÜK ÜCRET:</strong> {{ odeme_gunluk }} ₺ — IBAN: <code id="banner-iban">{{ odeme_iban }}</code>
         {% if odeme_iban %}<button type="button" class="btn ghost small" onclick="ibanKopyala('banner-iban', this)" style="padding:2px 8px; font-size:11px;">📋 Kopyala</button>{% endif %}
         {% if odeme_havale_ad %} — Hesap sahibi: <strong>{{ odeme_havale_ad }}</strong>{% endif %}
       </span>
