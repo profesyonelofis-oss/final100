@@ -435,6 +435,10 @@ def delete_user(kullanici_adi):
     conn = get_connection()
     conn.execute("DELETE FROM kullanicilar WHERE kullanici_adi = ?",
                  (kullanici_adi,))
+    # Cihaz kaydini da temizle: silinen kullanicinin cihazindan tekrar
+    # uyelik acilabilsin (cihaz kilidi kisiye bagli, cihaza degil).
+    conn.execute("DELETE FROM cihaz_kayitlari WHERE kullanici_adi = ?",
+                 (kullanici_adi,))
     conn.commit()
     conn.close()
 
