@@ -22,6 +22,10 @@
 </head>
 <body>
   <div class="giris-sayfa">
+    <div class="giris-ust">
+      <video class="giris-video" src="{{ url_for('static', filename='tanitim_videosu.mp4') }}" autoplay muted loop playsinline poster="{{ url_for('static', filename='video-kapak.png') }}" onclick="this.muted=false;this.controls=true;this.play()" style="cursor:pointer"></video>
+      <p class="giris-video-not">🎯 90 saniyede programın çalışışını izleyin — sesi açmak için videoya dokunun</p>
+    </div>
     <div class="giris-kart">
       <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
       <h1>{{ FIRMA_ADI }}</h1>

@@ -190,7 +190,10 @@ td.orta, th.orta { text-align: center; }
 .flash.uyari { background: #FFF3CD; color: #664D03; }
 
 /* ---------- Giris sayfasi ---------- */
-.giris-sayfa { display: flex; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #E8F3EC, #F1F4F1); }
+.giris-sayfa { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #E8F3EC, #F1F4F1); padding: 24px 0; }
+.giris-ust { width: 100%; max-width: 420px; margin-bottom: 18px; padding: 0 16px; box-sizing: border-box; }
+.giris-video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; box-shadow: 0 6px 24px rgba(13,59,30,.18); background: #0d3b1e; object-fit: contain; }
+.giris-video-not { text-align: center; font-size: 12.5px; color: var(--metin2, #4b6a57); margin: 8px 0 0; }
 .giris-kart { background: #fff; border: 1px solid var(--cizgi); border-radius: 16px; padding: 36px; width: 380px; }
 .giris-kart img { display: block; margin: 0 auto 12px; width: 72px; }
 .giris-kart h1 { text-align: center; font-size: 22px; }
@@ -301,6 +304,7 @@ td.orta, th.orta { text-align: center; }
   /* Giris kartlari telefona sigsin */
   .giris-kart { width: 100%; max-width: 380px; padding: 26px 20px; margin: 0 12px; }
   .giris-sayfa { padding: 16px 0; }
+  .giris-ust { padding: 0 12px; }
 
   /* Modal telefona sigsin */
   .modal { width: calc(100vw - 32px); max-width: 360px; }

@@ -253,6 +253,7 @@ def kayit():
             flash("Kayd\u0131n\u0131z al\u0131nd\u0131! 3 g\u00fcnl\u00fck deneme s\u00fcr\u00fcminiz ba\u015flad\u0131; "
                   "t\u00fcm sistemi kullanabilirsiniz. Deneme bitince \u00fcyelik sayfas\u0131ndan "
                   "\u00f6deme yapabilirsiniz.", "basari")
+            _telegram_gonder("KARAOĞLU Zeytin Takip\n✅ Yeni kayıt! 3 gün deneme başladı.\n👤 Kullanıcı: %s\n💻 Cihaz: %s\n👉 İncele: zeytinhesap.com/kullanicilar" % (ad, cihaz_id))
             return redirect(url_for("giris"))
     return render_template("kayit.html",
                            gunluk_ucret=webdb.get_ayar("gunluk_ucret") or "200",
@@ -305,6 +306,56 @@ def genel_bakis():
     satislar_son = webdb.get_all_satis_fisleri()[:8]
     return render_template("genel_bakis.html", s=stats, notlar=notlar,
                            fisler_son=fisler_son, satislar_son=satislar_son)
+
+
+# ---------------------------------------------------------------------------
+# Telegram bildirimi (ucretsiz, yalnizca yoniciye gider)
+# ---------------------------------------------------------------------------
+
+def _telegram_gonder(mesaj):
+    """Yoniciye (sadece kendi Telegram'ina) bildirim gonderir.
+
+    Kurulum (bir kez):
+      1. Telegram'da @BotFather acin -> /newbot yazin -> bot adini girin
+      2. BotFather'in verdigi TOKEN'i Render Environment'a
+         TELEGRAM_BOT_TOKEN olarak ekleyin
+      3. Olusturdugunuz bota Telegram'dan bir kez /start gonderin
+         (bot size mesaj atabilsin diye gerekli)
+    Chat ID otomatik bulunur, elle girme geregi yoktur.
+
+    Token girilmemisse sessizce atlanir; hicbir hata uygulamayi etkilemez.
+    """
+    def _gonder():
+        try:
+            from urllib.request import urlopen
+            from urllib.parse import quote
+            import json
+            token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            if not token:
+                return  # Token girilmemis: sessizce atla
+            api = "https://api.telegram.org/bot%s/" % token
+
+            # Chat ID: ayarlarda sakliysa kullan, degilse getUpdates'ten bul
+            chat_id = webdb.get_ayar("telegram_chat_id")
+            if not chat_id:
+                cevap = json.loads(urlopen(api + "getUpdates", timeout=15).read())
+                for guncelleme in cevap.get("result", []):
+                    sohbet = guncelleme.get("message", {}).get("chat", {})
+                    if sohbet.get("type") in ("private",):
+                        chat_id = str(sohbet["id"])
+                        webdb.set_ayar("telegram_chat_id", chat_id)
+                        break
+                if not chat_id:
+                    print("Telegram: chat ID bulunamadi. Bota Telegram'dan "
+                          "bir kez /start gonderin.", flush=True)
+                    return
+
+            url = (api + "sendMessage?chat_id=%s&text=%s") % (
+                chat_id, quote(mesaj))
+            urlopen(url, timeout=15).read()
+        except Exception as hata:
+            print("Telegram bildirimi gonderilemedi:", hata, flush=True)
+    threading.Thread(target=_gonder, daemon=True).start()
 
 
 def _admin_bildirim_eposta(kullanici, mesaj):
@@ -404,6 +455,7 @@ def uyelik():
         else:
             webdb.odeme_bildirimi_ekle(u["ad"], mesaj)
             _admin_bildirim_eposta(u["ad"], mesaj)
+            _telegram_gonder("KARAOĞLU Zeytin Takip\n💰 Ödeme bildirimi geldi!\n👤 Kullanıcı: %s\n📝 Mesaj: %s\n👉 Onay: zeytinhesap.com/kullanicilar" % (u["ad"], mesaj[:200]))
             flash("Ödeme bildiriminiz yöneticiye iletildi. Onaylandıktan "
                   "sonra sistem açılacaktır.", "basari")
         return redirect(url_for("uyelik"))
