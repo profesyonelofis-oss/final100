@@ -39,13 +39,17 @@
       {% if kullanici_var %}
       <form method="post">
         <label for="kullanici_adi">KULLANICI ADI</label>
-        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
+        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus
+               autocapitalize="none" autocorrect="off" spellcheck="false"
+               autocomplete="username" enterkeyhint="next">
         <label for="sifre">ŞİFRE</label>
-        <input type="password" id="sifre" name="sifre" required>
+        <input type="password" id="sifre" name="sifre" required
+               autocomplete="current-password" enterkeyhint="go">
         <button type="submit" class="btn">GİRİŞ YAP</button>
       </form>
       <p style="text-align:center; margin-top:16px; font-size:13px; color:var(--metin2);">
-        Hesabınız yok mu? <a href="/kayit">Kayıt olun</a>
+        <a href="/sifremi-unuttum">🔑 Şifremi unuttum</a>
+        &nbsp;·&nbsp; Hesabınız yok mu? <a href="/kayit">Kayıt olun</a>
       </p>
       {% else %}
       <div class="panel" style="padding:14px;">

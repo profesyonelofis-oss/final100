@@ -354,3 +354,20 @@ td.orta, th.orta { text-align: center; }
 /* NOT: Burada eskiden <=800px icin "statik yatay sidebar" duzeni vardi;
    hamburger/kayan menü düzeniyle çakışıp telefon ve tabletde paneli
    bozuyordu. Kaldırıldı — mobilde tek düzen: hamburger + kayan menü. */
+
+/* --- Kucuk telefon (<=480px): fis ekrani rahat dokunmatik kullanim --- */
+@media (max-width: 480px) {
+  /* KG x Fiyat tablosu: daha buyuk dokunma alanlari, sigan kolonlar */
+  .fis-grid { grid-template-columns: 56px 1fr 1fr 74px; gap: 10px 8px; }
+  .fis-grid input { min-height: 44px; font-size: 16px; }
+  .fis-grid .sinif { font-size: 12.5px; line-height: 1.3; }
+  .fis-toplam { padding-top: 12px; }
+  .fis-toplam .buyuk { font-size: 22px; }
+
+  /* Yan yana butonlar (Kaydet/Iptal) telefonda alt alta tam genislik */
+  .panel div[style*="display:flex"] { flex-direction: column; }
+  .panel div[style*="display:flex"] > .btn { width: 100%; text-align: center; }
+
+  /* Panel icindeki iki sutunlu mini grid'ler tek sutuna insin */
+  .panel .grid-2 { grid-template-columns: 1fr; }
+}

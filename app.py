@@ -48,7 +48,8 @@ def _gizli_anahtar():
 
 app.secret_key = _gizli_anahtar()
 
-YETKI_GEREKTIRMEZ = {"giris", "ilk_kurulum", "cikis", "static"}
+YETKI_GEREKTIRMEZ = {"giris", "ilk_kurulum", "cikis", "static",
+                     "sifremi_unuttum"}
 
 
 def giris_sadece(f):
@@ -192,6 +193,36 @@ def giris():
             return redirect(url_for("genel_bakis"))
         flash("Kullanıcı adı veya şifre hatalı.", "hata")
     return render_template("giris.html", kullanici_var=webdb.has_any_user())
+
+
+@app.route("/sifremi-unuttum", methods=["GET", "POST"])
+def sifremi_unuttum():
+    """Sifremi unuttum: talebi yoneticinin Telegram'ina bildirir.
+
+    Guvenlik: kullanici varligi Tahmin Edilemesin diye, kullanici yoksa da
+    ayni mesaj gosterilir; Telegram yalnizca gecerli kullanici icin gider.
+    Yonetici zeytinhesap.com/kullanicilar sayfasindan kullanicinin
+    sifresini istenen yeni sifreyle degistirir.
+    """
+    webdb.init_db()
+    if request.method == "POST":
+        ad = request.form.get("kullanici_adi", "").strip()
+        if ad and webdb.get_user(ad):
+            _telegram_gonder(
+                "KARAOĞLU Zeytin Takip\n"
+                "🔑 ŞİFRE SIFIRLAMA TALEBİ\n"
+                "👤 Kullanıcı: %s\n"
+                "🌐 IP: %s\n"
+                "⏰ %s\n"
+                "👉 Yeni şifreyi zeytinhesap.com/kullanicilar sayfasından "
+                "🔒 alarak girin (müşterinin istediği şifreyi yazın)." % (
+                    ad, request.remote_addr or "-",
+                    datetime.now().strftime("%d.%m.%Y %H:%M")))
+        flash("Talebiniz yöneticiye iletildi. Yönetici yeni şifrenizi "
+              "belirleyip size bildirecek; ardından giriş yapabilirsiniz.",
+              "basari")
+        return redirect(url_for("giris"))
+    return render_template("sifremi_unuttum.html")
 
 
 @app.route("/ilk-kurulum", methods=["GET", "POST"])

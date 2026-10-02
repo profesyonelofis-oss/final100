@@ -35,11 +35,15 @@
       <form method="post" id="kayit-form">
         <input type="hidden" name="cihaz_id" id="cihaz_id" value="">
         <label for="kullanici_adi">KULLANICI ADI</label>
-        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
+        <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus
+               autocapitalize="none" autocorrect="off" spellcheck="false"
+               autocomplete="username">
         <label for="sifre">ŞİFRE (en az 4 karakter)</label>
-        <input type="password" id="sifre" name="sifre" required minlength="4">
+        <input type="password" id="sifre" name="sifre" required minlength="4"
+               autocomplete="new-password">
         <label for="sifre2">ŞİFRE (tekrar)</label>
-        <input type="password" id="sifre2" name="sifre2" required minlength="4">
+        <input type="password" id="sifre2" name="sifre2" required minlength="4"
+               autocomplete="new-password">
         <button type="submit" class="btn">KAYIT OL (3 GÜN ÜCRETSİZ DENEME)</button>
       </form>
 
