@@ -375,6 +375,20 @@ def check_user(kullanici_adi, sifre):
     return secrets.compare_digest(_hash_password(sifre, salt), row[0])
 
 
+def kullanici_adi_bul(ad):
+    """Buyuk/kucuk harf duyarsiz kullanici adi arar; gercek adini veya None doner.
+
+    Telefon klavyeleri ilk harfi buyutebildigi icin giriste harf duyarsiz
+    eslestirme kullanilir ('Karaoglu' -> 'karaoglu').
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT kullanici_adi FROM kullanicilar "
+        "WHERE LOWER(kullanici_adi) = LOWER(?)", (ad,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def has_any_user():
     conn = get_connection()
     n = conn.execute("SELECT COUNT(*) FROM kullanicilar").fetchone()[0]

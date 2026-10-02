@@ -185,11 +185,14 @@ def giris():
     if request.method == "POST":
         ad = request.form.get("kullanici_adi", "").strip()
         sifre = request.form.get("sifre", "")
-        if webdb.check_user(ad, sifre):
-            session["kullanici"] = ad
-            u = webdb.get_user(ad)
+        # Telefon klavyesi ilk harfi buyuttugunde de giris yapilabilsin:
+        # harf duyarsiz gercek kullanici adini bul ve onunla kontrol et.
+        gercek_ad = webdb.kullanici_adi_bul(ad) if ad else None
+        if gercek_ad and webdb.check_user(gercek_ad, sifre):
+            session["kullanici"] = gercek_ad
+            u = webdb.get_user(gercek_ad)
             if u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
-                webdb.set_lisans(ad, "suresi_bitti")
+                webdb.set_lisans(gercek_ad, "suresi_bitti")
             return redirect(url_for("genel_bakis"))
         flash("Kullanıcı adı veya şifre hatalı.", "hata")
     return render_template("giris.html", kullanici_var=webdb.has_any_user())
