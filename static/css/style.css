@@ -301,10 +301,10 @@ td.orta, th.orta { text-align: center; }
   .fis-toplam { flex-direction: column; align-items: stretch; text-align: center; gap: 12px; }
   .fis-toplam > div { text-align: center !important; }
 
-  /* Giris kartlari telefona sigsin */
-  .giris-kart { width: 100%; max-width: 380px; padding: 26px 20px; margin: 0 12px; }
+  /* Giris kartlari telefona sigsin; form videoyun ÜSTÜNDE görünsün */
+  .giris-kart { width: 100%; max-width: 380px; padding: 26px 20px; margin: 0 12px; order: -1; }
   .giris-sayfa { padding: 16px 0; }
-  .giris-ust { padding: 0 12px; }
+  .giris-ust { padding: 0 12px; margin-top: 10px; }
 
   /* Modal telefona sigsin */
   .modal { width: calc(100vw - 32px); max-width: 360px; }
@@ -351,9 +351,6 @@ td.orta, th.orta { text-align: center; }
   .sidebar { transform: none !important; position: sticky; }
 }
 
-@media (max-width: 800px) {
-  body { flex-direction: column; }
-  .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .sidebar nav { display: flex; flex-wrap: wrap; }
-  .content { padding: 16px; }
-}
+/* NOT: Burada eskiden <=800px icin "statik yatay sidebar" duzeni vardi;
+   hamburger/kayan menü düzeniyle çakışıp telefon ve tabletde paneli
+   bozuyordu. Kaldırıldı — mobilde tek düzen: hamburger + kayan menü. */
