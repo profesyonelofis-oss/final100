@@ -371,3 +371,11 @@ td.orta, th.orta { text-align: center; }
   /* Panel icindeki iki sutunlu mini grid'ler tek sutuna insin */
   .panel .grid-2 { grid-template-columns: 1fr; }
 }
+
+/* --- Fiyat kilidi: kilitli fiyat kutulari okunur ama yazilamaz gorunur --- */
+input.fiyat-kilitli {
+  background: #EAF4EE !important;
+  border-color: var(--yesil) !important;
+  color: #0F5132;
+  font-weight: bold;
+}

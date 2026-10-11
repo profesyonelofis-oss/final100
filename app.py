@@ -583,6 +583,27 @@ def alim_sil(fis_id):
     return redirect(request.referrer or url_for("saticilar"))
 
 
+@app.route("/fiyat-kilitle", methods=["POST"])
+@giris_gerekli
+def fiyat_kilitle():
+    """Fis tablosundaki kilit butonu: kalibre fiyatlari kaydeder.
+
+    Telefon/tablet/bilgisayarda ayni fiyatlar her yeni fiste hazir gelir;
+    Ayarlar > Kalibre fiyatlari bolumunde de guncellenmis gorunur.
+    """
+    guncellenen = 0
+    for kalibre in webdb.KALIBRELER:
+        ham = request.form.get("fiyat_" + kalibre, "")
+        if ham == "":
+            continue
+        fiyat = webdb._tr_to_float(ham, -1.0)
+        if fiyat < 0:
+            continue
+        webdb.update_kalibre_fiyat(kalibre, fiyat)
+        guncellenen += 1
+    return {"ok": True, "guncellenen": guncellenen}
+
+
 # ---------------------------------------------------------------------------
 # Saticilar
 # ---------------------------------------------------------------------------

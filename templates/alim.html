@@ -51,10 +51,16 @@
       {% for k in KALIBRELER %}
       <div class="sinif">{{ k }}</div>
       <input type="text" inputmode="decimal" form="alim-form" data-kg="{{ k }}" name="kg_{{ k }}" id="kg_{{ k }}" placeholder="0">
-      <input type="text" inputmode="decimal" form="alim-form" data-fiyat="{{ k }}" name="fiyat_{{ k }}" id="fiyat_{{ k }}" placeholder="0">
+      <input type="text" inputmode="decimal" form="alim-form" data-fiyat="{{ k }}" name="fiyat_{{ k }}" id="fiyat_{{ k }}" placeholder="0" value="{{ fiyatlar.get(k, '') if fiyatlar.get(k) else '' }}">
       <div class="toplam" data-toplam="{{ k }}">—</div>
       {% endfor %}
     </div>
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button type="button" id="fiyat-kilit-btn" class="btn" style="flex:1;" aria-pressed="false">🔒 FİYATLARI KİLİTLE</button>
+    </div>
+    <p style="color:var(--metin2); font-size:12px; margin-top:6px;">
+      🔒 Kilitlerken fiyatlar kaydedilir; yeni müşteri fişlerinde aynı fiyatlar hazır gelir. Kilidi açıp değiştirebilirsiniz.
+    </p>
     <div class="fis-toplam">
       <div>
         <div class="etiket" style="color:var(--metin2); font-size:12px; font-weight:bold;">TOPLAM</div>

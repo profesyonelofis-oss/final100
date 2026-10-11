@@ -157,7 +157,7 @@
     {% endwith %}
     {% block icerik %}{% endblock %}
   </main>
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=20261002b"></script>
   {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
   <script>
   /* Deneme suresi sayaclari: banner'da kalan sure + 10 dakikada bir tekrarlayan bildirim */

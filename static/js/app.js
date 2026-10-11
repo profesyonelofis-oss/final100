@@ -75,4 +75,62 @@ document.addEventListener("DOMContentLoaded", function () {
     inp.addEventListener("input", hesapla);
   });
   hesapla();
+
+  /* ---------- Fiyat kilitleme (alim + teslimat fisleri) ----------
+     Kullanici cesidi secip fiyatları yazdikta "🔒 Kilitle" der:
+     fiyatlar sunucuya (Ayarlar > Kalibre fiyatları) kaydedilir ve
+     kutular yazma korumalı olur. Yeni musteri/sayfa yenilemede
+     fiyatlar dolu ve kilitli gelir. "🔓 Kilidi Aç" ile duzenlenebilir. */
+  var kilitBtn = document.getElementById("fiyat-kilit-btn");
+  if (kilitBtn) {
+    var fiyats = Array.prototype.slice.call(document.querySelectorAll("[data-fiyat]"));
+
+    function fiyatlariKilitle(kilitli) {
+      fiyats.forEach(function (inp) {
+        inp.readOnly = kilitli;
+        inp.classList.toggle("fiyat-kilitli", kilitli);
+      });
+      kilitBtn.textContent = kilitli ? "🔓 FİYAT KİLİDİNİ AÇ" : "🔒 FİYATLARI KİLİTLE";
+      kilitBtn.classList.toggle("notor", kilitli);
+      kilitBtn.setAttribute("aria-pressed", kilitli ? "true" : "false");
+    }
+
+    function fiyatlarDoluMu() {
+      return fiyats.some(function (inp) {
+        return parseFloat((inp.value || "").replace(",", ".")) > 0;
+      });
+    }
+
+    kilitBtn.addEventListener("click", function () {
+      var kilitli = fiyats.length && fiyats[0].readOnly;
+      if (!kilitli) {
+        if (!fiyatlarDoluMu()) {
+          alert("Önce fiyat girin; boş fiyatlar kilitlenmez.");
+          return;
+        }
+        fiyatlariKilitle(true);
+        kilitBtn.disabled = true;
+        kilitBtn.textContent = "⏳ KİLİTLENİYOR...";
+        var gonderilecek = {};
+        fiyats.forEach(function (inp) {
+          gonderilecek["fiyat_" + inp.getAttribute("data-fiyat")] = inp.value || "0";
+        });
+        fetch("/fiyat-kilitle", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(gonderilecek).toString()
+        }).then(function (r) { return r.json(); })
+          .then(function (j) {
+            kilitBtn.disabled = false;
+            fiyatlariKilitle(!!j.ok);
+          })
+          .catch(function () { kilitBtn.disabled = false; fiyatlariKilitle(false); });
+      } else {
+        fiyatlariKilitle(false);
+      }
+    });
+
+    /* Sunucuda kayitli fiyatlar doluysa acilista kilitli basla */
+    if (fiyatlarDoluMu()) fiyatlariKilitle(true);
+  }
 });
