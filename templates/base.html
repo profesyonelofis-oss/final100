@@ -20,7 +20,7 @@
   <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002">
 </head>
-<body>
+<body{% if secili_cesit is defined and cesit_kilitli is defined %} data-cesit-kilitli="{{ '1' if cesit_kilitli else '0' }}" data-secili-cesit="{{ secili_cesit }}"{% endif %}>
   <button class="menu-btn" id="menu-btn" aria-label="Menüyü aç/kapat" aria-expanded="false">☰</button>
   <div class="menu-kararti" id="menu-kararti"></div>
   <aside class="sidebar" id="sidebar">
@@ -157,7 +157,7 @@
     {% endwith %}
     {% block icerik %}{% endblock %}
   </main>
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=20261002b"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=20261011"></script>
   {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
   <script>
   /* Deneme suresi sayaclari: banner'da kalan sure + 10 dakikada bir tekrarlayan bildirim */

@@ -842,6 +842,79 @@ def get_kalibre_fiyatlari():
     return d
 
 
+def _cesit_fiyat_tablosu_olustur(conn):
+    """Cesit bazli sabit fiyatlar: her zeytin cesidi icin kalibre basina fiyat."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kalibre_cesit_fiyatlari (
+            cesit TEXT NOT NULL,
+            kalibre TEXT NOT NULL,
+            fiyat REAL NOT NULL,
+            PRIMARY KEY (cesit, kalibre)
+        )""")
+
+
+def get_cesit_fiyatlari(cesit):
+    """Bir zeytin cesidinin kalibre bazli sabit fiyatlari (kalibre -> fiyat).
+
+    Cesidin hic fiyati girilmemisse genel kalibre fiyatlari doner.
+    """
+    genel = get_kalibre_fiyatlari()
+    if not cesit:
+        return genel
+    conn = get_connection()
+    try:
+        _cesit_fiyat_tablosu_olustur(conn)
+        rows = conn.execute(
+            "SELECT kalibre, fiyat FROM kalibre_cesit_fiyatlari WHERE cesit = ?",
+            (cesit,)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return genel  # bu cesit icin kayit yok: genel fiyatlari goster
+    d = dict(rows)
+    for k in KALIBRELER:
+        d.setdefault(k, 0.0)
+    return d
+
+
+def cesit_fiyati_var_mi(cesit):
+    """Cesidin KENDI fiyatlari kaydedilmis mi (genel fiyatlardan bagimsiz)."""
+    if not cesit:
+        return False
+    conn = get_connection()
+    try:
+        _cesit_fiyat_tablosu_olustur(conn)
+        n = conn.execute(
+            "SELECT COUNT(*) FROM kalibre_cesit_fiyatlari WHERE cesit = ?",
+            (cesit,)).fetchone()[0]
+    finally:
+        conn.close()
+    return n > 0
+
+
+def set_cesit_fiyatlari(cesit, fiyatlar):
+    """Cesit bazli fiyatlari yaz (fiyatlar: {kalibre: sayi})."""
+    if not cesit:
+        return
+    conn = get_connection()
+    try:
+        _cesit_fiyat_tablosu_olustur(conn)
+        for kalibre, fiyat in fiyatlar.items():
+            try:
+                f = float(_tr_to_float(fiyat))
+            except Exception:
+                continue
+            if f < 0:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO kalibre_cesit_fiyatlari "
+                "(cesit, kalibre, fiyat) VALUES (?, ?, ?)",
+                (cesit, kalibre, f))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_kalibre_fiyat(kalibre, fiyat):
     conn = get_connection()
     conn.execute("INSERT OR REPLACE INTO kalibre_fiyatlari (kalibre, fiyat) VALUES (?, ?)",

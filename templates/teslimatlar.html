@@ -26,11 +26,11 @@
       <div class="toplam" data-toplam="{{ k }}">—</div>
       {% endfor %}
     </div>
-    <div style="display:flex; gap:8px; margin-top:14px;">
-      <button type="button" id="fiyat-kilit-btn" class="btn" style="flex:1;" aria-pressed="false">🔒 FİYATLARI KİLİTLE</button>
+    <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
+      <button type="button" id="fiyat-kilit-btn" class="btn" style="flex:1; min-width:200px;" aria-pressed="false">🔒 FİYATLARI KİLİTLE</button>
     </div>
-    <p style="color:var(--metin2); font-size:12px; margin-top:6px;">
-      🔒 Kilitlerken fiyatlar kaydedilir; yeni müşteri fişlerinde aynı fiyatlar hazır gelir. Kilidi açıp değiştirebilirsiniz.
+    <p id="kilit-aciklama" style="color:var(--metin2); font-size:12px; margin-top:6px;">
+      🔒 Kilit butonuna basınca fiyatlar kaydedilir; her yeni fişte hazır gelir. Kilidi açıp değiştirebilirsiniz.
     </p>
     <div class="fis-toplam">
       <div>

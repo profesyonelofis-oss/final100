@@ -15,9 +15,10 @@
     <input type="text" id="uretici_tel" name="uretici_tel" placeholder="0 5XX XXX XX XX" required>
 
     <label>ZEYTİN ÇEŞİDİ</label>
-    <div class="radio-row">
+    <div class="radio-row" id="cesit-row">
       {% for c in CESITLER %}
-      <label><input type="radio" name="cesit" value="{{ c }}" required> {{ c }}</label>
+      <label><input type="radio" name="cesit" value="{{ c }}" required
+             {% if secili_cesit == c %}checked{% endif %}> {{ c }}</label>
       {% endfor %}
     </div>
 
@@ -55,11 +56,11 @@
       <div class="toplam" data-toplam="{{ k }}">—</div>
       {% endfor %}
     </div>
-    <div style="display:flex; gap:8px; margin-top:14px;">
-      <button type="button" id="fiyat-kilit-btn" class="btn" style="flex:1;" aria-pressed="false">🔒 FİYATLARI KİLİTLE</button>
+    <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
+      <button type="button" id="fiyat-kilit-btn" class="btn" style="flex:1; min-width:200px;" aria-pressed="false">🔒 FİYATLARI KİLİTLE</button>
     </div>
-    <p style="color:var(--metin2); font-size:12px; margin-top:6px;">
-      🔒 Kilitlerken fiyatlar kaydedilir; yeni müşteri fişlerinde aynı fiyatlar hazır gelir. Kilidi açıp değiştirebilirsiniz.
+    <p id="kilit-aciklama" style="color:var(--metin2); font-size:12px; margin-top:6px;">
+      🔒 Kilit butonuna basınca seçtiğiniz zeytin çeşidine göre fiyatlar kaydedilir; o çeşide her dönüşte fiyatlar hazır gelir.
     </p>
     <div class="fis-toplam">
       <div>

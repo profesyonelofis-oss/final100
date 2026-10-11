@@ -76,21 +76,35 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   hesapla();
 
-  /* ---------- Fiyat kilitleme (alim + teslimat fisleri) ----------
-     Kullanici cesidi secip fiyatları yazdikta "🔒 Kilitle" der:
-     fiyatlar sunucuya (Ayarlar > Kalibre fiyatları) kaydedilir ve
-     kutular yazma korumalı olur. Yeni musteri/sayfa yenilemede
-     fiyatlar dolu ve kilitli gelir. "🔓 Kilidi Aç" ile duzenlenebilir. */
+  /* ---------- Fiyat kilitleme (cesit bazli, alim fisi) ----------
+     Secili zeytin cesidine gore fiyat kilidi:
+       - Trilya secili + fiyatlar yazili + 🔒 Kilitle -> fiyatlar TRILYA'ya
+         kaydedilir ve kilitlenir.
+       - Edremit radio'suna tiklaninca Edremit'in kendi fiyatlari (varsa)
+         yuklenir; Edremit kilitsizse genis fiyat kalir, istenirse
+         ayri fiyat girip Edremit'e de kilitlemek mumkundur.
+       - Kilite durumu sunucuda saklanir; telefon/tablet/bilgisayarda
+         ve yeni musterilerde ayni fiyatlardan devam edilir. */
   var kilitBtn = document.getElementById("fiyat-kilit-btn");
   if (kilitBtn) {
     var fiyats = Array.prototype.slice.call(document.querySelectorAll("[data-fiyat]"));
+    var cesitRadios = document.querySelectorAll('input[name="cesit"]');
+    var ozetAciklama = document.getElementById("kilit-aciklama");
+
+    function seciliCesit() {
+      var r = document.querySelector('input[name="cesit"]:checked');
+      return r ? r.value : "";
+    }
 
     function fiyatlariKilitle(kilitli) {
       fiyats.forEach(function (inp) {
         inp.readOnly = kilitli;
         inp.classList.toggle("fiyat-kilitli", kilitli);
       });
-      kilitBtn.textContent = kilitli ? "🔓 FİYAT KİLİDİNİ AÇ" : "🔒 FİYATLARI KİLİTLE";
+      var c = seciliCesit();
+      kilitBtn.textContent = kilitli
+        ? "🔓 KİLİDİ AÇ" + (c ? " — " + c : "")
+        : "🔒 BU ÇEŞİT FİYATINI KİLİTLE" + (c ? " — " + c : "");
       kilitBtn.classList.toggle("notor", kilitli);
       kilitBtn.setAttribute("aria-pressed", kilitli ? "true" : "false");
     }
@@ -104,6 +118,10 @@ document.addEventListener("DOMContentLoaded", function () {
     kilitBtn.addEventListener("click", function () {
       var kilitli = fiyats.length && fiyats[0].readOnly;
       if (!kilitli) {
+        if (!seciliCesit()) {
+          alert("Önce zeytin çeşidi seçin; kilit çeşide göre kaydedilir.");
+          return;
+        }
         if (!fiyatlarDoluMu()) {
           alert("Önce fiyat girin; boş fiyatlar kilitlenmez.");
           return;
@@ -111,7 +129,7 @@ document.addEventListener("DOMContentLoaded", function () {
         fiyatlariKilitle(true);
         kilitBtn.disabled = true;
         kilitBtn.textContent = "⏳ KİLİTLENİYOR...";
-        var gonderilecek = {};
+        var gonderilecek = { cesit: seciliCesit() };
         fiyats.forEach(function (inp) {
           gonderilecek["fiyat_" + inp.getAttribute("data-fiyat")] = inp.value || "0";
         });
@@ -130,7 +148,30 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
 
-    /* Sunucuda kayitli fiyatlar doluysa acilista kilitli basla */
-    if (fiyatlarDoluMu()) fiyatlariKilitle(true);
+    /* Cesit radio'su degisir: o cesidin fiyatlari sunucudan yuklenir.
+       Cesidin kendi kaydi yoksa genel kalibre fiyatlari listelenir. */
+    cesitRadios.forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        var c = radio.value;
+        fetch("/cesit-fiyatlari?cesit=" + encodeURIComponent(c))
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j.ok) return;
+            fiyats.forEach(function (inp) {
+              var k = inp.getAttribute("data-fiyat");
+              inp.value = (j.fiyatlar[k] && j.fiyatlar[k] > 0)
+                ? String(j.fiyatlar[k]).replace(".", ",") : "";
+            });
+            fiyatlariKilitle(!!j.kilitli);
+            hesapla();
+          })
+          .catch(function () { fiyatlariKilitle(false); });
+      });
+    });
+
+    /* Acilista: sayfa secili cesitle yuklendi (cesit_kilitli bilgisi) */
+    if (fiyatlarDoluMu() && kilitBtn.getAttribute("aria-pressed") !== "unknown") {
+      fiyatlariKilitle(document.body.getAttribute("data-cesit-kilitli") === "1");
+    }
   }
 });

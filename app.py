@@ -556,10 +556,14 @@ def alim():
                     flash(f"Alım fişi #{fis_id} kaydedildi.", "basari")
                     return redirect(url_for("alim_fis_pdf", fis_id=fis_id))
     fisler = webdb.get_all_alim_fisleri()
-    fiyatlar = webdb.get_kalibre_fiyatlari()
     komisyon = webdb.get_komisyon()
+    # Se sparen cesidin kendi sabit fiyatlari varsa onlar, yoksa genel fiyatlar
+    secili_cesit = request.args.get("cesit", "")
+    fiyatlar = webdb.get_cesit_fiyatlari(secili_cesit)
+    cesit_kilitli = webdb.cesit_fiyati_var_mi(secili_cesit)
     return render_template("alim.html", fisler=fisler, fiyatlar=fiyatlar,
-                           komisyon=komisyon)
+                           komisyon=komisyon, secili_cesit=secili_cesit,
+                           cesit_kilitli=cesit_kilitli)
 
 
 @app.route("/alim-fis/<int:fis_id>")
@@ -583,15 +587,27 @@ def alim_sil(fis_id):
     return redirect(request.referrer or url_for("saticilar"))
 
 
+@app.route("/cesit-fiyatlari")
+@giris_gerekli
+def cesit_fiyatlari():
+    """Bir cesidin kayitli sabit fiyatlari (kilit butonu cesit degisince)."""
+    cesit = request.args.get("cesit", "").strip()
+    return {"ok": True, "cesit": cesit,
+            "fiyatlar": webdb.get_cesit_fiyatlari(cesit),
+            "kilitli": webdb.cesit_fiyati_var_mi(cesit)}
+
+
 @app.route("/fiyat-kilitle", methods=["POST"])
 @giris_gerekli
 def fiyat_kilitle():
-    """Fis tablosundaki kilit butonu: kalibre fiyatlari kaydeder.
+    """Fis tablosundaki kilit butonu: secili cesidin fiyatlari kaydeder.
 
-    Telefon/tablet/bilgisayarda ayni fiyatlar her yeni fiste hazir gelir;
-    Ayarlar > Kalibre fiyatlari bolumunde de guncellenmis gorunur.
+    Cesit seciliyse o cesidin sabit fiyatlari yazilir; Trilya'nin fiyati
+    Trilya'ya, Edremit'in Edremit'e sabitlenir. Cesit degisince o cesidin
+    kendi fiyatlari yuklenir. Telefon/tablet/bilgisayarda hep ayni calisir.
     """
-    guncellenen = 0
+    cesit = request.form.get("cesit", "").strip()
+    fiyatlar = {}
     for kalibre in webdb.KALIBRELER:
         ham = request.form.get("fiyat_" + kalibre, "")
         if ham == "":
@@ -599,9 +615,13 @@ def fiyat_kilitle():
         fiyat = webdb._tr_to_float(ham, -1.0)
         if fiyat < 0:
             continue
-        webdb.update_kalibre_fiyat(kalibre, fiyat)
-        guncellenen += 1
-    return {"ok": True, "guncellenen": guncellenen}
+        fiyatlar[kalibre] = fiyat
+    if cesit:
+        webdb.set_cesit_fiyatlari(cesit, fiyatlar)
+    else:
+        for kalibre, fiyat in fiyatlar.items():
+            webdb.update_kalibre_fiyat(kalibre, fiyat)
+    return {"ok": True, "cesit": cesit, "guncellenen": len(fiyatlar)}
 
 
 # ---------------------------------------------------------------------------
@@ -685,8 +705,10 @@ def teslimatlar():
             flash(f"Teslimat fişi #{fis_id} kaydedildi.", "basari")
             return redirect(url_for("teslimatlar"))
     fisler = webdb.get_all_satis_fisleri()
+    # Teslimat cesit secimi olmadigindan genel sabit fiyatlari kullanir
     fiyatlar = webdb.get_kalibre_fiyatlari()
-    return render_template("teslimatlar.html", fisler=fisler, fiyatlar=fiyatlar)
+    return render_template("teslimatlar.html", fisler=fisler, fiyatlar=fiyatlar,
+                           secili_cesit="", cesit_kilitli=False)
 
 
 @app.route("/teslimat-sil/<int:fis_id>", methods=["POST"])
