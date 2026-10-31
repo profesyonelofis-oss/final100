@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tarihi Lezzet Lokantası - Özel Taslak Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 font-sans">
+
+    <div id="demo-banner" class="bg-amber-600 text-black text-xs font-bold text-center py-2 px-4">
+        ⚠️ BU SAYFA Tarihi Lezzet Lokantası İÇİN ÖZEL HAZIRLANMIŞ 12 SAAT GEÇERLİ TASLAK DEMODUR.
+    </div>
+
+    <div id="main-content" class="max-w-4xl mx-auto text-center py-20 px-4">
+        <h1 class="text-5xl font-black mb-4">Tarihi Lezzet Lokantası</h1>
+        <p class="text-amber-400 mb-6">Kadıköy, İstanbul</p>
+        <p class="text-zinc-400 mb-8">Restoran / Kafe sektörüne özel modern ve hızlı web altyapısı.</p>
+        <a href="tel:05000000000" class="bg-amber-500 text-zinc-950 font-bold py-3 px-8 rounded-full inline-block">Hemen Bilgi Al</a>
+    </div>
+
+    <script>
+        const fileSlug = "tarihi_lezzet_lokantası";
+        let demoStart = localStorage.getItem("demo_start_" + fileSlug);
+        
+        if (!demoStart) {
+            demoStart = new Date().getTime();
+            localStorage.setItem("demo_start_" + fileSlug, demoStart);
+        }
+
+        const now = new Date().getTime();
+        const twelveHoursInMs = 12 * 60 * 60 * 1000;
+
+        if ((now - parseInt(demoStart)) > twelveHoursInMs) {
+            document.body.innerHTML = `
+                <div style="height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; background:#18181b; color:white; font-family:sans-serif; text-align:center; padding:20px;">
+                    <h1 style="color:#ef4444; font-size:2rem; margin-bottom:10px;">12 Saatlik Demo Süresi Sona Erdi</h1>
+                    <p style="color:#a1a1aa; max-width:400px; margin-bottom:20px;">Bu işletme için hazırlanan taslak çalışmanın erişim süresi dolmuştur. Web sitesini kalıcı olarak yayına almak için lütfen iletişime geçin.</p>
+                    <a href="tel:05000000000" style="background:#f59e0b; color:black; padding:10px 20px; border-radius:9999px; text-decoration:none; font-weight:bold;">İletişime Geç</a>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
