@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Hesap Tablosu - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}HESAP TABLOSU{% endblock %}
+{% block sayfa_alti %}{{ simdi.day }} {{ aylar[simdi.month] }} {{ simdi.year }}{% endblock %}
+
+{% block icerik %}
+<div class="cards">
+  <div class="card mavi">
+    <div class="etiket">TOPLAM ALIM</div>
+    <div class="deger">{{ fmt_tr(s.toplam_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.toplam_alim_tutar) }} ₺</div>
+  </div>
+  <div class="card yesil">
+    <div class="etiket">ÖDENEN</div>
+    <div class="deger">{{ fmt_tr(s.toplam_odenen) }} ₺</div>
+    <div class="alt">Kalan: {{ fmt_tr(s.kalan_bakiye) }} ₺</div>
+  </div>
+  <div class="card sari">
+    <div class="etiket">GİDERLER</div>
+    <div class="deger">{{ fmt_tr(s.toplam_gider) }} ₺</div>
+    <div class="alt">Toplam maliyet: {{ fmt_tr(s.toplam_maliyet) }} ₺</div>
+  </div>
+  <div class="card yesil">
+    <div class="etiket">BİRİM MALİYET</div>
+    <div class="deger">{{ fmt_tr(s.birim_maliyet) }} ₺/KG</div>
+  </div>
+  <div class="card mavi">
+    <div class="etiket">TESLİM EDİLEN</div>
+    <div class="deger">{{ fmt_tr(s.teslim_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.teslim_para) }} ₺</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">DEPODA KALAN</div>
+    <div class="deger">{{ fmt_tr(s.depo_kalan_kilo, False) }} KG</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>TESLİMAT NOTLARI</h2>
+  {% if USER and USER.rol == 'admin' %}
+  <form method="post" action="/teslimat-notlari">
+    <div class="grid-2">
+      <div>
+        <label for="kg">KG NOTU</label>
+        <input type="text" id="kg" name="kg" value="{{ notlar.kg }}" placeholder="Örn: 1.250 kg teslim edildi">
+      </div>
+      <div>
+        <label for="para">PARA NOTU</label>
+        <input type="text" id="para" name="para" value="{{ notlar.para }}" placeholder="Örn: 40.000 ₺ ödeme alındı">
+      </div>
+    </div>
+    <button type="submit" class="btn" style="margin-top:12px;">NOTLARI KAYDET</button>
+  </form>
+  {% else %}
+  <div class="grid-2">
+    <div>
+      <label>KG NOTU</label>
+      <p style="padding:10px 12px; background:#F3F4F6; border:1px solid var(--cizgi); border-radius:8px; font-size:14px;">{{ notlar.kg or '—' }}</p>
+    </div>
+    <div>
+      <label>PARA NOTU</label>
+      <p style="padding:10px 12px; background:#F3F4F6; border:1px solid var(--cizgi); border-radius:8px; font-size:14px;">{{ notlar.para or '—' }}</p>
+    </div>
+  </div>
+  <p style="color:var(--metin2); font-size:12px; margin-top:8px;">Notlar yalnızca yönetici tarafından düzenlenebilir.</p>
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <h2>SON ALIM FİŞLERİ</h2>
+    {% if fisler_son %}
+    <table>
+      <thead><tr><th>TARİH</th><th>SATICI</th><th class="sağ">KG</th><th class="sağ">TUTAR</th></tr></thead>
+      <tbody>
+        {% for f in fisler_son %}
+        <tr>
+          <td>{{ f[3] }}</td><td>{{ f[1] }}</td>
+          <td class="sağ">{{ fmt_tr(f[4], False) }}</td>
+          <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="alt" style="color:var(--metin2);">Henüz alım fişi yok. <a href="/alim">Zeytin Alımı</a> sayfasından ekleyin.</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <h2>SON TESLİMAT FİŞLERİ</h2>
+    {% if satislar_son %}
+    <table>
+      <thead><tr><th>TARİH</th><th>FİRMA</th><th class="sağ">KG</th><th class="sağ">TUTAR</th></tr></thead>
+      <tbody>
+        {% for f in satislar_son %}
+        <tr>
+          <td>{{ f[2] }}</td><td>{{ f[1] or '—' }}</td>
+          <td class="sağ">{{ fmt_tr(f[3], False) }}</td>
+          <td class="sağ">{{ fmt_tr(f[4]) }} ₺</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--metin2); font-size:14px;">Henüz teslimat fişi yok. <a href="/teslimatlar">Teslimatlar</a> sayfasından ekleyin.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

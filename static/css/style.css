@@ -1,0 +1,381 @@
+/* KARAOGLU Zeytin Takip - Web */
+:root {
+  --yesil: #198754;
+  --yesil-koyu: #157347;
+  --kirmizi: #DC3545;
+  --kirmizi-koyu: #C82333;
+  --bg: #F1F4F1;
+  --kart: #FFFFFF;
+  --metin: #1A1A1A;
+  --metin2: #6C757D;
+  --cizgi: #E9ECEF;
+  --input-cizgi: #DEE2E6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--metin);
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ---------- Kenar cubugu ---------- */
+.sidebar {
+  width: 230px;
+  background: #FFFFFF;
+  border-right: 1px solid var(--cizgi);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.oto-logo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.oto-logo-kart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px;
+  border: 1px solid var(--cizgi);
+  border-radius: 10px;
+  background: var(--kart);
+}
+.oto-logo-kart.secili { border-color: var(--yesil); border-width: 2px; }
+.oto-logo-ad { font-size: 13px; font-weight: bold; color: var(--metin); }
+.oto-logo-etiket { font-size: 12px; font-weight: bold; color: var(--yesil); }
+.logo-area {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--cizgi);
+  cursor: pointer;
+}
+.logo-area img { width: 42px; height: 42px; object-fit: contain; }
+.logo-title { font-weight: bold; font-size: 20px; letter-spacing: 1px; }
+.logo-sub { font-size: 12px; color: var(--metin2); }
+.sidebar nav { padding: 10px 8px; overflow-y: auto; }
+.satin-al-alan { flex: 1; min-height: 0; padding: 2px 12px 10px; overflow-y: auto; }
+.sidebar nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #495057;
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.sidebar nav a:hover { background: #F1F3F5; }
+.sidebar nav a.active { background: var(--yesil); color: #fff; font-weight: bold; }
+.sidebar .ico { width: 22px; text-align: center; }
+.sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--cizgi); display: flex; gap: 8px; }
+.sidebar-footer .btn { flex: 1; text-align: center; }
+.ver { text-align: center; color: #ADB5BD; font-size: 11px; padding: 6px 0 12px; }
+
+/* Sidebar satin alma banneri (admin panelinden duzenlenir) */
+.satin-al-banner {
+  display: block;
+  margin: 0;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #FFF8E6, #FFEFc2);
+  border: 1.5px solid #E8B931;
+  border-radius: 10px;
+  color: #5c4a00;
+  text-decoration: none;
+  line-height: 1.45;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.satin-al-banner:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(232,185,49,.35); }
+
+/* ---------- Icerik ---------- */
+.content { flex: 1; padding: 22px 28px; max-width: 1400px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.topbar h1 { font-size: 24px; }
+.tarih { color: var(--metin2); font-size: 14px; margin-top: 2px; }
+.clock {
+  font-family: "Courier New", monospace;
+  font-size: 30px; font-weight: bold; color: var(--yesil);
+  background: var(--kart); border: 1px solid var(--cizgi);
+  padding: 8px 18px; border-radius: 12px;
+}
+
+/* ---------- Kartlar / ozet ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.card {
+  background: var(--kart); border: 1px solid var(--cizgi);
+  border-radius: 12px; padding: 16px 18px;
+}
+.card .etiket { color: var(--metin2); font-size: 12px; font-weight: bold; letter-spacing: .4px; }
+.card .deger { font-size: 22px; font-weight: bold; margin-top: 6px; }
+.card .alt { font-size: 12px; color: var(--metin2); margin-top: 4px; }
+.card.yesil { border-left: 5px solid var(--yesil); }
+.card.kirmizi { border-left: 5px solid var(--kirmizi); }
+.card.mavi { border-left: 5px solid #0D6EFD; }
+.card.sari { border-left: 5px solid #FFC107; }
+
+.panel {
+  background: var(--kart); border: 1px solid var(--cizgi);
+  border-radius: 12px; padding: 20px; margin-bottom: 20px;
+}
+.panel h2 { font-size: 15px; color: #495057; margin-bottom: 14px; letter-spacing: .4px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ---------- Form ---------- */
+label { display: block; font-size: 12px; color: var(--metin2); margin: 12px 0 4px; font-weight: bold; }
+input[type=text], input[type=number], input[type=date], input[type=password], input[type=time], select, textarea {
+  width: 100%; padding: 9px 12px;
+  border: 1px solid var(--input-cizgi); border-radius: 8px;
+  font-size: 14px; font-family: inherit; background: #fff;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--yesil); }
+.radio-row { display: flex; gap: 18px; align-items: center; margin: 8px 0; }
+.radio-row label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--metin); font-weight: normal; cursor: pointer; }
+
+/* ---------- Butonlar ---------- */
+.btn {
+  display: inline-block; padding: 10px 18px;
+  border: none; border-radius: 8px; cursor: pointer;
+  font-size: 14px; font-weight: bold; font-family: inherit;
+  background: var(--yesil); color: #fff; text-decoration: none;
+}
+.btn:hover { background: var(--yesil-koyu); }
+.btn.tehlikeli { background: var(--kirmizi); }
+.btn.tehlikeli:hover { background: var(--kirmizi-koyu); }
+.btn.notor { background: #E9ECEF; color: #495057; }
+.btn.notor:hover { background: #DEE2E6; }
+.btn.ghost { background: transparent; color: #495057; border: 1px solid var(--input-cizgi); }
+.btn.ghost:hover { background: #F1F3F5; }
+.btn.small { padding: 6px 12px; font-size: 12px; }
+.btn.ghost.danger { color: var(--kirmizi); border-color: #F8D7DA; }
+.btn.ghost.danger:hover { background: #F8D7DA; }
+
+/* ---------- Tablo ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--metin2); font-size: 12px; letter-spacing: .4px; padding: 8px 10px; border-bottom: 2px solid var(--cizgi); }
+td { padding: 9px 10px; border-bottom: 1px solid var(--cizgi); }
+tr:hover td { background: #F8F9FA; }
+td.sağ, th.sağ { text-align: right; }
+td.orta, th.orta { text-align: center; }
+.toplam-satir td { font-weight: bold; border-top: 2px solid var(--cizgi); }
+.kirmizi-metin { color: var(--kirmizi); font-weight: bold; }
+.yesil-metin { color: var(--yesil); font-weight: bold; }
+.rozet { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+.rozet.yesil { background: #D1E7DD; color: #0F5132; }
+.rozet.kirmizi { background: #F8D7DA; color: #842029; }
+.rozet.sari { background: #FFF3CD; color: #664D03; }
+.harf-filtre { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.harf-filtre a { padding: 5px 12px; border: 1px solid var(--input-cizgi); border-radius: 8px; text-decoration: none; color: #495057; font-size: 13px; }
+.harf-filtre a.aktif, .harf-filtre a:hover { background: var(--yesil); color: #fff; border-color: var(--yesil); }
+
+/* ---------- Fis grid (numara girdileri) ---------- */
+.fis-grid { display: grid; grid-template-columns: 110px 1fr 1fr 1.2fr; gap: 8px 14px; align-items: center; }
+.fis-grid .baslik { color: var(--metin2); font-size: 12px; font-weight: bold; }
+.fis-grid .sinif { font-weight: bold; }
+.fis-grid .x { color: #ADB5BD; text-align: center; }
+.fis-grid input { text-align: center; }
+.fis-grid .toplam { text-align: right; font-weight: bold; }
+.fis-toplam { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--cizgi); margin-top: 14px; padding-top: 14px; flex-wrap: wrap; gap: 10px; }
+.fis-toplam .buyuk { font-size: 20px; font-weight: bold; color: var(--yesil); }
+
+/* ---------- Flash ---------- */
+.flash { padding: 12px 16px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+.flash.basari { background: #D1E7DD; color: #0F5132; }
+.flash.hata { background: #F8D7DA; color: #842029; }
+.flash.uyari { background: #FFF3CD; color: #664D03; }
+
+/* ---------- Giris sayfasi ---------- */
+.giris-sayfa { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #E8F3EC, #F1F4F1); padding: 24px 0; }
+.giris-ust { width: 100%; max-width: 420px; margin-bottom: 18px; padding: 0 16px; box-sizing: border-box; }
+.giris-video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; box-shadow: 0 6px 24px rgba(13,59,30,.18); background: #0d3b1e; object-fit: contain; }
+.giris-video-not { text-align: center; font-size: 12.5px; color: var(--metin2, #4b6a57); margin: 8px 0 0; }
+.giris-kart { background: #fff; border: 1px solid var(--cizgi); border-radius: 16px; padding: 36px; width: 380px; }
+.giris-kart img { display: block; margin: 0 auto 12px; width: 72px; }
+.giris-kart h1 { text-align: center; font-size: 22px; }
+.giris-kart .alt { text-align: center; color: var(--metin2); font-size: 13px; margin-bottom: 18px; }
+.giris-kart .btn { width: 100%; margin-top: 18px; }
+
+/* ---------- Sirens ---------- */
+.sirens { display: flex; gap: 10px; }
+.siren { width: 14px; height: 14px; border-radius: 50%; }
+
+/* ---------- Modal ---------- */
+.modal-arka { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: #fff; border-radius: 12px; padding: 24px; width: 360px; }
+
+/* ---------- Eski mobil duzen (dar ekran duzenlemesi asagida detayli) ---------- */
+@media (max-width: 800px) {
+  .clock { display: none; }
+}
+
+/* ============================================================
+   MOZ / TABLET UYUMU (telefon + tablet + dokunmatik)
+   ============================================================ */
+
+/* --- Hamburger dugme: yalnizca mobilde gorunur --- */
+.menu-btn {
+  display: none;
+  position: fixed;
+  top: 10px; left: 10px;
+  z-index: 60;
+  width: 46px; height: 46px;
+  border: 1px solid var(--cizgi);
+  border-radius: 10px;
+  background: var(--kart);
+  font-size: 22px; line-height: 1;
+  color: var(--yesil);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+.menu-kararti {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 55;
+}
+.menu-kararti.goster { display: block; }
+
+@media (max-width: 900px) {
+  .menu-btn { display: block; }
+
+  /* Kenar cubugu: mobilde soldan kayan panel */
+  body { flex-direction: column; }
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 270px; max-width: 82vw;
+    height: 100vh;
+    z-index: 58;
+    transform: translateX(-105%);
+    transition: transform .22s ease;
+    box-shadow: 4px 0 18px rgba(0,0,0,.15);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar.acik { transform: translateX(0); }
+
+  /* Icerik tam genislik + hamburger payi */
+  .content {
+    padding: 64px 12px 90px;   /* ustte hamburger + altta bosluk */
+    width: 100%;
+    max-width: 100%;
+  }
+  .topbar h1 { font-size: 20px; }
+
+  /* Dokunmatik hedefler: en az 44px */
+  .btn { padding: 12px 18px; font-size: 15px; }
+  .btn.small { padding: 9px 14px; font-size: 13px; }
+  .sidebar nav a { padding: 13px 14px; font-size: 15px; }
+
+  /* iOS odak zoom'unu engelle: girdi fontu >= 16px olmali */
+  input[type=text], input[type=number], input[type=date],
+  input[type=password], input[type=time], input[type=file],
+  select, textarea { font-size: 16px; padding: 11px 12px; }
+
+  /* Ozet kartlari telefonda 2 sutun */
+  .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .card { padding: 12px 14px; }
+  .card .deger { font-size: 19px; }
+
+  /* Tablolar yatay kaydirilabilir; tasarmi bozmasin */
+  .panel { padding: 14px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 560px; }
+  th, td { padding: 10px 8px; }
+
+  /* Iki sutunlu grid'ler tek sutuna insin */
+  .grid-2 { grid-template-columns: 1fr; gap: 14px; }
+
+  /* Fis grid: 4 kolon telefonda sikisir; KG/Fiyat/Toplam yanyana kalsin */
+  .fis-grid {
+    grid-template-columns: 72px 1fr 1fr 84px;
+    gap: 8px 8px;
+  }
+  .fis-grid .baslik { font-size: 11px; }
+
+  /* fis-toplam dikey hizalama */
+  .fis-toplam { flex-direction: column; align-items: stretch; text-align: center; gap: 12px; }
+  .fis-toplam > div { text-align: center !important; }
+
+  /* Giris kartlari telefona sigsin; form videoyun ÜSTÜNDE görünsün */
+  .giris-kart { width: 100%; max-width: 380px; padding: 26px 20px; margin: 0 12px; order: -1; }
+  .giris-sayfa { padding: 16px 0; }
+  .giris-ust { padding: 0 12px; margin-top: 10px; }
+
+  /* Modal telefona sigsin */
+  .modal { width: calc(100vw - 32px); max-width: 360px; }
+
+  /* Harf filtresi ve radio satirlari sarsin */
+  .harf-filtre a { padding: 8px 14px; font-size: 14px; }
+  .radio-row { flex-wrap: wrap; gap: 10px 16px; }
+  .radio-row label { padding: 6px 0; }
+
+  /* Saat mobilde gizli; logo metni kuculsin */
+  .logo-title { font-size: 17px; }
+  .logo-sub { font-size: 11px; }
+  .logo-area img { width: 36px; height: 36px; }
+  .logo-area { padding: 14px 14px 10px; }
+
+  /* Ayarlar sayfasindaki logo onizleme satiri sarsin */
+  .oto-logo-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+
+  /* Uzun inline flex satirlari (butonlar vb.) sarsin */
+  .panel div[style*="display:flex"] { flex-wrap: wrap; }
+
+  /* Bildirim/uyari bandi telefonda dikey hizalansin */
+  .flash { font-size: 13px; }
+}
+
+/* --- Tablet (641-1024px): iki sutunlu kartlar, buyuk dokunma alani --- */
+@media (min-width: 901px) and (max-width: 1024px) {
+  .sidebar { width: 200px; }
+  .content { padding: 20px 18px; }
+  .clock { font-size: 24px; padding: 6px 12px; }
+  .cards { grid-template-columns: repeat(3, 1fr); }
+  .fis-grid { grid-template-columns: 96px 1fr 1fr 100px; }
+}
+
+/* --- Cok dar telefon (<=380px): kartlar tek sutun --- */
+@media (max-width: 380px) {
+  .cards { grid-template-columns: 1fr; }
+  .menu-btn { top: 8px; left: 8px; }
+}
+
+/* --- Yatay telefonda sidebar acikken icerige pay birakma (masaustunde hamburger yok) --- */
+@media (min-width: 901px) {
+  .menu-btn, .menu-kararti { display: none !important; }
+  .sidebar { transform: none !important; position: sticky; }
+}
+
+/* NOT: Burada eskiden <=800px icin "statik yatay sidebar" duzeni vardi;
+   hamburger/kayan menü düzeniyle çakışıp telefon ve tabletde paneli
+   bozuyordu. Kaldırıldı — mobilde tek düzen: hamburger + kayan menü. */
+
+/* --- Kucuk telefon (<=480px): fis ekrani rahat dokunmatik kullanim --- */
+@media (max-width: 480px) {
+  /* KG x Fiyat tablosu: daha buyuk dokunma alanlari, sigan kolonlar */
+  .fis-grid { grid-template-columns: 56px 1fr 1fr 74px; gap: 10px 8px; }
+  .fis-grid input { min-height: 44px; font-size: 16px; }
+  .fis-grid .sinif { font-size: 12.5px; line-height: 1.3; }
+  .fis-toplam { padding-top: 12px; }
+  .fis-toplam .buyuk { font-size: 22px; }
+
+  /* Yan yana butonlar (Kaydet/Iptal) telefonda alt alta tam genislik */
+  .panel div[style*="display:flex"] { flex-direction: column; }
+  .panel div[style*="display:flex"] > .btn { width: 100%; text-align: center; }
+
+  /* Panel icindeki iki sutunlu mini grid'ler tek sutuna insin */
+  .panel .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* --- Fiyat kilidi: kilitli fiyat kutulari okunur ama yazilamaz gorunur --- */
+input.fiyat-kilitli {
+  background: #EAF4EE !important;
+  border-color: var(--yesil) !important;
+  color: #0F5132;
+  font-weight: bold;
+}

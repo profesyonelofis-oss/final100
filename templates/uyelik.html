@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Üyelik - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}ÜYELİK{% endblock %}
+{% block sayfa_alti %}{% if u.lisans == 'aktif' %}{{ 'Deneme sürümünüz aktif' if u.tip == 'deneme' else 'Üyeliğiniz aktif' }}{% else %}Hesabınız onay bekliyor{% endif %}{% endblock %}
+
+{% block icerik %}
+{% if u.lisans == 'aktif' and u.tip == 'deneme' %}
+<!-- DENEME SÜRÜMÜ: para ödenmedi, admin onayı yok -->
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">🧪</div>
+  <h2 style="font-size:20px; margin:10px 0;">DENEME SÜRÜMÜNÜZ AKTİF</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, 3 günlük deneme sürümünüz devam ediyor.
+    Tüm sistemi deneyebilirsiniz; ancak henüz <strong>üyeliğiniz satın alınmamış</strong> —
+    ödeme yapıp yönetici onayına sunmanız gerekiyor.
+  </p>
+  {% if u.bitis %}
+  <div class="flash uyari" style="text-align:left;">
+    ⏱ Deneme bitiş tarihiniz: <strong>{{ u.bitis }}</strong> — bitince yeni kayıt giremezsiniz.
+  </div>
+  <div class="flash hata" style="text-align:left;">
+    ⏳ Kalan deneme süreniz: <strong id="deneme-kalan-sure">hesaplanıyor…</strong>
+  </div>
+  {% endif %}
+  <div class="flash bilgi" style="text-align:left;">
+    Ödeme yaptıysanız aşağıdaki hesap bilgilerine havaleyi ulaştırıp
+    "ÖDEME YAPTIM" formundan bildirebilirsiniz; yönetici onayladığında üyeliğiniz açılır.
+  </div>
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap;">
+    <a class="btn" href="/">Uygulamaya Git</a>
+    <a class="btn ghost" href="#odeme-bilgileri" onclick="document.getElementById('odeme-bilgileri-kutu').scrollIntoView({behavior:'smooth'}); return false;">Ödeme Bilgileri</a>
+  </div>
+</div>
+
+<script>
+/* Deneme paneli canli geri sayim (banner ile ayni mantik) */
+(function () {
+  var el = document.getElementById('deneme-kalan-sure');
+  if (!el) return;
+  var parca = "{{ u.bitis }}".split("-");
+  var bitis = new Date(parseInt(parca[0], 10), parseInt(parca[1], 10) - 1,
+                       parseInt(parca[2], 10), 23, 59, 59);
+  function guncelle() {
+    var ms = bitis - new Date();
+    if (ms <= 0) { el.textContent = 'DENEME SÜRENİZ DOLDU — hemen satın alın!'; return; }
+    var gun = Math.floor(ms / 86400000);
+    var saat = Math.floor((ms % 86400000) / 3600000);
+    var dakika = Math.floor((ms % 3600000) / 60000);
+    var parcalar = [];
+    if (gun > 0) parcalar.push(gun + ' gün');
+    if (saat > 0) parcalar.push(saat + ' saat');
+    if (gun === 0 && dakika > 0) parcalar.push(dakika + ' dakika');
+    el.textContent = parcalar.join(' ');
+  }
+  guncelle();
+  setInterval(guncelle, 30000);
+})();
+</script>
+
+{% elif u.lisans == 'aktif' %}
+
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">✅</div>
+  <h2 style="font-size:20px; margin:10px 0;">ÜYELİĞİNİZ AKTİF</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, üyeliğiniz aktif. Uygulamanın tüm bölümlerini kullanabilirsiniz.
+  </p>
+  {% if u.bitis %}
+  <div class="flash basari" style="text-align:left;">
+    Üyelik bitiş tarihiniz: <strong>{{ u.bitis }}</strong>
+  </div>
+  {% endif %}
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px;">
+    <a class="btn" href="/">Uygulamaya Git</a>
+  </div>
+</div>
+
+{% elif u.lisans != 'aktif' %}
+
+<div class="panel" style="max-width:720px; margin:0 auto; text-align:center;">
+  <div style="font-size:44px;">⏳</div>
+  <h2 style="font-size:20px; margin:10px 0;">ÜYELİĞİNİZ ONAY BEKLİYOR</h2>
+  <p style="color:var(--metin2); font-size:14px;">
+    Sayın <strong>{{ u.ad }}</strong>, hesabınız oluşturuldu ancak uygulamayı
+    kullanmaya başlamak için üyelik ücretinin onayı gerekiyor.
+  </p>
+
+  {% if u.lisans == 'deneme_bitti' %}
+  <div class="flash uyari" style="text-align:left;">
+    ⏱ <strong>3 günlük deneme süreniz doldu.</strong> Aşağıdaki hesaba ödeme
+    yapıp bildirim formundan üye adınızı (<strong>{{ u.ad }}</strong>) belirterek
+    ödemenizi bildirin; yönetici onayladıktan sonra sistem tekrar açılır.
+  </div>
+  {% elif u.lisans == 'reddedildi' %}
+  <div class="flash hata" style="text-align:left;">
+    Üyeliğiniz durduruldu. Lütfen bizimle iletişime geçin.
+  </div>
+  {% elif u.lisans == 'suresi_bitti' %}
+  <div class="flash hata" style="text-align:left;">
+    Üyelik süreniz doldu ({{ u.bitis }}). Uygulamayı kullanmaya devam etmek için
+    ödemenizi yenileyin; onaydan sonra hesabınız tekrar açılacaktır.
+  </div>
+  {% else %}
+  <div class="flash basari" style="text-align:left;">
+    Kaydınız alındı. Aşağıdaki hesaba ödeme yaptıktan sonra yönetici onaylayacak
+    ve tüm bölümler açılacaktır.
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if u.tip == 'deneme' or u.lisans != 'aktif' %}
+<!-- ORTAK BOLUM: deneme (aktif/bitti) ve onay bekleyen kullanıcılara gosterilir -->
+
+  <!-- GUN BAZLI UYELIK HESAPLAYICI: secilen sure bildirim formuna yazar -->
+  <div style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
+              border-radius:12px; padding:18px 22px; margin:18px 0;">
+    <h2 style="margin-bottom:10px;">ÜYELİK ÜCRETİ — GÜN BAZLI</h2>
+    <p style="font-size:13px; color:var(--metin2); margin:0 0 10px;">
+      Günlük ücret: <strong>{{ gunluk_ucret }} ₺</strong> — kaç gün kullanacaksanız,
+      fiyat otomatik hesaplanır.
+    </p>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label for="gun-sayisi" style="font-size:13px;">Kaç gün kullanacaksınız?</label>
+      <input type="number" id="gun-sayisi" min="1" max="730" value="30"
+             style="width:90px; padding:8px 10px; font-size:15px;"
+             oninput="gunHesapla()">
+      <span style="font-size:13px;">gün</span>
+      <span style="font-size:18px; margin-left:auto;">
+        Toplam: <strong id="gun-fiyat" style="color:var(--yesil); font-size:22px;">—</strong>
+      </span>
+    </div>
+    <button type="button" class="btn small" onclick="gunBildir()"
+            style="margin-top:10px;">Bu süreyi bildirime ekle</button>
+    <p style="font-size:12px; color:var(--metin2); margin:10px 0 0;">
+      "Bu süreyi bildirime ekle" derseniz seçiminiz aşağıdaki bildirim formuna
+      otomatik yazılır; havale bilgisini ekleyip göndermeniz yeterli.
+    </p>
+  </div>
+
+  <div id="odeme-bilgileri-kutu" style="text-align:left; background:#F8F9FA; border:1px solid var(--cizgi);
+              border-radius:12px; padding:18px 22px; margin:18px 0;">
+    <h2 style="margin-bottom:10px;">ÖDEME BİLGİLERİ</h2>
+    <p style="font-size:18px; margin:6px 0;"><strong>Günlük Ücret:</strong> {{ gunluk_ucret }} ₺</p>
+    {% if iban %}
+    <p style="font-size:15px; margin:6px 0;"><strong>IBAN:</strong> <code id="uyelik-iban" style="font-size:15px;">{{ iban }}</code>
+      <button type="button" class="btn ghost small" onclick="ibanKopyala('uyelik-iban', this)" style="padding:2px 10px; font-size:12px; margin-left:6px;">📋 Kopyala</button>
+    </p>
+    {% endif %}
+    {% if havale_ad %}
+    <p style="font-size:15px; margin:6px 0;"><strong>Hesap Sahibi:</strong> {{ havale_ad }}</p>
+    {% endif %}
+    {% if not_bilgi %}
+    <p style="font-size:14px; color:var(--metin2); margin:10px 0 0;">{{ not_bilgi }}</p>
+    {% endif %}
+    {% if not iban and not havale_ad %}
+    <p style="color:var(--metin2);">Ödeme bilgileri henüz girilmedi. Yöneticiyle iletişime geçin.</p>
+    {% endif %}
+  </div>
+
+  <div style="text-align:left; background:#FFF8E6; border:1px solid #FFE9A8;
+              border-radius:12px; padding:18px 22px; margin:14px 0;">
+    <h2 style="margin-bottom:10px;">ÖDEME YAPTIM — YÖNETİCİYE BİLDİR</h2>
+    <p style="font-size:13px; color:var(--metin2); margin-bottom:8px;">
+      Ödemenizi yaptıysanız üye adınızla birlikte bildirin; yönetici onayladığında
+      hesabınız açılır.
+    </p>
+    <form method="post" action="/uyelik">
+      <input type="hidden" name="islem" value="odeme-bildir">
+      <label for="bildirim_mesaj">ÖDEME BİLGİSİ (saat, tutar, son 4 hane vb.)</label>
+      <textarea id="bildirim_mesaj" name="bildirim_mesaj" rows="3" required
+                placeholder="Örn: 30.09.2026 14:30'da 250 TL havale yaptım. Üye adım: {{ u.ad }}"></textarea>
+      <button type="submit" class="btn" style="margin-top:10px;">📩 BİLDİRİMİ GÖNDER</button>
+    </form>
+  </div>
+
+  <p style="color:var(--metin2); font-size:13px;">
+    Ödeme yaptıktan sonra bu sayfayı yenileyebilirsiniz; onaylandığında
+    otomatik olarak uygulamaya yönlendirilirsiniz.
+  </p>
+
+  <div style="display:flex; gap:10px; justify-content:center; margin-top:14px;">
+    <a class="btn" href="/uyelik">↻ Durumu Yenile</a>
+  </div>
+{% endif %}
+
+<script>
+/* Gun bazli uyelik: hesaplama + bildirim formuna otomatik ekleme */
+function gunHesapla() {
+  var gunEl = document.getElementById('gun-sayisi');
+  var fiyatEl = document.getElementById('gun-fiyat');
+  if (!gunEl || !fiyatEl) return;
+  var gun = parseInt(gunEl.value, 10);
+  var gunluk = parseFloat("{{ gunluk_ucret }}");
+  if (!gun || gun < 1) { fiyatEl.textContent = '—'; return; }
+  fiyatEl.textContent = (gun * gunluk).toLocaleString('tr-TR') + ' ₺';
+}
+function gunBildir() {
+  var ta = document.getElementById('bildirim_mesaj');
+  var gunEl = document.getElementById('gun-sayisi');
+  if (!ta || !gunEl) return;
+  var gun = parseInt(gunEl.value, 10);
+  if (!gun || gun < 1) { alert('Önce geçerli bir gün sayısı girin.'); return; }
+  var gunluk = parseFloat("{{ gunluk_ucret }}");
+  var satir = 'Kullanmak istediğim süre: ' + gun + ' gün — Toplam: ' +
+              (gun * gunluk).toLocaleString('tr-TR') + ' ₺';
+  var mevcut = ta.value.trim();
+  if (/Kullanmak istediğim süre:/.test(mevcut)) {
+    ta.value = mevcut.replace(/Kullanmak istediğim süre: [^\n]*/, satir);
+  } else {
+    ta.value = satir + (mevcut ? '\n' + mevcut : '');
+  }
+  ta.focus();
+  ta.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+gunHesapla();
+</script>
+{% endblock %}

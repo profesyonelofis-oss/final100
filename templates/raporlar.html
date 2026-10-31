@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Raporlar - {{ FIRMA_ADI }}{% endblock %}
+{% block sayfa_basligi %}RAPORLAR{% endblock %}
+{% block sayfa_alti %}Dönem özeti ve tüm kayıtlar{% endblock %}
+
+{% block icerik %}
+<div class="panel" style="margin-bottom:18px;">
+  <h2>DÖNEM FİLTRESİ</h2>
+  <form method="get" style="display:flex; flex-wrap:wrap; gap:12px; align-items:end;">
+    <div>
+      <label for="donem">DÖNEM</label>
+      <select id="donem" name="donem" onchange="donemDegisti()">
+        <option value="hepsi" {% if donem == 'hepsi' %}selected{% endif %}>Tümü</option>
+        <option value="buay" {% if donem == 'buay' %}selected{% endif %}>Bu ay</option>
+        <option value="gecenay" {% if donem == 'gecenay' %}selected{% endif %}>Geçen ay</option>
+        <option value="ozel" {% if donem == 'ozel' %}selected{% endif %}>Özel aralık</option>
+      </select>
+    </div>
+    <div id="ozel-alanlar" style="display:{{ 'flex' if donem == 'ozel' else 'none' }}; gap:12px; align-items:end;">
+      <div>
+        <label for="baslangic">BAŞLANGIÇ</label>
+        <input type="date" id="baslangic" name="baslangic" value="{{ f_baslangic or '' }}">
+      </div>
+      <div>
+        <label for="bitis">BİTİŞ</label>
+        <input type="date" id="bitis" name="bitis" value="{{ f_bitis or '' }}">
+      </div>
+    </div>
+    <button type="submit" class="btn">FİLTRELE</button>
+    {% if donem != 'hepsi' %}
+    <a class="btn ghost" href="/raporlar">Filtreyi Temizle</a>
+    {% endif %}
+  </form>
+</div>
+<script>
+  function donemDegisti() {
+    var d = document.getElementById('donem').value;
+    document.getElementById('ozel-alanlar').style.display = d === 'ozel' ? 'flex' : 'none';
+  }
+</script>
+
+{% if donem != 'hepsi' %}
+<div class="panel" style="margin-bottom:10px; padding:10px 14px;">
+  {% if donem == 'buay' %}
+  <strong>Bu ay:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% elif donem == 'gecenay' %}
+  <strong>Geçen ay:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% elif donem == 'ozel' %}
+  <strong>Özel aralık:</strong> {{ f_baslangic }} — {{ f_bitis }}
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card mavi">
+    <div class="etiket">TOPLAM ALIM</div>
+    <div class="deger">{{ fmt_tr(s.toplam_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.toplam_alim_tutar) }} ₺</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">GİDERLER</div>
+    <div class="deger">{{ fmt_tr(s.toplam_gider) }} ₺</div>
+  </div>
+  <div class="card yesil">
+    <div class="etiket">BİRİM MALİYET</div>
+    <div class="deger">{{ fmt_tr(s.birim_maliyet) }} ₺/KG</div>
+  </div>
+  <div class="card mavi">
+    <div class="etiket">TESLİM EDİLEN</div>
+    <div class="deger">{{ fmt_tr(s.teslim_kilo, False) }} KG</div>
+    <div class="alt">{{ fmt_tr(s.teslim_para) }} ₺</div>
+  </div>
+  <div class="card sari">
+    <div class="etiket">DEPODA KALAN</div>
+    <div class="deger">{{ fmt_tr(s.depo_kalan_kilo, False) }} KG</div>
+  </div>
+  <div class="card kirmizi">
+    <div class="etiket">SATICI KALAN BAKİYE</div>
+    <div class="deger">{{ fmt_tr(s.kalan_bakiye) }} ₺</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>TÜM ALIM FİŞLERİ</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>SATICI</th>
+      <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ÖDENEN</th><th class="sağ">KALAN</th></tr></thead>
+    <tbody>
+      {% for f in fisler %}
+      <tr>
+        <td>{{ f[0] }}</td><td>{{ f[3] }}</td><td>{{ f[1] }}</td>
+        <td class="sağ">{{ fmt_tr(f[4], False) }}</td>
+        <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+        <td class="sağ {{ 'kirmizi-metin' if f[7] > 0 else 'yesil-metin' }}">{{ fmt_tr(f[7]) }} ₺</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>TÜM TESLİMAT FİŞLERİ</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>FİRMA</th>
+      <th class="sağ">KG</th><th class="sağ">TUTAR</th><th class="sağ">ALINAN</th><th class="sağ">FARK</th></tr></thead>
+    <tbody>
+      {% for f in satislar %}
+      <tr>
+        <td>{{ f[0] }}</td><td>{{ f[2] }}</td><td>{{ f[1] or '—' }}</td>
+        <td class="sağ">{{ fmt_tr(f[3], False) }}</td>
+        <td class="sağ">{{ fmt_tr(f[4]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[5]) }} ₺</td>
+        <td class="sağ">{{ fmt_tr(f[6]) }} ₺</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>TÜM GİDERLER</h2>
+  <table>
+    <thead><tr><th>#</th><th>TARİH</th><th>TÜR</th><th class="sağ">TUTAR</th><th>AÇIKLAMA</th></tr></thead>
+    <tbody>
+      {% for g in giderler %}
+      <tr>
+        <td>{{ g[0] }}</td><td>{{ g[1] }}</td><td>{{ g[2] }}</td>
+        <td class="sağ">{{ fmt_tr(g[3]) }} ₺</td>
+        <td>{{ g[4] or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>SATICI ÖDEME ÖZETİ</h2>
+  <p style="color:var(--metin2); font-size:13px; margin-bottom:10px;">
+    Satıcı detay sayfasından sonradan kaydedilen ödemeler. Fiş sırasında
+    yapılan peşin ödemeler yukarıdaki alım fişlerinin ÖDENEN sütunundadır.
+  </p>
+  {% if odeme_ozeti %}
+  <table>
+    <thead><tr><th>SATICI</th><th>TELEFON</th><th class="sağ">ÖDEME SAYISI</th>
+      <th class="sağ">TOPLAM ÖDEME</th><th class="sağ">SON ÖDEME TARİHİ</th></tr></thead>
+    <tbody>
+      {% for o in odeme_ozeti %}
+      <tr>
+        <td><strong>{{ o.ad }}</strong></td>
+        <td>{{ o.tel or '—' }}</td>
+        <td class="sağ">{{ o.adet }}</td>
+        <td class="sağ yesil-metin">{{ fmt_tr(o.toplam) }} ₺</td>
+        <td class="sağ">{{ o.son_tarih }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--metin2);">Henüz sonradan kaydedilen satıcı ödemesi yok.</p>
+  {% endif %}
+</div>
+{% endblock %}

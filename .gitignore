@@ -1,1 +1,8 @@
+<<<<<<< HEAD
 /target
+=======
+.venv/
+data/
+__pycache__/
+*.pyc
+>>>>>>> af261d88d6bcdaef2f335d0522057ed121fd32c7

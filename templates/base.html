@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{% block meta_aciklama %}KARAOĞLU Zeytin Takip — zeytin alım satımını kolaylaştıran online program. Alım fişi, satıcı borç takibi, teslimat, gider ve kârlılık raporları tek yerde. 3 gün ücretsiz deneyin.{% endblock %}">
+  <title>{% block title %}{{ FIRMA_ADI }}{% endblock %}</title>
+  <meta property="og:title" content="{% block og_baslik %}KARAOĞLU Zeytin Takip{% endblock %}">
+  <meta property="og:description" content="{% block og_aciklama %}Zeytin alım satımını kolaylaştıran online program. Fiş, satıcı borç takibi, teslimat ve kârlılık raporları tek yerde. 3 gün ücretsiz deneyin.{% endblock %}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.zeytinhesap.com{{ request.path }}">
+  <meta property="og:image" content="https://www.zeytinhesap.com/static/og-image.png">
+  <meta property="og:site_name" content="KARAOĞLU Zeytin Takip">
+  <meta property="og:locale" content="tr_TR">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{% block twitter_baslik %}KARAOĞLU Zeytin Takip{% endblock %}">
+  <meta name="twitter:description" content="Zeytin alım satımını kolaylaştıran online program. 3 gün ücretsiz deneyin.">
+  <meta name="twitter:image" content="https://www.zeytinhesap.com/static/og-image.png">
+  <link rel="canonical" href="https://www.zeytinhesap.com{{ request.path }}">
+  <link rel="icon" type="image/png" href="{{ LOGO_URL }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002">
+</head>
+<body{% if secili_cesit is defined and cesit_kilitli is defined %} data-cesit-kilitli="{{ '1' if cesit_kilitli else '0' }}" data-secili-cesit="{{ secili_cesit }}"{% endif %}>
+  <button class="menu-btn" id="menu-btn" aria-label="Menüyü aç/kapat" aria-expanded="false">☰</button>
+  <div class="menu-kararti" id="menu-kararti"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="logo-area" onclick="location.href='/'">
+      <img src="{{ LOGO_URL }}" alt="{{ FIRMA_ADI }}">
+      <div>
+        <div class="logo-title">{{ FIRMA_ADI }}</div>
+        <div class="logo-sub">Zeytin Takip</div>
+      </div>
+    </div>
+    <nav>
+      {% if USER and USER.lisans != 'aktif' %}
+      <a href="/uyelik" class="{{ 'active' if request.path == '/uyelik' }}">
+        <span class="ico">&#9203;</span> Üyelik
+      </a>
+      {% endif %}
+      <a href="/" class="{{ 'active' if request.path == '/' }}">
+        <span class="ico">📊</span> Hesap Tablosu
+      </a>
+      <a href="/alim" class="{{ 'active' if request.path == '/alim' }}">
+        <span class="ico"><svg width="15" height="15" viewBox="0 0 16 16" style="vertical-align:-2px;" aria-hidden="true"><path d="M8 3 Q10 1 13 1.5" stroke="#5a7d3a" stroke-width="1.3" fill="none" stroke-linecap="round"/><ellipse cx="8.5" cy="9.5" rx="5" ry="6" fill="#3f5d2e"/><ellipse cx="6.8" cy="7.3" rx="1.6" ry="2.3" fill="#7ea35c" opacity="0.8"/></svg></span> Zeytin Alımı
+      </a>
+      <a href="/saticilar" class="{{ 'active' if request.path == '/saticilar' }}">
+        <span class="ico">👥</span> Satıcılar
+      </a>
+      <a href="/teslimatlar" class="{{ 'active' if request.path == '/teslimatlar' }}">
+        <span class="ico">🚚</span> Teslimatlar
+      </a>
+      <a href="/giderler" class="{{ 'active' if request.path == '/giderler' }}">
+        <span class="ico">🧾</span> Giderler
+      </a>
+      <a href="/raporlar" class="{{ 'active' if request.path == '/raporlar' }}">
+        <span class="ico">📈</span> Raporlar
+      </a>
+      <a href="/ayarlar" class="{{ 'active' if request.path == '/ayarlar' }}">
+        <span class="ico">⚙️</span> Ayarlar
+      </a>
+      {% if USER and USER.rol == 'admin' %}
+      <a href="/kullanicilar" class="{{ 'active' if request.path == '/kullanicilar' }}">
+        <span class="ico">🔐</span> Kullanıcılar
+        {% if okunmamis_bildirim %}<span style="background:var(--kirmizi); color:#fff; border-radius:99px; padding:1px 8px; font-size:11px; font-weight:700; margin-left:auto;">{{ okunmamis_bildirim }}</span>{% endif %}
+      </a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      {% if USER %}
+      <div class="kullanici-kutu" style="display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%;">
+        <span title="Giriş yaptığınız kullanıcı adı" style="display:flex; align-items:center; gap:6px; min-width:0;">
+          <span aria-hidden="true">👤</span>
+          <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ USER.ad }}</strong>
+        </span>
+        <a href="/cikis" class="btn ghost small danger" title="Çıkış yap"
+           style="padding:3px 10px; flex-shrink:0;">Çıkış</a>
+      </div>
+      {% endif %}
+      {% if USER and USER.rol == 'admin' and USER.lisans == 'aktif' %}<a href="/yedek" class="btn ghost small">⬇ Yedek İndir</a>{% endif %}
+    </div>
+    {% if USER and USER.rol != 'admin' and odeme_bilgisi_var %}
+    <!-- REKLAM / SATIS ALANI: cikis bolumunun altinda, panelin en altinda -->
+    <div class="satin-al-alan">
+      <a href="/uyelik" class="satin-al-banner" title="Satın almak için tıklayın">
+        <div style="font-weight:700; font-size:12.5px; margin-bottom:3px;">🛒 SATIN AL</div>
+        <div style="font-size:11.5px;">Günlük ücret: <strong>{{ odeme_gunluk }} ₺</strong> — istediğiniz kadar gün</div>
+        {% if odeme_iban %}<div style="font-size:11px; opacity:.92; word-break:break-all;">IBAN: {{ odeme_iban }}</div>{% endif %}
+        {% if odeme_havale_ad %}<div style="font-size:11px; opacity:.92;">Hesap sahibi: {{ odeme_havale_ad }}</div>{% endif %}
+        {% if odeme_not %}<div style="font-size:10.5px; opacity:.85; margin-top:3px; font-style:italic; white-space:normal; word-break:break-word; overflow-wrap:anywhere; line-height:1.5;">{{ odeme_not }}</div>{% endif %}
+      </a>
+    </div>
+    {% endif %}
+  </aside>
+  <main class="content">
+    <header class="topbar">
+      <div>
+        <h1>{% block sayfa_basligi %}{% endblock %}</h1>
+        <div class="tarih">{% block sayfa_alti %}{% endblock %}</div>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+    {% if USER and USER.rol == 'admin' and okunmamis_bildirim %}
+    <!-- ADMIN: yeni odeme bildirimi uyarisi -->
+    <a href="/kullanicilar" class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; text-decoration:none; color:inherit; flex-wrap:wrap;">
+      <span>🔔 <strong>{{ okunmamis_bildirim }} yeni ödeme bildirimi</strong> var — incelemek ve üyeliği açmak için tıklayın.</span>
+      <span class="btn small" style="background:var(--kirmizi);">Kullanıcılar</span>
+    </a>
+    {% endif %}
+    {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' %}
+    <!-- DENEME UYARISI: kayittan admin onayina kadar her deneme kullanicida gosterilir -->
+    {% if USER.lisans == 'aktif' and USER.bitis %}
+    <div id="deneme-banner" class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span id="deneme-mesaj">⚠️ <strong>DİKKAT — DENEME SÜRÜMÜ:</strong> 3 günlük denemeniz aktif. Kalan süre aşağıda geriye doğru sayılıyor.</span>
+      <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+    </div>
+    {% elif USER.lisans == 'deneme_bitti' %}
+    <div class="flash hata" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span>⚠️ <strong>DİKKAT — DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için ödeme yapın — verileriniz aynen korunur.</span>
+      <span style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn small" onclick="var f=document.getElementById('hizli-odeme-form'); f.style.display = (f.style.display === 'none' || !f.style.display) ? 'flex' : 'none';"
+                style="background:#fff; color:var(--metin); border:1px solid var(--kirmizi);">💳 Ödeme Yaptım</button>
+        <a class="btn small" href="/uyelik" style="background:var(--kirmizi);">🛒 SATIN AL</a>
+      </span>
+    </div>
+    <form id="hizli-odeme-form" method="post" action="/uyelik"
+          style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap; align-items:center;
+                 background:#fff; border:1px dashed var(--kirmizi); border-radius:10px; padding:10px 12px;">
+      <input type="hidden" name="islem" value="odeme-bildir">
+      <input type="text" name="bildirim_mesaj" required maxlength="300"
+             placeholder="Örn: 01.10 14:30 — 10000 TL havale — son 4 hane 1982"
+             style="flex:1; min-width:240px; padding:9px 10px; font-size:14px;">
+      <button type="submit" class="btn small">Yöneticiye Bildir</button>
+    </form>
+    {% endif %}
+    {% endif %}
+    {% if USER and USER.lisans == 'deneme_bitti' %}
+    {% elif USER and USER.lisans != 'aktif' %}
+    <div class="flash uyari" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <span>⏳ <strong>ÖNİZLEME MODU:</strong> Üyeliğiniz onay bekliyor. Tüm bölümleri gezebilirsiniz; kayıt ekleme/düzenleme kapalıdır.</span>
+      <a class="btn small" href="/uyelik">Üyelik</a>
+    </div>
+    {% endif %}
+    {% if USER and USER.rol != 'admin' and USER.tip == 'deneme' and odeme_bilgisi_var %}
+    <!-- ODEME BILGILERI BANNERI: deneme uye giris yaptiginda hesap bilgileri -->
+    <div class="flash bilgi" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span>💳 <strong>GÜNLÜK ÜCRET:</strong> {{ odeme_gunluk }} ₺ — IBAN: <code id="banner-iban">{{ odeme_iban }}</code>
+        {% if odeme_iban %}<button type="button" class="btn ghost small" onclick="ibanKopyala('banner-iban', this)" style="padding:2px 8px; font-size:11px;">📋 Kopyala</button>{% endif %}
+        {% if odeme_havale_ad %} — Hesap sahibi: <strong>{{ odeme_havale_ad }}</strong>{% endif %}
+      </span>
+      <a class="btn small" href="/uyelik">Ödeme Yap &amp; Bildir</a>
+    </div>
+    {% endif %}
+    {% with mesajlar = get_flashed_messages(with_categories=true) %}
+      {% for kategori, mesaj in mesajlar %}
+        <div class="flash {{ kategori }}">{{ mesaj }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block icerik %}{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=20261011"></script>
+  {% if USER and USER.rol != 'admin' and USER.lisans == 'aktif' and USER.bitis and USER.tip == 'deneme' %}
+  <script>
+  /* Deneme suresi sayaclari: banner'da kalan sure + 10 dakikada bir tekrarlayan bildirim */
+  (function () {
+    var bitisStr = "{{ USER.bitis }}";
+    var parca = bitisStr.split("-");
+    var bitisTarih = new Date(parseInt(parca[0], 10), parseInt(parca[1], 10) - 1,
+                             parseInt(parca[2], 10), 23, 59, 59);
+    var mesajEl = document.getElementById('deneme-mesaj');
+
+    function kalanMetin() {
+      /* Geri sayim: gun + saat + dakika, saniye saniye azalir */
+      var ms = bitisTarih - new Date();
+      if (ms <= 0) return null;
+      var gun = Math.floor(ms / 86400000);
+      var saat = Math.floor((ms % 86400000) / 3600000);
+      var dakika = Math.floor((ms % 3600000) / 60000);
+      var parcalar = [];
+      if (gun > 0) parcalar.push(gun + ' gün');
+      if (saat > 0) parcalar.push(saat + ' saat');
+      if (gun === 0 && dakika > 0) parcalar.push(dakika + ' dakika');
+      return parcalar.join(' ');  
+    }
+
+    function bannerGuncelle() {
+      if (!mesajEl) return;
+      var kalan = kalanMetin();
+      if (!kalan) {
+        mesajEl.innerHTML = '⏱ <strong>DENEME SÜRENİZ DOLDU.</strong> Kullanmaya devam etmek için hemen satın alın.';
+      } else {
+        mesajEl.innerHTML = '⚠️ <strong>DİKKAT — DENEME SÜRÜMÜ:</strong> Deneme sürenizin bitimine ' +
+          kalan + ' kaldı! Süre bitmeden satın alın — verileriniz aynen korunur.';
+      }
+    }
+    bannerGuncelle();
+    setInterval(bannerGuncelle, 30000);  /* 30 sn'de bir geri sayimi tazele */
+
+    /* 10 dakikada bir tekrarlayan bildirim (sayfada dolasirken hatirlatma) */
+    var ARALIK_MS = 10 * 60 * 1000;
+    function hatirlat() {
+      var kalan = kalanMetin();
+      var mesaj;
+      if (!kalan) {
+        mesaj = '⏱ Deneme süreniz doldu! Verilerinizi görmeye devam edebilirsiniz ama '
+              + 'yeni kayıt giremezsiniz. Şimdi satın almak için Üyelik sayfasına gidin.';
+      } else {
+        mesaj = '🧪 Deneme sürümünüzün bitimine ' + kalan + ' kaldı! '
+              + 'Süre bitmeden satın alırsanız verileriniz aynen korunur.';
+      }
+      bildirGoster(mesaj);
+    }
+
+    function bildirGoster(mesaj) {
+      var varolan = document.getElementById('deneme-hatirlatici');
+      if (varolan) varolan.remove();
+      var b = document.createElement('div');
+      b.id = 'deneme-hatirlatici';
+      b.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);'
+        + 'background:#fff;border:2px solid var(--kirmizi);border-radius:12px;'
+        + 'padding:14px 18px;box-shadow:0 6px 24px rgba(0,0,0,.18);z-index:9999;'
+        + 'max-width:min(92vw,520px);font-size:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;';
+      b.innerHTML = '<span>' + mesaj + '</span>';
+      var al = document.createElement('a');
+      al.href = '/uyelik';
+      al.className = 'btn small';
+      al.style.background = 'var(--kirmizi)';
+      al.textContent = '🛒 SATIN AL';
+      b.appendChild(al);
+      var kapa = document.createElement('button');
+      kapa.textContent = '✕';
+      kapa.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--metin2);padding:4px;';
+      kapa.onclick = function () { b.remove(); };
+      b.appendChild(kapa);
+      document.body.appendChild(b);
+      /* 15 saniye sonra kendiliginden kaybolur (kapatilmadiysa) */
+      setTimeout(function () { if (b.parentNode) b.remove(); }, 15000);
+    }
+
+    setTimeout(hatirlat, ARALIK_MS);
+    setInterval(hatirlat, ARALIK_MS);
+  })();
+  </script>
+  {% endif %}
+  <script>
+  /* Mobil menu: hamburger ile ac/kapa */
+  (function () {
+    var btn = document.getElementById('menu-btn');
+    var sidebar = document.getElementById('sidebar');
+    var kararti = document.getElementById('menu-kararti');
+    if (!btn || !sidebar) return;
+    function kapat() {
+      sidebar.classList.remove('acik');
+      kararti.classList.remove('goster');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+    btn.addEventListener('click', function () {
+      var acik = sidebar.classList.toggle('acik');
+      kararti.classList.toggle('goster', acik);
+      btn.setAttribute('aria-expanded', acik ? 'true' : 'false');
+    });
+    kararti.addEventListener('click', kapat);
+    /* Menu linkine tiklaninca mobilde menuyu kapat */
+    sidebar.querySelectorAll('nav a, .sidebar-footer a').forEach(function (a) {
+      a.addEventListener('click', function () { if (window.innerWidth <= 900) kapat(); });
+    });
+  })();
+  </script>
+  {% if USER and USER.lisans != 'aktif' %}
+  <script>
+  /* Onizleme modu: tum yazma formlarini pasiflestir (sunucu tarafinda da engelli) */
+  (function () {
+    /* 1) Tum form girdileri (form disinda [form] ozelligiyle baglilar dahil) salt-okunur */
+    document.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (el) {
+      el.readOnly = true;
+      el.tabIndex = -1;
+      el.style.background = '#F3F4F6';
+      el.title = 'Üyeliğiniz onay bekliyor; düzenleme kapalı.';
+    });
+    document.querySelectorAll('input[type=radio], input[type=checkbox]').forEach(function (el) {
+      el.disabled = true;
+    });
+    /* 2) Tum gonderme dugmeleri pasif */
+    document.querySelectorAll('form button, form input[type="submit"]').forEach(function (b) {
+      b.disabled = true;
+      b.title = 'Üyeliğiniz onay bekliyor';
+    });
+    /* 3) Kayit formu vurgusu */
+    document.querySelectorAll('form[method="post"], form[method="POST"], form[method=post]')
+      .forEach(function (f) {
+        f.style.opacity = '0.72';
+        f.title = 'Üyeliğiniz onay bekliyor; kayıt ekleyemezsiniz.';
+      });
+    document.querySelectorAll('a[href="/yedek"]').forEach(function (a) { a.remove(); });
+  })();
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>
