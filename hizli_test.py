@@ -5,7 +5,10 @@ Yerel sunucuyu GECICI veritabaniyla ayaga kaldirir, tum ana akisi
 saniyeler icinde test eder ve kapanir. Yerel data/ klasorune dokunmaz.
 
 Calistirma:
-    .venv\\Scripts\\python.exe hizli_test.py
+    Windows : .venv\\Scripts\\python.exe hizli_test.py
+    Linux   : .venv/bin/python hizli_test.py
+
+Sanal ortam yoksa test kendi yorumlayicisiyla (sys.executable) sunucuyu baslatir.
 """
 import os
 import subprocess
@@ -23,6 +26,18 @@ except Exception:
 PORT = 5099
 BASE = f"http://127.0.0.1:{PORT}"
 KOK = Path(__file__).resolve().parent
+
+
+def python_yolu():
+    """Sunucuyu baslatacak yorumlayici: varsa proje ici sanal ortam, yoksa bu Python.
+
+    Windows'ta .venv\\Scripts\\python.exe, Linux/macOS'ta .venv/bin/python.
+    """
+    for aday in (KOK / ".venv" / "Scripts" / "python.exe", KOK / ".venv" / "bin" / "python"):
+        if aday.exists():
+            return str(aday)
+    return sys.executable
+
 
 PASS, FAIL = [], []
 
@@ -59,7 +74,7 @@ def main():
     ort["PORT"] = str(PORT)
 
     proc = subprocess.Popen(
-        [str(KOK / ".venv" / "Scripts" / "python.exe"), str(KOK / "wsgi.py")],
+        [python_yolu(), str(KOK / "wsgi.py")],
         env=ort, cwd=str(KOK),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
