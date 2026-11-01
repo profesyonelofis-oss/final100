@@ -32,6 +32,9 @@ cargo fmt --all -- --check
 4. "Gönderdim" işaretlenince kayıt takip kuyruğuna girer; 3 gün sonra
    "Takip kuyruğu" panelinden tek tuşla hatırlatma mesajı hazırlanır.
 5. Görüşme notu ve son gönderim tarihi sağdaki işletme detayında durur.
+6. İşletme ilgilenince detaydan **paket** (tek sayfa / çok sayfa / bakım),
+   **tutar** ve **ödeme durumu** girilir; takip panelindeki ciro satırı tahsil
+   edilen ve bekleyen tutarı toplar.
 
 **Kurallar ve sınırlar**
 
@@ -43,6 +46,8 @@ cargo fmt --all -- --check
 | Örneklem | Kol başına 30 gönderimin altında panel "örneklem yetersiz" uyarısı verir |
 | Google kotası | `GOOGLE_GUNLUK_LIMIT` (vars. 10) · `GOOGLE_AYLIK_LIMIT` (vars. 200) |
 | Defter | `musteri_kayitlari.json`; her yazmadan önce `musteri_kayitlari.yedek.json` |
+| Teklif | Paket seçilince varsayılan tutar yazılır (4.500 / 8.500 / 750 ₺); elle değiştirilebilir |
+| Ödeme | Teklif verilince "bekliyor"; kısmi veya ödendi olarak işaretlenir |
 
 Gizli değerler `.env` dosyasından okunur (`GOOGLE_PLACES_API_KEY`); `.env`,
 `.env` ile üretilen çalışma dosyaları ve üretilen `demos/` klasörü sürüm

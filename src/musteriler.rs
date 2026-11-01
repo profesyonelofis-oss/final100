@@ -153,6 +153,97 @@ impl VaryantOzet {
     }
 }
 
+/// Müşteriye sunulan hizmet paketi.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Paket {
+    /// Tek sayfa tanıtım sitesi.
+    TekSayfa,
+    /// Çok sayfalı (menü/galeri/hizmet) site.
+    CokSayfa,
+    /// Yayında kalan sitenin aylık bakımı.
+    Bakim,
+}
+
+impl Paket {
+    pub const HEPSI: [Paket; 3] = [Paket::TekSayfa, Paket::CokSayfa, Paket::Bakim];
+
+    pub fn etiket(self) -> &'static str {
+        match self {
+            Paket::TekSayfa => "Tek sayfa",
+            Paket::CokSayfa => "Çok sayfa",
+            Paket::Bakim => "Bakım",
+        }
+    }
+
+    /// CSV ve defterde tutulan kararlı kod.
+    pub fn kod(self) -> &'static str {
+        match self {
+            Paket::TekSayfa => "tek_sayfa",
+            Paket::CokSayfa => "cok_sayfa",
+            Paket::Bakim => "bakim",
+        }
+    }
+
+    /// Paket seçildiğinde tutar alanına yazılan varsayılan fiyat (TL).
+    /// Satıcı bunu her teklif için değiştirebilir.
+    pub fn varsayilan_tutar(self) -> u32 {
+        match self {
+            Paket::TekSayfa => 4500,
+            Paket::CokSayfa => 8500,
+            Paket::Bakim => 750,
+        }
+    }
+}
+
+/// Teklifin ödeme durumu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Odeme {
+    /// Henüz teklif verilmedi.
+    #[default]
+    Yok,
+    /// Teklif verildi, ödeme bekleniyor.
+    Bekliyor,
+    /// Bir kısmı alındı.
+    Kismi,
+    /// Tamamı ödendi.
+    Odendi,
+}
+
+impl Odeme {
+    pub const HEPSI: [Odeme; 3] = [Odeme::Bekliyor, Odeme::Kismi, Odeme::Odendi];
+
+    pub fn etiket(self) -> &'static str {
+        match self {
+            Odeme::Yok => "teklif yok",
+            Odeme::Bekliyor => "bekliyor",
+            Odeme::Kismi => "kısmi",
+            Odeme::Odendi => "ödendi",
+        }
+    }
+
+    pub fn kod(self) -> &'static str {
+        match self {
+            Odeme::Yok => "yok",
+            Odeme::Bekliyor => "bekliyor",
+            Odeme::Kismi => "kismi",
+            Odeme::Odendi => "odendi",
+        }
+    }
+}
+
+/// Teklif ve tahsilat özeti (panelde gösterilir).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CiroOzet {
+    /// Tamamı ödenmiş tekliflerin toplamı (TL).
+    pub odenen: u32,
+    /// Ödemesi beklenen tekliflerin toplamı (TL).
+    pub bekleyen: u32,
+    /// Teklif verilmiş kayıt sayısı.
+    pub teklif_sayisi: usize,
+    /// Ödemesi tamamlanmış kayıt sayısı.
+    pub odenen_adet: usize,
+}
+
 /// Bir gönderim olayı: hangi işletmeye hangi gün mesaj hazırlandı.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct Gonderim {
@@ -193,6 +284,17 @@ pub struct Musteri {
     /// tarama listesi dışındaki kayıtlarda da saklanır.
     #[serde(default)]
     pub yayin_linki: Option<String>,
+    /// Teklif edilen paket (teklif verilmediyse boş).
+    #[serde(default)]
+    pub paket: Option<Paket>,
+    /// Teklifin tutarı (TL). Paket seçilince varsayılanı yazılır.
+    #[serde(default)]
+    pub teklif_tutari: Option<u32>,
+    #[serde(default)]
+    pub odeme: Odeme,
+    /// Teklifin verildiği gün.
+    #[serde(default)]
+    pub teklif_tarihi: Option<String>,
 }
 
 /// Defterin özet sayaçları (arayüzde ve günlükte gösterilir).
@@ -325,6 +427,10 @@ impl Defter {
             notlar: String::new(),
             varyant: Some(varyant),
             yayin_linki: None,
+            paket: None,
+            teklif_tutari: None,
+            odeme: Odeme::Yok,
+            teklif_tarihi: None,
         };
         self.indeks
             .insert(anahtar.to_string(), self.dosya.musteriler.len());
@@ -385,6 +491,50 @@ impl Defter {
         if let Some(&sira) = self.indeks.get(anahtar) {
             self.dosya.musteriler[sira].yayin_linki = Some(link.to_string());
         }
+    }
+
+    /// Teklifi kayda yazar. Tutar verilmezse paketin varsayılanı kullanılır;
+    /// teklif tarihi yalnızca ilk teklifte yazılır.
+    pub fn teklif_ayarla(&mut self, anahtar: &str, paket: Paket, tutar: u32, tarih: &str) {
+        if let Some(&sira) = self.indeks.get(anahtar) {
+            let musteri = &mut self.dosya.musteriler[sira];
+            musteri.paket = Some(paket);
+            musteri.teklif_tutari = Some(tutar);
+            if musteri.teklif_tarihi.is_none() {
+                musteri.teklif_tarihi = Some(tarih.to_string());
+            }
+            if musteri.odeme == Odeme::Yok {
+                musteri.odeme = Odeme::Bekliyor;
+            }
+        }
+    }
+
+    /// Ödeme durumunu değiştirir (bekliyor / kısmi / ödendi).
+    pub fn odeme_ayarla(&mut self, anahtar: &str, odeme: Odeme) {
+        if let Some(&sira) = self.indeks.get(anahtar) {
+            self.dosya.musteriler[sira].odeme = odeme;
+        }
+    }
+
+    /// Tahsilat özeti: ödenen, bekleyen ve teklif sayısı.
+    pub fn ciro_ozeti(&self) -> CiroOzet {
+        let mut ozet = CiroOzet::default();
+        for kayit in &self.dosya.musteriler {
+            if kayit.paket.is_none() {
+                continue;
+            }
+            ozet.teklif_sayisi += 1;
+            let tutar = kayit.teklif_tutari.unwrap_or(0);
+            match kayit.odeme {
+                Odeme::Odendi => {
+                    ozet.odenen += tutar;
+                    ozet.odenen_adet += 1;
+                }
+                Odeme::Bekliyor | Odeme::Kismi => ozet.bekleyen += tutar,
+                Odeme::Yok => {}
+            }
+        }
+        ozet
     }
 
     /// Görüşme notunu yazar (paneldeki serbest metin alanı).
@@ -506,7 +656,7 @@ impl Defter {
     /// Excel'in Türkçe yerel ayarında doğru açılan CSV (';' ayraçlı).
     pub fn csv(&self) -> String {
         let mut cikti = String::from(
-            "ad;telefon;adres;kategori;site;site_linki;puan;durum;ilk_gorulme;son_gorulme;son_temas;son_gonderim;kaynak;notlar;varyant\n",
+            "ad;telefon;adres;kategori;site;site_linki;puan;durum;ilk_gorulme;son_gorulme;son_temas;son_gonderim;kaynak;notlar;varyant;paket;teklif_tutari;odeme;teklif_tarihi\n",
         );
         for musteri in &self.dosya.musteriler {
             let alanlar = [
@@ -525,6 +675,13 @@ impl Defter {
                 musteri.kaynak.as_str(),
                 musteri.notlar.as_str(),
                 musteri.varyant.map(|v| v.kod()).unwrap_or(""),
+                musteri.paket.map(|paket| paket.kod()).unwrap_or(""),
+                &musteri
+                    .teklif_tutari
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+                musteri.odeme.kod(),
+                musteri.teklif_tarihi.as_deref().unwrap_or(""),
             ];
             let satir: Vec<String> = alanlar.iter().map(|alan| csv_alan(alan)).collect();
             cikti.push_str(&satir.join(";"));
@@ -818,12 +975,14 @@ mod testler {
             "2026-10-01",
         );
         let csv = defter.csv();
+        let baslik = csv.lines().next().unwrap_or_default();
+        // Varyant sütunu paket sütunlarından önce gelir; sıra korunmalı.
         assert!(
-            csv.lines().next().unwrap_or_default().ends_with(";varyant"),
-            "başlıkta varyant sütunu olmalı"
+            baslik.contains(";varyant;paket;"),
+            "başlıkta varyant sütunu olmalı: {baslik}"
         );
         let satir = csv.lines().nth(1).expect("veri satırı");
-        assert!(satir.ends_with(";A") || satir.ends_with(";B"), "{satir}");
+        assert!(satir.contains(";A;") || satir.contains(";B;"), "{satir}");
     }
 
     #[test]
@@ -984,6 +1143,91 @@ mod testler {
             "{satir}"
         );
         assert!(satir.contains(";son_gonderim;"), "başlıkta sütun olmalı");
+    }
+
+    #[test]
+    fn teklif_ve_odeme_ciroyu_hesaplar() {
+        let mut defter = Defter::default();
+        for sira in 0..3 {
+            defter.isle(
+                &format!("osm:node/{sira}"),
+                "Kafe",
+                "",
+                "",
+                "Kafe",
+                "",
+                "yok",
+                "",
+                50,
+                "2026-10-01",
+            );
+        }
+        // Teklif verilmemiş kayıt ciroya girmez.
+        assert_eq!(defter.ciro_ozeti(), CiroOzet::default());
+
+        defter.teklif_ayarla("osm:node/0", Paket::CokSayfa, 8500, "2026-10-02");
+        defter.teklif_ayarla("osm:node/1", Paket::Bakim, 750, "2026-10-03");
+        let ciro = defter.ciro_ozeti();
+        assert_eq!(ciro.teklif_sayisi, 2);
+        assert_eq!(ciro.odenen, 0);
+        assert_eq!(ciro.bekleyen, 9250);
+        // Teklif verilince ödeme "bekliyor"a geçer.
+        assert_eq!(
+            defter.kayit("osm:node/0").expect("kayıt").odeme,
+            Odeme::Bekliyor
+        );
+
+        defter.odeme_ayarla("osm:node/0", Odeme::Odendi);
+        let ciro = defter.ciro_ozeti();
+        assert_eq!(ciro.odenen, 8500);
+        assert_eq!(ciro.odenen_adet, 1);
+        assert_eq!(ciro.bekleyen, 750);
+    }
+
+    #[test]
+    fn teklif_ilk_tarihi_korur_ve_csvye_yazilir() {
+        let mut defter = Defter::default();
+        defter.isle(
+            "osm:node/1",
+            "Kafe",
+            "",
+            "",
+            "Kafe",
+            "",
+            "yok",
+            "",
+            50,
+            "2026-10-01",
+        );
+        defter.teklif_ayarla("osm:node/1", Paket::TekSayfa, 4500, "2026-10-02");
+        // Paket değişse de ilk teklif tarihi korunur.
+        defter.teklif_ayarla("osm:node/1", Paket::CokSayfa, 9000, "2026-10-05");
+        let kayit = defter.kayit("osm:node/1").expect("kayıt");
+        assert_eq!(kayit.paket, Some(Paket::CokSayfa));
+        assert_eq!(kayit.teklif_tutari, Some(9000));
+        assert_eq!(kayit.teklif_tarihi.as_deref(), Some("2026-10-02"));
+
+        let csv = defter.csv();
+        let baslik = csv.lines().next().unwrap_or_default();
+        assert!(
+            baslik.ends_with("paket;teklif_tutari;odeme;teklif_tarihi"),
+            "{baslik}"
+        );
+        let satir = csv.lines().nth(1).expect("veri satırı");
+        assert!(
+            satir.contains(";cok_sayfa;9000;bekliyor;2026-10-02"),
+            "{satir}"
+        );
+    }
+
+    #[test]
+    fn eski_kayit_teklif_alanlari_olmadan_yuklenir() {
+        let metin = r#"{"surum":1,"musteriler":[{"anahtar":"osm:node/1","ad":"Kafe","telefon":"","adres":"","kategori":"Kafe","kaynak":"","site":"yok","site_linki":"","puan":40,"durum":"Ilgilendi","ilk_gorulme":"2026-10-01","son_gorulme":"2026-10-01"}]}"#;
+        let defter = Defter::metinden(metin);
+        let kayit = defter.kayit("osm:node/1").expect("kayıt");
+        assert_eq!(kayit.paket, None);
+        assert_eq!(kayit.odeme, Odeme::Yok);
+        assert_eq!(defter.ciro_ozeti(), CiroOzet::default());
     }
 
     #[test]

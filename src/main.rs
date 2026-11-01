@@ -1547,6 +1547,17 @@ impl LeadApp {
                                     .size(10.5)
                                     .color(SOLUK),
                                 );
+                                let ciro = self.defter.ciro_ozeti();
+                                if ciro.teklif_sayisi > 0 {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Ciro: {} ₺ tahsil ({} müşteri) · {} ₺ bekliyor · {} teklif",
+                                            ciro.odenen, ciro.odenen_adet, ciro.bekleyen, ciro.teklif_sayisi
+                                        ))
+                                        .size(10.5)
+                                        .color(if ciro.odenen > 0 { YESIL } else { SOLUK }),
+                                    );
+                                }
                             });
                         ui.add_space(8.0);
                         ui.label(
@@ -1716,6 +1727,17 @@ impl LeadApp {
             .defter
             .kayit(&anahtar)
             .and_then(|kayit| kayit.son_gonderim.clone());
+        // Teklif & ödeme: panelde seçilen paket/tutar/ödeme deftere yazılır.
+        let kayit = self.defter.kayit(&anahtar);
+        let mut teklif_paket = kayit.and_then(|kayit| kayit.paket);
+        let mut tutar_metni = kayit
+            .and_then(|kayit| kayit.teklif_tutari)
+            .map(|tutar| tutar.to_string())
+            .unwrap_or_default();
+        let mut odeme = kayit.map(|kayit| kayit.odeme).unwrap_or_default();
+        let teklif_tarihi = kayit.and_then(|kayit| kayit.teklif_tarihi.clone());
+        let mut teklif_degisti = false;
+        let mut odeme_degisti = false;
         // A/B sayaçları panelde tek satırda gösterilir.
         let varyant_ozeti = self.defter.varyant_ozeti();
         let sektor_ozeti = self
@@ -1938,6 +1960,71 @@ impl LeadApp {
                             not_degisti = true;
                         }
                         ui.add_space(10.0);
+
+                        // Teklif ve tahsilat: yalnızca ilgilenen işletmeler için
+                        // önemlidir ama her kayıtta girilebilir.
+                        let (cizgi2, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 1.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(cizgi2, 0.0, KENAR);
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("TEKLİF & ÖDEME")
+                                .font(baslik_font(9.5))
+                                .color(DIM),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            for paket in musteriler::Paket::HEPSI {
+                                let secili = teklif_paket == Some(paket);
+                                if filtre_cipi(ui, paket.etiket(), secili).clicked() {
+                                    teklif_paket = Some(paket);
+                                    // Paket değişince tutar varsayılana döner;
+                                    // satıcı yine de elle değiştirebilir.
+                                    tutar_metni = paket.varsayilan_tutar().to_string();
+                                    teklif_degisti = true;
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Tutar")
+                                    .size(10.5)
+                                    .color(SOLUK),
+                            );
+                            let tutar_alani = egui::TextEdit::singleline(&mut tutar_metni)
+                                .desired_width(72.0)
+                                .font(egui::TextStyle::Small)
+                                .hint_text("TL");
+                            let yanit = ui.add(tutar_alani);
+                            // Yazarken her tuşta dosya yazmamak için yalnızca
+                            // odak kaybolunca kaydedilir.
+                            if yanit.lost_focus() && teklif_paket.is_some() {
+                                teklif_degisti = true;
+                            }
+                            ui.label(egui::RichText::new("₺").size(10.5).color(SOLUK));
+                        });
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            for durum in musteriler::Odeme::HEPSI {
+                                let secili = odeme == durum;
+                                if filtre_cipi(ui, durum.etiket(), secili).clicked() {
+                                    odeme = durum;
+                                    odeme_degisti = true;
+                                }
+                            }
+                        });
+                        if let Some(tarih) = &teklif_tarihi {
+                            ui.label(
+                                egui::RichText::new(format!("Teklif tarihi: {tarih}"))
+                                    .size(10.0)
+                                    .color(DIM),
+                            );
+                        }
                         ui.add_space(12.0);
                         if !lead.site_linki.is_empty() {
                             let baslik = match lead.site {
@@ -2107,6 +2194,33 @@ impl LeadApp {
         if not_degisti {
             self.defter.not_ayarla(&anahtar, &not_metni);
             self.defter.kaydet();
+        }
+        if teklif_degisti {
+            if let Some(paket) = teklif_paket {
+                let tutar = tutar_metni
+                    .chars()
+                    .filter(|harf| harf.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u32>()
+                    .unwrap_or_else(|_| paket.varsayilan_tutar());
+                self.defter
+                    .teklif_ayarla(&anahtar, paket, tutar, &bugun_anahtari());
+                self.defter.kaydet();
+                self.logs.push(format!(
+                    "[i] {}: {} paketi · {tutar} ₺ teklif edildi.",
+                    self.leads[idx].name,
+                    paket.etiket()
+                ));
+            }
+        }
+        if odeme_degisti {
+            self.defter.odeme_ayarla(&anahtar, odeme);
+            self.defter.kaydet();
+            self.logs.push(format!(
+                "[i] {}: ödeme {}",
+                self.leads[idx].name,
+                odeme.etiket()
+            ));
         }
         if wa_iste {
             self.gonderime_hazirla(idx, gonderen);
