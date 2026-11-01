@@ -21,6 +21,7 @@
       <span class="oto-logo-etiket">✓ SEÇİLİ</span>
       {% else %}
       <form method="post" action="/logo-otomatik-sec">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="stil" value="{{ anahtar }}">
         <button type="submit" class="btn small">SEÇ</button>
       </form>
@@ -30,6 +31,7 @@
   </div>
   {% if oto_stil %}
   <form method="post" action="/logo-otomatik-sec" style="margin-top:8px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="stil" value="">
     <button type="submit" class="btn ghost small">Otomatik Logoyu Kaldır</button>
   </form>
@@ -48,17 +50,20 @@
     {% if logo_yuklu %}
     <form method="post" action="/logo-sifirla"
           onsubmit="return confirm('Logo varsayılan sembole döndürülsün mü?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn ghost small">Varsayılana Döndür</button>
     </form>
     {% endif %}
   </div>
   <form method="post" action="/logo-yukle" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp,image/*" required>
     <button type="submit" class="btn" style="margin-top:10px;">LOGOYU YÜKLE</button>
   </form>
 
   <h2 style="margin-top:28px;">FİRMA ADI (MARKA)</h2>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <p style="color:var(--metin2); font-size:13px; margin-bottom:6px;">
       Kenar çubuğunda, giriş ekranında ve fişlerde görünen isim:
     </p>

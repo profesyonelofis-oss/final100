@@ -46,6 +46,7 @@
 
   <h2 style="margin-top:24px;">TEST E-POSTASI</h2>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn" {% if eksik %}disabled{% endif %}>
       TEST E-POSTASI GÖNDER
     </button>

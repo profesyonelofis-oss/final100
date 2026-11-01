@@ -6,6 +6,7 @@
 {% block icerik %}
 <div class="grid-2">
   <form method="post" class="panel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <h2>YENİ TESLİMAT FİŞİ</h2>
     <label for="firma_adi">FİRMA ADI</label>
     <input type="text" id="firma_adi" name="firma_adi" placeholder="Örn: Komşu Sızma Tesisi" required>
@@ -71,6 +72,7 @@
           <td class="sağ {{ 'kirmizi-metin' if f[6] != 0 else 'yesil-metin' }}">{{ fmt_tr(f[6]) }} ₺</td>
           <td class="orta">
             <form method="post" action="/teslimat-sil/{{ f[0] }}" onsubmit="return confirm('#{{ f[0] }} silinsin mi?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn ghost danger small">Sil</button>
             </form>
           </td>

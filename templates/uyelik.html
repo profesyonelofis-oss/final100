@@ -166,6 +166,7 @@
       hesabınız açılır.
     </p>
     <form method="post" action="/uyelik">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="islem" value="odeme-bildir">
       <label for="bildirim_mesaj">ÖDEME BİLGİSİ (saat, tutar, son 4 hane vb.)</label>
       <textarea id="bildirim_mesaj" name="bildirim_mesaj" rows="3" required

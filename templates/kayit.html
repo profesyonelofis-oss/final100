@@ -33,6 +33,7 @@
       {% endwith %}
 
       <form method="post" id="kayit-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="cihaz_id" id="cihaz_id" value="">
         <label for="kullanici_adi">KULLANICI ADI</label>
         <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus

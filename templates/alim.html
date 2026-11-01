@@ -6,6 +6,7 @@
 {% block icerik %}
 <div class="grid-2">
   <form method="post" id="alim-form" class="panel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <h2>SATICI BİLGİLERİ</h2>
 
     <label for="uretici_ad">AD SOYAD</label>
@@ -105,6 +106,7 @@
         <td class="orta">
           <a class="btn ghost small" href="/alim-fis/{{ f[0] }}?yazdir=1" target="_blank">🖨 Yazdır</a>
           <form method="post" action="/alim-sil/{{ f[0] }}" style="display:inline;" onsubmit="return confirm('#{{ f[0] }} numaralı fiş silinsin mi?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn ghost danger small">Sil</button>
           </form>
         </td>

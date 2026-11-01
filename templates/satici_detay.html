@@ -23,6 +23,7 @@
   <div class="panel">
     <h2>ÖDEME EKLE</h2>
     <form method="post" action="/satici/{{ ad }}/odeme">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="tutar">TUTAR (₺)</label>
       <input type="text" id="tutar" name="tutar" placeholder="0" required>
       <label for="tarih">TARİH</label>
@@ -51,6 +52,7 @@
     <form method="post" action="/satici-sil/{{ ad }}"
           onsubmit="return confirm('{{ ad }} ve TÜM fişleri silinecek. Emin misiniz?')"
           style="margin-top:24px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn tehlikeli">SATICIYI SİL</button>
     </form>
   </div>

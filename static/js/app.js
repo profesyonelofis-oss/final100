@@ -1,5 +1,11 @@
 // KARAOGLU Zeytin Takip - web JS
 
+/* CSRF jetonu: base.html icindeki meta etiketinden okunur */
+function _csrfJetonu() {
+  var m = document.querySelector('meta[name="csrf-token"]');
+  return m ? m.getAttribute("content") : "";
+}
+
 /* IBAN kopyalama: banner ve uyelik sayfasindaki Kopyala butonlari */
 function ibanKopyala(elementId, btn) {
   var el = document.getElementById(elementId);
@@ -129,13 +135,16 @@ document.addEventListener("DOMContentLoaded", function () {
         fiyatlariKilitle(true);
         kilitBtn.disabled = true;
         kilitBtn.textContent = "⏳ KİLİTLENİYOR...";
-        var gonderilecek = { cesit: seciliCesit() };
+        var gonderilecek = { cesit: seciliCesit(), csrf_token: _csrfJetonu() };
         fiyats.forEach(function (inp) {
           gonderilecek["fiyat_" + inp.getAttribute("data-fiyat")] = inp.value || "0";
         });
         fetch("/fiyat-kilitle", {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest"
+          },
           body: new URLSearchParams(gonderilecek).toString()
         }).then(function (r) { return r.json(); })
           .then(function (j) {

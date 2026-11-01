@@ -39,6 +39,7 @@
   <h2>TESLİMAT NOTLARI</h2>
   {% if USER and USER.rol == 'admin' %}
   <form method="post" action="/teslimat-notlari">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="grid-2">
       <div>
         <label for="kg">KG NOTU</label>

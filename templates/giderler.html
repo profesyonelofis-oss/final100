@@ -8,6 +8,7 @@
   <div class="panel">
     <h2>YENİ GİDER</h2>
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="tur">GİDER TÜRÜ</label>
       <select id="tur" name="tur" required>
         {% for t in GIDER_TURLERI %}
@@ -45,6 +46,7 @@
           <td>{{ g[4] or '—' }}</td>
           <td class="orta">
             <form method="post" action="/gider-sil/{{ g[0] }}" onsubmit="return confirm('Silinsin mi?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn ghost danger small">Sil</button>
             </form>
           </td>

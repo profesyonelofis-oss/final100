@@ -26,6 +26,7 @@
         <td class="orta">
           {% if not b[3] %}
           <form method="post" action="/bildirim/{{ b[0] }}/okundu" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn ghost small">Okundu</button>
           </form>
           {% endif %}
@@ -68,6 +69,7 @@
           <div style="font-size:11px; color:var(--metin2);">kayıt: {{ cihazlar[k[1]][4][:16] }}</div>
           <form method="post" action="/cihaz/{{ cihazlar[k[1]][0] }}/engel-kaldir"
                 onsubmit="return confirm('{{ k[1] }} kullanıcının cihaz engeli kaldırılsın mı? (Aynı cihazdan açılacak yeni üyelik otomatik 6 AY tam üyelik olur; izin TEK KULLANIMLIKTIR)')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn ghost small" style="padding:2px 8px; font-size:11px;">Engeli Kaldır</button>
           </form>
           {% else %}
@@ -78,6 +80,7 @@
           {% if k[3] != 'aktif' %}
           <form method="post" action="/kullanici/{{ k[1] }}/onayla" class="gun-onay-form"
                 style="display:inline-flex; gap:4px; align-items:center; flex-wrap:wrap;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="number" name="gun" value="30" min="1" max="730"
                    style="width:70px; padding:6px; font-size:13px;" title="Kaç gün açılsın?"
                    oninput="gunFiyatGoster(this)">
@@ -87,17 +90,20 @@
           {% else %}
           <form method="post" action="/kullanici/{{ k[1] }}/durdur" style="display:inline;"
                 onsubmit="return confirm('{{ k[1] }} üyeliği durdurulsun mu?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn ghost small">Durdur</button>
           </form>
           {% endif %}
           {% if k[2] != 'admin' %}
           <form method="post" action="/kullanici/{{ k[1] }}/sil" style="display:inline;"
                 onsubmit="return confirm('{{ k[1] }} kalıcı olarak silinsin mi?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn ghost danger small">Sil</button>
           </form>
           {% endif %}
           <form method="post" action="/kullanici/{{ k[1] }}/sifre" class="sifre-form"
                 id="sifre-form-{{ k[1] }}" style="display:none; margin-top:8px; gap:4px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="password" name="sifre" placeholder="Yeni şifre (8+ karakter)"
                    required minlength="8" title="En az 8 karakter, bir harf ve bir rakam"
                    style="width:150px; padding:5px 6px;">
@@ -124,6 +130,7 @@
     sol menünün altındaki 🛒 SATIN AL kutusunda görünür.
   </p>
   <form method="post" action="/uyelik-ayarla">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="grid-2">
       <div>
       <div>

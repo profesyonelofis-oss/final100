@@ -217,6 +217,19 @@ def _create_schema(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_detay_fis ON alim_detay(fis_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_satis_detay_fis ON satis_detay(fis_id)")
 
+    # Kaba kuvvet korumasi: basarisiz giris denemeleri (kullanici + IP bazli).
+    # IP, istekteki X-Forwarded-For degil dogrudan baglanti adresidir; basligi
+    # istemci uydurabildigi icin kilidi atlatmakta kullanilamasin.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS giris_denemeleri (
+            kullanici_adi TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            hatali INTEGER NOT NULL DEFAULT 0,
+            son_deneme TEXT,
+            kilit_bitis TEXT,
+            PRIMARY KEY (kullanici_adi, ip)
+        )""")
+
 
 def init_db():
     conn = get_connection()
@@ -322,6 +335,89 @@ def check_user(kullanici_adi, sifre):
         return False
     salt, _hex = row[0].split("$", 1)
     return secrets.compare_digest(_hash_password(sifre, salt), row[0])
+
+
+# ---------------------------------------------------------------------------
+# Giris denemeleri (kaba kuvvet korumasi)
+# ---------------------------------------------------------------------------
+GIRIS_AZAMI_HATA = 5       # bu sayiya ulasilinca kilit acilir
+GIRIS_KILIT_DAKIKA = 15    # kilit suresi (dakika)
+
+
+def giris_kilit_durumu(kullanici_adi, ip):
+    """(kilitli_mi, kalan_saniye) dondurur; suresi dolmus kilidi temizler.
+
+    Anahtar (kullanici adi, IP) ciftidir: bir saldirgan kendi IP'sinden
+    baska bir kullanicinin hesabini kilitleyemez.
+    """
+    ad = (kullanici_adi or "").strip().lower()
+    ip = ip or ""
+    if not ad:
+        return False, 0
+    conn = get_connection()
+    try:
+        satir = conn.execute(
+            "SELECT kilit_bitis FROM giris_denemeleri "
+            "WHERE kullanici_adi = ? AND ip = ?", (ad, ip)).fetchone()
+        if not satir or not satir[0]:
+            return False, 0
+        try:
+            bitis = datetime.fromisoformat(satir[0])
+        except ValueError:
+            bitis = None
+        kalan = int((bitis - datetime.now()).total_seconds()) if bitis else 0
+        if kalan > 0:
+            return True, kalan
+        # Kilit suresi doldu: sayaci sifirla ki temiz bir sayfa acilsin.
+        conn.execute("DELETE FROM giris_denemeleri WHERE kullanici_adi = ? AND ip = ?",
+                     (ad, ip))
+        conn.commit()
+        return False, 0
+    finally:
+        conn.close()
+
+
+def giris_hatali_kaydet(kullanici_adi, ip):
+    """Basarisiz denemeyi sayar; esik asilirsa kilit acar.
+
+    Doner: (hatali_sayisi, kilit_bitis_iso ya da None)
+    """
+    ad = (kullanici_adi or "").strip().lower()
+    ip = ip or ""
+    simdi = datetime.now()
+    conn = get_connection()
+    try:
+        satir = conn.execute(
+            "SELECT hatali FROM giris_denemeleri WHERE kullanici_adi = ? AND ip = ?",
+            (ad, ip)).fetchone()
+        hatali = (satir[0] if satir else 0) + 1
+        kilit = None
+        if hatali >= GIRIS_AZAMI_HATA:
+            kilit = (simdi + timedelta(minutes=GIRIS_KILIT_DAKIKA)).isoformat(
+                timespec="seconds")
+        conn.execute(
+            "INSERT INTO giris_denemeleri "
+            "(kullanici_adi, ip, hatali, son_deneme, kilit_bitis) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(kullanici_adi, ip) DO UPDATE SET "
+            "hatali = excluded.hatali, son_deneme = excluded.son_deneme, "
+            "kilit_bitis = excluded.kilit_bitis",
+            (ad, ip, hatali, simdi.isoformat(timespec="seconds"), kilit))
+        conn.commit()
+        return hatali, kilit
+    finally:
+        conn.close()
+
+
+def giris_denemesi_sifirla(kullanici_adi, ip):
+    """Basarili giriste sayaci siler."""
+    ad = (kullanici_adi or "").strip().lower()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM giris_denemeleri WHERE kullanici_adi = ? AND ip = ?",
+                     (ad, ip or ""))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def kullanici_adi_bul(ad):

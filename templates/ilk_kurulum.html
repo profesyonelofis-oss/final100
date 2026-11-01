@@ -21,6 +21,7 @@
       {% endwith %}
 
       <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label for="kullanici_adi">KULLANICI ADI</label>
         <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
         <label for="sifre">ŞİFRE (en az 8 karakter)</label>

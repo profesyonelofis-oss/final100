@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <meta name="description" content="{% block meta_aciklama %}KARAOĞLU Zeytin Takip — zeytin alım satımını kolaylaştıran online program. Alım fişi, satıcı borç takibi, teslimat, gider ve kârlılık raporları tek yerde. 3 gün ücretsiz deneyin.{% endblock %}">
   <title>{% block title %}{{ FIRMA_ADI }}{% endblock %}</title>
   <meta property="og:title" content="{% block og_baslik %}KARAOĞLU Zeytin Takip{% endblock %}">
@@ -125,6 +126,7 @@
     <form id="hizli-odeme-form" method="post" action="/uyelik"
           style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap; align-items:center;
                  background:#fff; border:1px dashed var(--kirmizi); border-radius:10px; padding:10px 12px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="islem" value="odeme-bildir">
       <input type="text" name="bildirim_mesaj" required maxlength="300"
              placeholder="Örn: 01.10 14:30 — 10000 TL havale — son 4 hane 1982"

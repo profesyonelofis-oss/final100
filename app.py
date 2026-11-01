@@ -6,15 +6,17 @@ Calistirma:
 Yayinlama icin README.md dosyasina bakiniz (wsgi.py + gunicorn/waitress).
 """
 
+import hmac
 import io
 import os
+import secrets
 import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import (Flask, Response, flash, redirect, render_template, request,
-                   send_file, session, url_for)
+from flask import (Flask, Response, flash, jsonify, redirect, render_template,
+                   request, send_file, session, url_for)
 
 import webdb
 import webpdf
@@ -47,6 +49,58 @@ def _gizli_anahtar():
 
 
 app.secret_key = _gizli_anahtar()
+
+# ---------------------------------------------------------------------------
+# CSRF korumasi (ek bagimlilik yok; oturuma bagli rastgele jeton)
+# ---------------------------------------------------------------------------
+CSRF_ALANI = "csrf_token"
+CSRF_BASLIGI = "X-CSRF-Token"
+
+
+def csrf_token():
+    """Oturuma bagli CSRF jetonunu dondurur; yoksa uretir."""
+    jeton = session.get(CSRF_ALANI)
+    if not jeton:
+        jeton = secrets.token_urlsafe(32)
+        session[CSRF_ALANI] = jeton
+    return jeton
+
+
+def _csrf_gelen_jeton():
+    """Istekteki jetonu bulur: form alani, JSON govdesi veya HTTP basligi."""
+    if CSRF_ALANI in request.form:
+        return request.form.get(CSRF_ALANI, "")
+    baslik = request.headers.get(CSRF_BASLIGI)
+    if baslik:
+        return baslik
+    if request.is_json:
+        govde = request.get_json(silent=True)
+        if isinstance(govde, dict):
+            return str(govde.get(CSRF_ALANI) or "")
+    return ""
+
+
+@app.before_request
+def _csrf_koru():
+    """Yazma isteklerinde (POST/PUT/PATCH/DELETE) CSRF jetonunu dogrular."""
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    beklenen = session.get(CSRF_ALANI) or ""
+    gelen = _csrf_gelen_jeton()
+    # hmac.compare_digest: jeton karsilastirmasi zamanlamadan bilgi sizdirmaz
+    if beklenen and gelen and hmac.compare_digest(beklenen, gelen):
+        return None
+    # fetch/JSON istemcileri JSON hata bekler; sayfa formlari mesajla doner.
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({"ok": False, "hata": "CSRF doğrulaması başarısız"}), 400
+    flash("Oturum doğrulaması başarısız oldu. Sayfayı yenileyip tekrar deneyin.",
+          "hata")
+    hedef = "genel_bakis" if session.get("kullanici") else "giris"
+    return redirect(url_for(hedef))
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
+
 
 YETKI_GEREKTIRMEZ = {"giris", "ilk_kurulum", "cikis", "static",
                      "sifremi_unuttum"}
@@ -179,22 +233,56 @@ def sitemap_xml():
     return Response("\n".join(satirlar), mimetype="application/xml")
 
 
+def _istemci_ip():
+    """Istemci IP'si (kilit anahtari icin).
+
+    X-Forwarded-For bilerek kullanilmaz: istemci bu basligi uydurabildigi icin
+    kilidi her istekte farkli IP gostererek atlatabilirdi.
+    """
+    return request.remote_addr or ""
+
+
+def _sure_metni(saniye):
+    """Kalan sureyi okunur metne cevirir: '42 saniye' / '15 dakika'."""
+    saniye = max(1, int(saniye))
+    if saniye < 60:
+        return f"{saniye} saniye"
+    return f"{(saniye + 59) // 60} dakika"
+
+
 @app.route("/giris", methods=["GET", "POST"])
 def giris():
     webdb.init_db()
     if request.method == "POST":
         ad = request.form.get("kullanici_adi", "").strip()
         sifre = request.form.get("sifre", "")
+        ip = _istemci_ip()
+        # Kaba kuvvet: cok hatali denemeden sonra gecici kilit.
+        kilitli, kalan_saniye = webdb.giris_kilit_durumu(ad, ip)
         # Telefon klavyesi ilk harfi buyuttugunde de giris yapilabilsin:
         # harf duyarsiz gercek kullanici adini bul ve onunla kontrol et.
         gercek_ad = webdb.kullanici_adi_bul(ad) if ad else None
-        if gercek_ad and webdb.check_user(gercek_ad, sifre):
+        if kilitli:
+            flash(f"Çok fazla hatalı deneme yapıldı. "
+                  f"{_sure_metni(kalan_saniye)} sonra tekrar deneyin.", "hata")
+        elif gercek_ad and webdb.check_user(gercek_ad, sifre):
+            webdb.giris_denemesi_sifirla(gercek_ad, ip)
             session["kullanici"] = gercek_ad
             u = webdb.get_user(gercek_ad)
             if u["rol"] != "admin" and webdb.lisans_suresi_dolmus_mu(u["bitis"]):
                 webdb.set_lisans(gercek_ad, "suresi_bitti")
             return redirect(url_for("genel_bakis"))
-        flash("Kullanıcı adı veya şifre hatalı.", "hata")
+        else:
+            hatali, kilit_bitis = webdb.giris_hatali_kaydet(gercek_ad or ad, ip)
+            if kilit_bitis:
+                flash(f"Çok fazla hatalı deneme. Hesap "
+                      f"{webdb.GIRIS_KILIT_DAKIKA} dakika kilitlendi.", "hata")
+            elif hatali >= webdb.GIRIS_AZAMI_HATA - 2:
+                kalan_hak = webdb.GIRIS_AZAMI_HATA - hatali
+                flash(f"Kullanıcı adı veya şifre hatalı. "
+                      f"{kalan_hak} deneme hakkı kaldı.", "hata")
+            else:
+                flash("Kullanıcı adı veya şifre hatalı.", "hata")
     return render_template("giris.html", kullanici_var=webdb.has_any_user())
 
 
