@@ -1,8 +1,18 @@
-<<<<<<< HEAD
+# Rust derleme çıktısı
 /target
-=======
+
+# Python yardımcı betikleri (Flask/Waitress yayını)
 .venv/
 data/
 __pycache__/
 *.pyc
->>>>>>> af261d88d6bcdaef2f335d0522057ed121fd32c7
+
+# Yerel ayarlar ve çalışma zamanı dosyaları
+# .env: Google Places anahtarı gibi gizli değerler
+.env
+# google_kota.json: Google yedek aramasının günlük/aylık istek sayacı
+google_kota.json
+*.log
+
+# Arayüz doğrulaması için alınan ekran görüntüleri
+screenshots/
