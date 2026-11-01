@@ -62,7 +62,7 @@ jobs:
       # Yalnızca indirilen crate'ler önbelleklenir; target/ klasörü büyük
       # olduğu için önbelleğe alınmaz (depo önbellek kotasını şişirmesin).
       - name: Cargo indirme onbellegi
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
