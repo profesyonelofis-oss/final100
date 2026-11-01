@@ -8587,17 +8587,17 @@ fn menu_bolumu() -> String {
 
 fn galeri_bolumu() -> String {
     let kutular = [
-        ("Saç Kesimi", "from-amber-500/40"),
-        ("Boya & Röfle", "from-rose-500/40"),
-        ("Bakım", "from-emerald-500/40"),
-        ("Gelin Saçı", "from-sky-500/40"),
-        ("Makyaj", "from-fuchsia-500/40"),
-        ("Tırnak", "from-orange-500/40"),
+        ("✂️", "Saç Kesimi", "from-amber-500/40"),
+        ("🎨", "Boya & Röfle", "from-rose-500/40"),
+        ("🧴", "Bakım", "from-emerald-500/40"),
+        ("👰", "Gelin Saçı", "from-sky-500/40"),
+        ("💄", "Makyaj", "from-fuchsia-500/40"),
+        ("💅", "Tırnak", "from-orange-500/40"),
     ];
     let mut govde = String::new();
-    for (etiket, renk) in kutular {
+    for (ikon, etiket, renk) in kutular {
         govde.push_str(&format!(
-            r##"<div class="aspect-square rounded-xl bg-gradient-to-br {renk} to-zinc-900 border border-zinc-800 flex items-end p-3 text-sm font-medium">{etiket}</div>
+            r##"<div class="aspect-square rounded-xl bg-gradient-to-br {renk} to-zinc-900 border border-zinc-800 flex flex-col items-center justify-center gap-2 p-3 text-center"><span aria-hidden="true" class="text-3xl">{ikon}</span><span class="text-sm font-medium">{etiket}</span><span class="text-[10px] uppercase tracking-widest text-white/40">örnek görsel</span></div>
 "##
         ));
     }
@@ -9084,6 +9084,128 @@ fn konum_bolumu_html(isletme_adi: &str, enlem: f64, boylam: f64) -> String {
     )
 }
 
+/// Hero'nun arkasında kaydırmaya tepki veren canvas animasyonu.
+/// Videodaki "frame sequence + scroll" efektinin ücretsiz karşılığı: dış dosya,
+/// video veya API yok — koridor halkaları ve parçacıklar sayfada çizilir.
+fn hero_animasyon_script() -> String {
+    r##"<script>
+(function () {
+  var tuval = document.getElementById("vr-tuval");
+  if (!tuval || !tuval.getContext) return;
+  var ctx = tuval.getContext("2d");
+  var bolum = document.getElementById("ust-hero") || tuval.parentElement;
+  var azalt = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var w = 0, h = 0, ilerleme = 0, gorunur = true, kosuyor = false, son = 0;
+
+  function renk() {
+    var ham = (getComputedStyle(document.documentElement).getPropertyValue("--accent") || "").trim();
+    var m = /^#?([0-9a-f]{6})$/i.exec(ham);
+    if (!m) return "255,176,87";
+    var n = parseInt(m[1], 16);
+    return ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255);
+  }
+  var vurgu = renk();
+
+  function boyutla() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = tuval.clientWidth || 0;
+    h = tuval.clientHeight || 0;
+    tuval.width = Math.max(1, Math.round(w * dpr));
+    tuval.height = Math.max(1, Math.round(h * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function olc() {
+    var k = bolum.getBoundingClientRect();
+    ilerleme = Math.min(1, Math.max(0, -k.top / (k.height || 1)));
+  }
+
+  var HALKA = 22, YILDIZ = 46;
+
+  function ciz(zaman) {
+    if (!w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+    var cx = w / 2, cy = h * 0.58, taban = Math.min(w, h);
+    var kayma = ilerleme * 1.7 + (zaman || 0) * 0.000045;
+
+    for (var i = 0; i < HALKA; i++) {
+      var z = ((i / HALKA) + kayma) % 1;
+      var yaricap = taban * (0.05 + z * z * 0.95);
+      var alfa = 0.6 * (1 - z) * Math.min(1, z * 5);
+      if (alfa <= 0.003) continue;
+      ctx.strokeStyle = "rgba(" + vurgu + "," + alfa.toFixed(3) + ")";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, yaricap * 1.3, yaricap * 0.6, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    for (var s = 0; s < 12; s++) {
+      var a = (s / 12) * Math.PI * 2 + kayma * 0.6;
+      var ic = taban * 0.05, dis = taban * 1.1;
+      var grad = ctx.createLinearGradient(
+        cx + Math.cos(a) * ic, cy + Math.sin(a) * ic * 0.5,
+        cx + Math.cos(a) * dis, cy + Math.sin(a) * dis * 0.5
+      );
+      grad.addColorStop(0, "rgba(" + vurgu + ",0.20)");
+      grad.addColorStop(1, "rgba(" + vurgu + ",0)");
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * ic, cy + Math.sin(a) * ic * 0.5);
+      ctx.lineTo(cx + Math.cos(a) * dis, cy + Math.sin(a) * dis * 0.5);
+      ctx.stroke();
+    }
+
+    for (var j = 0; j < YILDIZ; j++) {
+      var pz = ((j / YILDIZ) + kayma * 1.25) % 1;
+      var pa = (j * 2.399963) % (Math.PI * 2);
+      var pr = taban * (0.04 + pz * pz);
+      var palfa = 0.5 * (1 - pz) * Math.min(1, pz * 6);
+      if (palfa <= 0.01) continue;
+      ctx.fillStyle = "rgba(255,255,255," + (palfa * 1.4).toFixed(3) + ")";
+      ctx.fillRect(cx + Math.cos(pa) * pr * 1.3, cy + Math.sin(pa) * pr * 0.6, 1.6, 1.6);
+    }
+  }
+
+  function dongu(zaman) {
+    if (azalt.matches || !gorunur) { kosuyor = false; return; }
+    kosuyor = true;
+    if (zaman - son > 33) { ciz(zaman); son = zaman; }
+    requestAnimationFrame(dongu);
+  }
+
+  function baslat() {
+    if (!kosuyor && gorunur && !azalt.matches) requestAnimationFrame(dongu);
+  }
+
+  window.addEventListener("scroll", function () {
+    olc();
+    if (azalt.matches) ciz(0);
+  }, { passive: true });
+
+  window.addEventListener("resize", function () {
+    boyutla(); olc(); ciz(son);
+  });
+
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (girdiler) {
+      gorunur = girdiler[0].isIntersecting;
+      if (gorunur) { olc(); baslat(); }
+    }, { threshold: 0 }).observe(tuval);
+  }
+
+  if (azalt.addEventListener) {
+    azalt.addEventListener("change", function () {
+      if (azalt.matches) { kosuyor = false; ciz(0); } else { baslat(); }
+    });
+  }
+
+  boyutla(); olc(); ciz(0); baslat();
+})();
+</script>"##
+        .to_string()
+}
+
 fn demo_html(isletme: &BusinessLead, gonderen: &str) -> String {
     let ad = html_kacis(&isletme.name);
     let adres = html_kacis(&isletme.address);
@@ -9242,6 +9364,7 @@ setInterval(durumGuncelle, 60000);
         None => "<a href=\"#iletisim\" class=\"md:hidden fixed inset-x-4 bottom-4 z-30 accent-bg text-center font-extrabold py-4 rounded-2xl shadow-2xl\">İletişim</a>".to_string(),
     };
     let lead_metni = demo_lead(&isletme.category);
+    let hero_script = hero_animasyon_script();
 
     format!(
         r##"<!DOCTYPE html>
@@ -9296,11 +9419,12 @@ body{{background:#08090d}}
 </header>
 
 <main id="ust">
-<section class="relative overflow-hidden border-b border-white/10">
+<section id="ust-hero" class="relative overflow-hidden border-b border-white/10">
 <div class="glow yuz w-[520px] h-[520px] -top-40 -right-32" style="background:var(--accent)"></div>
 <div class="glow yuz w-[380px] h-[380px] -bottom-48 -left-24" style="background:#6d5dfc"></div>
 <div class="absolute inset-0 grid-bg"></div>
-<div class="relative max-w-5xl mx-auto px-5 py-20 md:py-28 reveal">
+<canvas id="vr-tuval" aria-hidden="true" class="absolute inset-0 w-full h-full pointer-events-none opacity-90"></canvas>
+<div class="relative max-w-5xl mx-auto px-5 py-20 md:py-28 min-h-[78vh] flex flex-col justify-center items-start reveal">
 <span class="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.03] px-3.5 py-1.5 text-[11px] uppercase tracking-[0.16em] accent">{sektor}{adres_eki}</span>
 <h1 class="mt-6 text-[clamp(38px,7vw,70px)] leading-[1.02] font-black tracking-tight">{ad}</h1>
 <p class="mt-5 max-w-[58ch] text-[15px] md:text-[17px] leading-relaxed text-zinc-400">{lead_metni}</p>
@@ -9379,6 +9503,7 @@ if (Date.now() - baslangic > 12 * 60 * 60 * 1000) {{
   document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#18181b;color:#fff;text-align:center;padding:24px;font-family:sans-serif"><h1 style="color:#ef4444">Demo süresi doldu</h1></div>';
 }}
 </script>
+{hero_script}
 </body>
 </html>
 "##
@@ -10338,6 +10463,79 @@ mod testler {
         }
     }
 
+    /// Geçici: üç sektörden örnek demo üretip demos/ altına yazar (elle incelemek için).
+    #[test]
+    #[ignore]
+    fn yalniz_elle_incelerken_gecici_demo_uret() {
+        let ornekler = vec![
+            (
+                "Bogazici Meyhane",
+                "Restoran",
+                "Cihangir, Beyoğlu / İstanbul",
+                "+90 532 111 22 33",
+                "https://www.openstreetmap.org/node/101",
+                Some((41.03175, 28.98302)),
+                "Mo-Sa 12:00-23:30; Su 12:00-22:00",
+                Some(4.6_f32),
+                Some(312_u32),
+            ),
+            (
+                "Karizma Erkek Kuaförü",
+                "Kuaför",
+                "Caferağa, Kadıköy / İstanbul",
+                "+90 216 444 55 66",
+                "https://www.openstreetmap.org/node/102",
+                Some((40.99012, 29.02666)),
+                "Tu-Sa 10:00-20:00; Su 11:00-17:00",
+                Some(4.8_f32),
+                Some(154_u32),
+            ),
+            (
+                "Dentapol Diş Kliniği",
+                "Diş Kliniği",
+                "Kızılay, Çankaya / Ankara",
+                "+90 312 222 33 44",
+                "https://www.openstreetmap.org/node/103",
+                Some((39.92077, 32.85411)),
+                "Mo-Fr 09:00-19:00; Sa 09:00-14:00",
+                None,
+                None,
+            ),
+        ];
+        fs::create_dir_all("demos").expect("demos klasörü");
+        for (ad, sektor, adres, tel, kaynak, konum, saat, yildiz, yorum) in ornekler {
+            let lead = BusinessLead {
+                name: ad.to_string(),
+                address: adres.to_string(),
+                category: sektor.to_string(),
+                phone: tel.to_string(),
+                selected: true,
+                kaynak: kaynak.to_string(),
+                konum,
+                calisma_saatleri: saat.to_string(),
+                kayit_dolulugu: 0,
+                site: SiteDurumu::Yok,
+                site_linki: String::new(),
+                son_guncelleme_gun: None,
+                inceleme_sayisi: yorum,
+                yildiz_puani: yildiz,
+                durum: musteriler::Durum::Yeni,
+                demo_yolu: None,
+                mesaj_hazir: false,
+                yayin_linki: None,
+                karne_linki: None,
+                mesaj_varyanti: None,
+            };
+            let dosya = demo_dosya_adi(&lead);
+            let demo_yolu = format!("demos/{dosya}");
+            fs::write(&demo_yolu, demo_html(&lead, "+90 500 000 00 00")).expect("demo yazılmalı");
+            let karne_yolu = format!("demos/{}", karne_dosya_adi(&lead));
+            fs::write(&karne_yolu, karne_html(&lead, Some(dosya.as_str())))
+                .expect("karne yazılmalı");
+            println!("yazıldı: {demo_yolu}");
+        }
+    }
+
     #[test]
     fn potansiyeli_yuksek_isletmeler_once_siralanir() {
         let mut telefonlu_saatli = ornek_isletme();
@@ -11099,6 +11297,32 @@ mod testler {
         assert!(html.contains("prefers-reduced-motion"));
         // JS kapalıysa içerik görünür kalır.
         assert!(html.contains("<noscript>"));
+    }
+
+    #[test]
+    fn demo_hero_kaydirma_animasyonu_disaridan_bagimli_degil() {
+        let html = demo_html(&ornek_isletme(), "");
+        // Canvas + hero kimliği: kaydırma ilerlemesi bu bölümden ölçülür.
+        assert!(html.contains("id=\"vr-tuval\""), "canvas tuvali olmalı");
+        assert!(
+            html.contains("id=\"ust-hero\""),
+            "hero bölümü kimlikli olmalı"
+        );
+        // Animasyon betiği ücretsiz ve çevrimdışı: dış istek yok.
+        let betik_basi = html
+            .find("var tuval = document.getElementById")
+            .expect("betik");
+        let betik = &html[betik_basi..];
+        assert!(
+            !betik.contains("http"),
+            "animasyon dış kaynak çağırmamalı: {betik}"
+        );
+        assert!(!betik.contains("<video"), "video dosyası gerekmez");
+        // Hareket azaltma tercihi ve sekme dışındayken durma korunur.
+        assert!(betik.contains("prefers-reduced-motion"));
+        assert!(betik.contains("IntersectionObserver"));
+        // Sektör rengi animasyonda da kullanılır.
+        assert!(betik.contains("--accent"));
     }
 
     #[test]
