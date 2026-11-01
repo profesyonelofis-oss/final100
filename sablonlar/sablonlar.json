@@ -1,0 +1,66 @@
+{
+  "surum": 1,
+  "aciklama": "Demo üretiminde tasarım referansı olarak kullanılan, lisansı temiz şablonlar. Dosyalar kopyalanmaz; bölüm sırası, tipografi ve boşluk ölçeği örnek alınır.",
+  "sablonlar": [
+    {
+      "id": "startbootstrap-creative",
+      "ad": "Creative (Start Bootstrap)",
+      "yol": "sablonlar/startbootstrap-creative",
+      "kaynak": "https://github.com/StartBootstrap/startbootstrap-creative",
+      "lisans": "MIT",
+      "atif_gerekli": false,
+      "ticari": true,
+      "stil": ["buyuk-baslik", "kare-galeri", "ortalanmis-hero", "tek-sayfa"],
+      "sektorler": ["Kuafor", "Guzellik", "Dugun", "Dis Klinigi", "Estetik", "Otel"],
+      "bolumler": ["hero", "hizmetler", "galeri", "iletisim"]
+    },
+    {
+      "id": "startbootstrap-one-page-wonder",
+      "ad": "One Page Wonder (Start Bootstrap)",
+      "yol": "sablonlar/startbootstrap-one-page-wonder",
+      "kaynak": "https://github.com/StartBootstrap/startbootstrap-one-page-wonder",
+      "lisans": "MIT",
+      "atif_gerekli": false,
+      "ticari": true,
+      "stil": ["sirali-akis", "genis-gorsel", "numara-one", "tek-sayfa"],
+      "sektorler": ["Cekici", "Oto Servis", "Tamir", "Emlak", "Danismanlik", "Nakliyat"],
+      "bolumler": ["hero", "acil-serit", "hizmetler", "kapsam", "iletisim"]
+    },
+    {
+      "id": "tailwind-toolbox-landing",
+      "ad": "Landing Page (Tailwind Toolbox)",
+      "yol": "sablonlar/tailwind-toolbox-landing",
+      "kaynak": "https://github.com/tailwindtoolbox/Landing-Page",
+      "lisans": "MIT (kod)",
+      "atif_gerekli": false,
+      "ticari": true,
+      "not": "Demo görselleri (hero.png, Freepik) bilerek alınmadı; atıf gerektirir.",
+      "stil": ["iki-sutun-hero", "izgara-menu", "tailwind"],
+      "sektorler": ["Restoran", "Kafe", "Meyhane", "Firin", "Pastane", "Market"],
+      "bolumler": ["hero", "menu", "konum", "iletisim"]
+    }
+  ],
+  "kullanma": [
+    "Bu klasördeki HTML/CSS doğrudan müşteriye teslim edilmez.",
+    "Her klasördeki LICENSE dosyası korunur.",
+    "Demo görselleri kopyalanmaz; işletmenin kendi fotoğrafları kullanılır."
+  ],
+  "yasak": [
+    {
+      "kaynak": "BootstrapMade (ücretsiz sürüm)",
+      "sebep": "Footer kredisi zorunlu ve müşteri işinde kullanımı lisansla yasak."
+    },
+    {
+      "kaynak": "Toplu '1000 bedava şablon' zip paketleri",
+      "sebep": "Lisans zinciri kopuk; içinde ücretli şablonlar var, ticari risk yüksek."
+    },
+    {
+      "kaynak": "ThemeWagon",
+      "sebep": "Atıf kuralı tema bazında değişiyor; her tema ayrı okunmalı."
+    },
+    {
+      "kaynak": "HTML5 UP",
+      "sebep": "CC BY 3.0: footer'da atıf zorunlu. Atıf istemiyorsak kullanılmaz."
+    }
+  ]
+}

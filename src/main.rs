@@ -9,6 +9,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod demo_site;
 mod iller;
 mod musteriler;
 
@@ -65,6 +66,25 @@ struct BusinessLead {
     /// Defterden gelen mesaj varyantı (A/B denemesi). Gönderimde bu kullanılır.
     #[serde(default)]
     mesaj_varyanti: Option<musteriler::Varyant>,
+    /// İşletmenin fotoğrafı: demo sayfasının hero sahnesinde kullanılır.
+    #[serde(default)]
+    foto: Option<Foto>,
+}
+
+/// Demo için kullanılacak işletme fotoğrafının kaynağı.
+///
+/// `url` üç biçimde olabilir:
+/// - `google:<places/.../photos/...>` — Places Photo API'sinden indirilir
+///   (işletmenin kendi fotoğrafı; API anahtarı indirme anında eklenir).
+/// - `commons:<Dosya_Adı.jpg>` — Wikimedia Commons; yazar/lisans bilgisi
+///   API'den çekilip altbilgiye yazılır.
+/// - `https://...` — kayıttaki doğrudan görsel adresi.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Foto {
+    url: String,
+    /// Altbilgide gösterilecek atıf; Commons'ta indirme anında doldurulur.
+    #[serde(default)]
+    atif: String,
 }
 
 /// Önizlenen mesaj. `anahtar`, önizlemenin hangi işletmeye ait olduğunu
@@ -185,10 +205,18 @@ pub struct LeadApp {
     onizleme: Option<Onizleme>,
     /// Takip kuyruğu paneli (yanıt bekleyen, zamanı gelmiş işletmeler).
     takip_panel_acik: bool,
+    /// Bugünün gönderim listesi: günlük hakkı aşmadan sırayla yazılacaklar.
+    bugun_panel_acik: bool,
     ilce_kaydir: bool,
     /// Sektör seçim paneli açık mı ve sol sütunda hangi grup seçili.
     sektor_panel_acik: bool,
     sektor_panel_grup: usize,
+    /// Renklendirme paneli: demo renklerini kullanıcı seçer.
+    tema_panel_acik: bool,
+    /// Boş metin "otomatik" demektir (vurgu = sektör rengi, zemin/metin = varsayılan).
+    tema_vurgu: String,
+    tema_zemin: String,
+    tema_yazi: String,
     /// Açıkken tarama tek ilçe yerine ilin tüm ilçelerini sırayla gezer.
     il_geneli: bool,
     /// Iki taraması boş döndüyse uyarı gösterilir; taranan ilçenin adını tutar.
@@ -218,7 +246,8 @@ impl Default for LeadApp {
 
         let sectors: Vec<&'static str> = SEKTORLER.iter().map(|sektor| sektor.ad).collect();
 
-        let (whatsapp_phone, whatsapp_status, whatsapp_bagli) = whatsapp_baslangic(&ayar_oku());
+        let ayar = ayar_oku();
+        let (whatsapp_phone, whatsapp_status, whatsapp_bagli) = whatsapp_baslangic(&ayar);
 
         Self {
             cities,
@@ -244,9 +273,14 @@ impl Default for LeadApp {
             detay_idx: None,
             onizleme: None,
             takip_panel_acik: false,
+            bugun_panel_acik: false,
             ilce_kaydir: true,
             sektor_panel_acik: false,
             sektor_panel_grup: 0,
+            tema_panel_acik: false,
+            tema_vurgu: ayar.demo_vurgu.clone(),
+            tema_zemin: ayar.demo_zemin.clone(),
+            tema_yazi: ayar.demo_yazi.clone(),
             il_geneli: false,
             bos_ilce_uyari: None,
             ilerleme: None,
@@ -262,26 +296,26 @@ impl Default for LeadApp {
 // ---------------------------------------------------------------------------
 // Tasarım sistemi
 //
-// Koyu, katmanlı yüzeyler + tek vurgu rengi (amber). Tüm ölçüler burada
+// Beyaz zemin, koyu yeşil vurgu ve ince kenarlar. Tüm ölçüler burada
 // tanımlıdır; arayüzün geri kalanı bu sabitleri kullanır.
 // ---------------------------------------------------------------------------
 
-const ARKA_PLAN: egui::Color32 = egui::Color32::from_rgb(10, 12, 17);
-const PANEL: egui::Color32 = egui::Color32::from_rgb(14, 17, 23);
-const KART: egui::Color32 = egui::Color32::from_rgb(19, 23, 31);
-const KART_SECILI: egui::Color32 = egui::Color32::from_rgb(25, 30, 40);
-const GIRINTI: egui::Color32 = egui::Color32::from_rgb(11, 14, 19);
-const KENAR: egui::Color32 = egui::Color32::from_rgb(32, 38, 49);
-const KENAR_GUCLU: egui::Color32 = egui::Color32::from_rgb(58, 67, 84);
-const METIN: egui::Color32 = egui::Color32::from_rgb(234, 238, 245);
-const SOLUK: egui::Color32 = egui::Color32::from_rgb(141, 151, 169);
-const DIM: egui::Color32 = egui::Color32::from_rgb(97, 107, 124);
-const VURGU: egui::Color32 = egui::Color32::from_rgb(246, 168, 39);
-const VURGU_ACIK: egui::Color32 = egui::Color32::from_rgb(255, 201, 96);
-const YESIL: egui::Color32 = egui::Color32::from_rgb(62, 214, 152);
-const KIRMIZI: egui::Color32 = egui::Color32::from_rgb(255, 124, 124);
-const MAVI: egui::Color32 = egui::Color32::from_rgb(126, 178, 255);
-const KOYU_YAZI: egui::Color32 = egui::Color32::from_rgb(22, 16, 5);
+const ARKA_PLAN: egui::Color32 = egui::Color32::from_rgb(245, 248, 245);
+const PANEL: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
+const KART: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
+const KART_SECILI: egui::Color32 = egui::Color32::from_rgb(235, 243, 237);
+const GIRINTI: egui::Color32 = egui::Color32::from_rgb(243, 247, 244);
+const KENAR: egui::Color32 = egui::Color32::from_rgb(221, 230, 223);
+const KENAR_GUCLU: egui::Color32 = egui::Color32::from_rgb(183, 204, 191);
+const METIN: egui::Color32 = egui::Color32::from_rgb(18, 37, 27);
+const SOLUK: egui::Color32 = egui::Color32::from_rgb(79, 100, 88);
+const DIM: egui::Color32 = egui::Color32::from_rgb(110, 132, 119);
+const VURGU: egui::Color32 = egui::Color32::from_rgb(20, 102, 61);
+const VURGU_ACIK: egui::Color32 = egui::Color32::from_rgb(30, 130, 79);
+const YESIL: egui::Color32 = egui::Color32::from_rgb(28, 122, 74);
+const KIRMIZI: egui::Color32 = egui::Color32::from_rgb(168, 52, 44);
+const MAVI: egui::Color32 = egui::Color32::from_rgb(42, 91, 134);
+const KOYU_YAZI: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 
 const YUVARLAK_KART: f32 = 14.0;
 const YUVARLAK_KUCUK: f32 = 9.0;
@@ -295,6 +329,17 @@ fn karistir(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
         kanal(a.b(), b.b()),
         kanal(a.a(), b.a()),
     )
+}
+
+/// Açık temada yumuşak dolgu: rengi beyaza doğru seyreltir. Koyu temadaki
+/// `gamma_multiply` karşılığıdır (0.12 ≈ çok açık bir zemin tonu).
+fn ton(renk: egui::Color32, oran: f32) -> egui::Color32 {
+    karistir(egui::Color32::WHITE, renk, oran.clamp(0.0, 1.0))
+}
+
+/// Beyaz zemin üzerinde okunacak kadar koyulaştırılmış renk (pill yazıları).
+fn koyu(renk: egui::Color32, oran: f32) -> egui::Color32 {
+    karistir(renk, METIN, oran.clamp(0.0, 1.0))
 }
 
 fn sektor_rengi(sektor: &str) -> egui::Color32 {
@@ -325,60 +370,6 @@ fn hex_renk(renk: egui::Color32) -> String {
 /// Demo başlığının altındaki tek cümle. Yalnızca sektörün bölüm adından
 /// kurulur; işletme hakkında doğrulanmamış iddia ("en iyi", "taze malzeme",
 /// "uzman kadro") yazılmaz.
-fn demo_lead(sektor: &str) -> String {
-    let bolum = if [
-        "Restoran", "Kebap", "Kafe", "Fırın", "Pastane", "Döner", "Pide", "Tatlı", "Büfe",
-    ]
-    .iter()
-    .any(|kelime| sektor.contains(kelime))
-    {
-        "Menü"
-    } else if ["Kuaför", "Güzellik", "Berber"]
-        .iter()
-        .any(|kelime| sektor.contains(kelime))
-    {
-        "Hizmetler ve randevu"
-    } else if ["Otel", "Pansiyon"]
-        .iter()
-        .any(|kelime| sektor.contains(kelime))
-    {
-        "Odalar"
-    } else if ["Kurs", "Okul", "Kreş"]
-        .iter()
-        .any(|kelime| sektor.contains(kelime))
-    {
-        "Kurslar"
-    } else {
-        "Hizmetler"
-    };
-    format!(
-        "{bolum}, konum ve iletişim bilgileri tek sayfada — mobilde hızlı açılan, kendi alan adınızda yayına alınabilen bir taslak."
-    )
-}
-
-/// Hero altındaki bilgi çipleri: yalnızca gerçekten dolu olan özellikler.
-fn demo_cipleri(isletme: &BusinessLead, konum_var: bool, saat_var: bool) -> String {
-    let mut cipler = vec!["Mobil uyumlu"];
-    if whatsapp_numarasi(&isletme.phone).is_some() {
-        cipler.push("Tek tıkla arama");
-    }
-    if konum_var {
-        cipler.push("Harita gömülü");
-    }
-    if saat_var {
-        cipler.push("Açık/kapalı göstergesi");
-    }
-    cipler
-        .iter()
-        .map(|cip| {
-            format!(
-                "<span class=\"rounded-full border border-white/10 bg-white/[0.02] px-3 py-1.5\">{cip}</span>"
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn govde_font(boyut: f32) -> egui::FontId {
     egui::FontId::new(boyut, egui::FontFamily::Proportional)
 }
@@ -440,6 +431,8 @@ fn yazi_tipi_yukle(ctx: &egui::Context) {
     let yari = dosyadan(&mut fonts, "seg_yari", r"C:\Windows\Fonts\seguisb.ttf");
     let kalin = dosyadan(&mut fonts, "seg_kalin", r"C:\Windows\Fonts\segoeuib.ttf");
     let kod = dosyadan(&mut fonts, "consolas", r"C:\Windows\Fonts\consola.ttf");
+    // Segoe UI Symbol: ✓ ✕ ★ gibi işaretler Segoe UI'de yok; yedek olarak eklenir.
+    let sembol = dosyadan(&mut fonts, "seg_sembol", r"C:\Windows\Fonts\seguisym.ttf");
 
     let varsayilan = fonts
         .families
@@ -450,6 +443,9 @@ fn yazi_tipi_yukle(ctx: &egui::Context) {
     let mut orantili = varsayilan.clone();
     if govde {
         orantili.insert(0, "seg_govde".to_owned());
+    }
+    if sembol {
+        orantili.push("seg_sembol".to_owned());
     }
     fonts
         .families
@@ -463,6 +459,9 @@ fn yazi_tipi_yukle(ctx: &egui::Context) {
         basliklar.push("seg_yari".to_owned());
     }
     basliklar.extend(varsayilan);
+    if sembol {
+        basliklar.push("seg_sembol".to_owned());
+    }
     fonts
         .families
         .insert(egui::FontFamily::Name("Baslik".into()), basliklar);
@@ -475,6 +474,9 @@ fn yazi_tipi_yukle(ctx: &egui::Context) {
     if kod {
         mono.insert(0, "consolas".to_owned());
     }
+    if sembol {
+        mono.push("seg_sembol".to_owned());
+    }
     fonts.families.insert(egui::FontFamily::Monospace, mono);
 
     ctx.set_fonts(fonts);
@@ -482,7 +484,7 @@ fn yazi_tipi_yukle(ctx: &egui::Context) {
 
 fn tema_uygula(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-    let mut visuals = egui::Visuals::dark();
+    let mut visuals = egui::Visuals::light();
 
     visuals.panel_fill = ARKA_PLAN;
     visuals.window_fill = PANEL;
@@ -492,7 +494,7 @@ fn tema_uygula(ctx: &egui::Context) {
     visuals.override_text_color = Some(METIN);
     visuals.hyperlink_color = MAVI;
     visuals.window_stroke = egui::Stroke::new(1.0_f32, KENAR);
-    visuals.selection.bg_fill = VURGU.gamma_multiply(0.26);
+    visuals.selection.bg_fill = ton(VURGU, 0.20);
     visuals.selection.stroke = egui::Stroke::new(1.0_f32, VURGU);
     visuals.window_rounding = egui::Rounding::same(YUVARLAK_KART);
     visuals.menu_rounding = egui::Rounding::same(10.0);
@@ -517,8 +519,8 @@ fn tema_uygula(ctx: &egui::Context) {
     kenarli(&mut visuals.widgets.open, KART, KENAR_GUCLU);
     // Kaydırma çubuğu tutamacı `widgets.inactive.bg_fill` rengini kullanır;
     // varsayılan buton çizimini kullanmadığımız için bu rengi burada seçiyoruz.
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(72, 82, 101);
-    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(72, 82, 101);
+    visuals.widgets.inactive.bg_fill = ton(METIN, 0.13);
+    visuals.widgets.inactive.weak_bg_fill = KART;
 
     style.visuals = visuals;
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
@@ -557,12 +559,16 @@ fn bolum_etiketi(ui: &mut egui::Ui, metin: &str) {
 
 fn pill(ui: &mut egui::Ui, metin: &str, renk: egui::Color32) {
     egui::Frame::none()
-        .fill(renk.gamma_multiply(0.12))
-        .stroke(egui::Stroke::new(1.0_f32, renk.gamma_multiply(0.28)))
+        .fill(ton(renk, 0.14))
+        .stroke(egui::Stroke::new(1.0_f32, ton(renk, 0.40)))
         .rounding(egui::Rounding::same(99.0))
         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(metin).size(10.0).color(renk));
+            ui.label(
+                egui::RichText::new(metin)
+                    .size(10.0)
+                    .color(koyu(renk, 0.45)),
+            );
         });
 }
 
@@ -592,8 +598,8 @@ fn durum_pill(ui: &mut egui::Ui, calisiyor: bool) {
         (YESIL, "Hazır")
     };
     egui::Frame::none()
-        .fill(renk.gamma_multiply(0.10))
-        .stroke(egui::Stroke::new(1.0_f32, renk.gamma_multiply(0.35)))
+        .fill(ton(renk, 0.12))
+        .stroke(egui::Stroke::new(1.0_f32, ton(renk, 0.35)))
         .rounding(egui::Rounding::same(99.0))
         .inner_margin(egui::Margin::symmetric(11.0, 5.0))
         .show(ui, |ui| {
@@ -676,7 +682,7 @@ fn ikincil_buton(
     let t = ui
         .ctx()
         .animate_bool_with_time(yanit.id, etkin && yanit.hovered(), 0.12);
-    let dolgu = karistir(egui::Color32::TRANSPARENT, KART, t);
+    let dolgu = karistir(egui::Color32::TRANSPARENT, KART_SECILI, t);
     let kenar = karistir(KENAR, KENAR_GUCLU, t);
     let yazi = if !etkin {
         DIM
@@ -839,10 +845,10 @@ fn grup_satiri(ui: &mut egui::Ui, ad: &str, sayi: usize, aktif: bool) -> egui::R
         .animate_bool_with_time(yanit.id, yanit.hovered(), 0.10);
     if aktif {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::same(7.0), VURGU.gamma_multiply(0.14));
+            .rect_filled(rect, egui::Rounding::same(7.0), ton(VURGU, 0.12));
     } else if t > 0.0 {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::same(7.0), KENAR.gamma_multiply(t));
+            .rect_filled(rect, egui::Rounding::same(7.0), ton(KENAR, t));
     }
     let etiket = kisalt_metin(ui, ad, genislik - 32.0, 11.0);
     ui.painter().text(
@@ -877,7 +883,7 @@ fn sektor_satiri(ui: &mut egui::Ui, ad: &str, alt: &str, secili: bool) -> egui::
         .animate_bool_with_time(yanit.id, yanit.hovered(), 0.10);
     if secili {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::same(7.0), VURGU.gamma_multiply(0.13));
+            .rect_filled(rect, egui::Rounding::same(7.0), ton(VURGU, 0.12));
         let cubuk = egui::Rect::from_min_size(
             rect.left_top() + egui::vec2(2.0, 6.0),
             egui::vec2(3.0, 12.0),
@@ -885,11 +891,8 @@ fn sektor_satiri(ui: &mut egui::Ui, ad: &str, alt: &str, secili: bool) -> egui::
         ui.painter()
             .rect_filled(cubuk, egui::Rounding::same(2.0), VURGU);
     } else if t > 0.0 {
-        ui.painter().rect_filled(
-            rect,
-            egui::Rounding::same(7.0),
-            KENAR.gamma_multiply(t * 0.8),
-        );
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(7.0), ton(KENAR, t * 0.9));
     }
     ui.painter().text(
         rect.left_center() + egui::vec2(13.0, 0.0),
@@ -928,7 +931,7 @@ fn liste_satiri(ui: &mut egui::Ui, secili: bool, metin: &str) -> egui::Response 
         .ctx()
         .animate_bool_with_time(yanit.id, yanit.hovered(), 0.10);
     let dolgu = if secili {
-        VURGU.gamma_multiply(0.13)
+        ton(VURGU, 0.12)
     } else {
         karistir(egui::Color32::TRANSPARENT, KENAR, t * 0.7)
     };
@@ -1043,12 +1046,8 @@ fn avatar_boyut(ui: &mut egui::Ui, isim: &str, renk: egui::Color32, yaricap: f32
     let (rect, _) = ui.allocate_exact_size(egui::vec2(kenar, kenar), egui::Sense::hover());
     let merkez = rect.center();
     let p = ui.painter();
-    p.circle_filled(merkez, yaricap, renk.gamma_multiply(0.12));
-    p.circle_stroke(
-        merkez,
-        yaricap,
-        egui::Stroke::new(1.0_f32, renk.gamma_multiply(0.26)),
-    );
+    p.circle_filled(merkez, yaricap, ton(renk, 0.20));
+    p.circle_stroke(merkez, yaricap, egui::Stroke::new(1.0_f32, ton(renk, 0.38)));
     let harf = isim
         .chars()
         .next()
@@ -1059,7 +1058,7 @@ fn avatar_boyut(ui: &mut egui::Ui, isim: &str, renk: egui::Color32, yaricap: f32
         egui::Align2::CENTER_CENTER,
         harf,
         baslik_font(yaricap * 0.8),
-        renk,
+        koyu(renk, 0.45),
     );
 }
 
@@ -1112,15 +1111,30 @@ fn whatsapp_ac(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) 
     }
 }
 
+/// wa.me bağlantısına sığan en fazla karakter sayısı. Tarayıcılar ve
+/// Windows kabuğu çok uzun adresleri kestiği için mesaj bu sınırda kırpılır.
+const MESAJ_SINIRI: usize = 900;
+
 /// Hazır metni WhatsApp sohbetinde açar; açılıp açılmadığını döndürür.
 fn sohbet_ac(numara: &str, mesaj: &str, logs: &mut Vec<String>) -> bool {
-    let url = format!("https://wa.me/{numara}?text={}", url_encode(mesaj));
+    let mesaj = mesaj_sinirla(mesaj);
+    let url = format!("https://wa.me/{numara}?text={}", url_encode(&mesaj));
     match tarayicida_ac(&url) {
         Ok(()) => true,
         Err(hata) => {
             logs.push(format!("[!] WhatsApp açılamadı: {hata}"));
             false
         }
+    }
+}
+
+/// Mesajı bağlantıya sığacak şekilde kısaltır; kesildiğini üç nokta ile belli eder.
+fn mesaj_sinirla(mesaj: &str) -> String {
+    let kirpilan: String = mesaj.chars().take(MESAJ_SINIRI).collect();
+    if kirpilan.chars().count() < mesaj.chars().count() {
+        format!("{}…", kirpilan.trim_end())
+    } else {
+        mesaj.to_string()
     }
 }
 
@@ -1239,9 +1253,9 @@ fn kart_ciz(
     let mut onizleme_iste = false;
 
     let kenar = if acik {
-        MAVI.gamma_multiply(0.55)
+        ton(MAVI, 0.55)
     } else if secili {
-        VURGU.gamma_multiply(0.4)
+        ton(VURGU, 0.55)
     } else {
         KENAR
     };
@@ -1309,6 +1323,8 @@ fn kart_ciz(
                             }
                             if whatsapp_numarasi(&lead.phone).is_none() {
                                 pill(ui, "telefon yok", KIRMIZI);
+                            } else if !mobil_numara(&lead.phone) {
+                                pill(ui, "sabit hat", MAVI);
                             }
                         });
                         ui.label(egui::RichText::new(&lead.address).size(11.5).color(SOLUK));
@@ -1391,14 +1407,173 @@ fn kart_ciz(
         ui.painter().rect_filled(
             rect,
             egui::Rounding::same(YUVARLAK_KART),
-            egui::Color32::from_white_alpha((t * 6.0) as u8),
+            egui::Color32::from_black_alpha((t * 9.0) as u8),
         );
     }
 
     (detay_iste, onizleme_iste)
 }
 
+/// Bugün yazılacak işletmeler: kara listede olmayan, telefonu olan ve bugün
+/// mesaj hazırlanmamış kayıtlar. Sıra korunur (liste zaten potansiyele göre
+/// sıralıdır), günlük hak kadar kesilir.
+fn bugun_sirasi(
+    leadler: &[BusinessLead],
+    kalan: usize,
+    bugun_gonderilen: impl Fn(&BusinessLead) -> bool,
+) -> Vec<usize> {
+    let mut sira: Vec<usize> = (0..leadler.len())
+        .filter(|idx| {
+            let lead = &leadler[*idx];
+            whatsapp_numarasi(&lead.phone).is_some()
+                && !lead.durum.kara_listede()
+                && !bugun_gonderilen(lead)
+        })
+        .collect();
+    sira.truncate(kalan);
+    sira
+}
+
 impl LeadApp {
+    /// Bugün yazılacak işletmeler: kara listede olmayan, bugün mesaj
+    /// hazırlanmamış ve telefonu olan kayıtlar; günlük hak kadar.
+    fn bugun_listesi(&self) -> Vec<usize> {
+        let bugun = bugun_anahtari();
+        let kalan = GUNLUK_GONDERIM_LIMITI.saturating_sub(self.defter.gun_gonderim(&bugun));
+        bugun_sirasi(&self.leads, kalan, |lead| {
+            let anahtar = musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum);
+            self.defter.bugun_gonderildi_mi(&anahtar, &bugun)
+        })
+    }
+
+    /// Panel: bugünün listesi. Her satır mesaj önizlemesini açar; 15'lik hak
+    /// rastgele değil, potansiyele göre sırayla kullanılır.
+    fn bugun_listesi_paneli(&mut self, ctx: &egui::Context, gonderen: &str) {
+        if !self.bugun_panel_acik {
+            return;
+        }
+        let bugun = bugun_anahtari();
+        let gonderilen = self.defter.gun_gonderim(&bugun);
+        let sira = self.bugun_listesi();
+        let satirlar: Vec<(usize, String, String, u8)> = sira
+            .iter()
+            .map(|idx| {
+                let lead = &self.leads[*idx];
+                (
+                    *idx,
+                    lead.name.clone(),
+                    lead.category.clone(),
+                    potansiyel_puani(lead),
+                )
+            })
+            .collect();
+        let mut acik = true;
+        let mut hazirla: Option<usize> = None;
+
+        egui::Window::new("bugun_listesi")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(372.0)
+            .anchor(egui::Align2::RIGHT_TOP, [-22.0, 84.0])
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .rounding(egui::Rounding::same(14.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .stroke(egui::Stroke::new(1.0_f32, KENAR)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    bolum_etiketi(ui, "BUGÜNÜN LİSTESİ");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "✕").clicked() {
+                            acik = false;
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Bugün {gonderilen}/{GUNLUK_GONDERIM_LIMITI} · sıradaki {} işletme",
+                        satirlar.len()
+                    ))
+                    .size(10.5)
+                    .color(DIM),
+                );
+                ui.add_space(8.0);
+
+                if satirlar.is_empty() {
+                    ui.label(
+                        egui::RichText::new(if gonderilen >= GUNLUK_GONDERIM_LIMITI {
+                            "Bugünkü hak doldu; yarın devam."
+                        } else {
+                            "Liste boş: önce bir ilçe taraması yapın ya da yeni kayıt kalmadı."
+                        })
+                        .size(11.0)
+                        .color(SOLUK),
+                    );
+                    return;
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(340.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (sira_no, (idx, ad, sektor, puan)) in satirlar.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{:02}", sira_no + 1))
+                                        .size(10.0)
+                                        .color(DIM),
+                                );
+                                ui.vertical(|ui| {
+                                    ui.add_space(1.0);
+                                    ui.label(egui::RichText::new(ad).size(12.0).color(METIN));
+                                    ui.label(
+                                        egui::RichText::new(format!("{sektor} · {puan} puan"))
+                                            .size(9.5)
+                                            .color(SOLUK),
+                                    );
+                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ikincil_buton(
+                                            ui,
+                                            "Hazırla",
+                                            true,
+                                            Some(egui::vec2(66.0, 26.0)),
+                                        )
+                                        .clicked()
+                                        {
+                                            hazirla = Some(*idx);
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(2.0);
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Hazırla → mesajı önizlersiniz; göndermeyi siz yaparsınız.",
+                    )
+                    .size(9.5)
+                    .color(DIM),
+                );
+            });
+
+        if let Some(idx) = hazirla {
+            self.bugun_panel_acik = false;
+            self.gonderime_hazirla(idx, gonderen);
+        }
+        if !acik {
+            self.bugun_panel_acik = false;
+        }
+    }
+
     /// Seçilen işletmenin ayrıntılarını ve aksiyonlarını sağ panelde gösterir.
     /// Günlük gönderim hakkı doldu mu?
     fn gunluk_limit_doldu(&self) -> bool {
@@ -1424,6 +1599,12 @@ impl LeadApp {
                 self.leads[idx].name
             ));
             return;
+        }
+        if !mobil_numara(&self.leads[idx].phone) {
+            self.logs.push(format!(
+                "[i] {}: kayıtlı numara sabit hat. WhatsApp'ta hesap çıkmazsa cep numarasını sorun.",
+                self.leads[idx].name
+            ));
         }
         let bugun = bugun_anahtari();
         let anahtar = musteriler::anahtar_uret(
@@ -1573,6 +1754,7 @@ impl LeadApp {
         let mut kapat = false;
         let mut gonder = false;
         let mut ret = false;
+        let mut kopyala = false;
 
         egui::Area::new(egui::Id::new("onizleme_ortu"))
             .order(egui::Order::Foreground)
@@ -1655,19 +1837,39 @@ impl LeadApp {
                             gonder = true;
                         }
                         ui.add_space(6.0);
-                        if ikincil_buton(
-                            ui,
-                            "İstemedi (RET) · kara listeye al",
-                            true,
-                            Some(egui::vec2(boyut.x - 40.0, 32.0)),
-                        )
-                        .clicked()
-                        {
-                            ret = true;
-                        }
+                        // WhatsApp Desktop kullananlar için metni panoya al.
+                        let yarim = (boyut.x - 48.0) * 0.5;
+                        ui.horizontal(|ui| {
+                            if ikincil_buton(
+                                ui,
+                                "Metni kopyala",
+                                true,
+                                Some(egui::vec2(yarim, 32.0)),
+                            )
+                            .clicked()
+                            {
+                                kopyala = true;
+                            }
+                            if ikincil_buton(
+                                ui,
+                                "İstemedi (RET)",
+                                true,
+                                Some(egui::vec2(yarim, 32.0)),
+                            )
+                            .clicked()
+                            {
+                                ret = true;
+                            }
+                        });
                     });
             });
 
+        if kopyala {
+            ctx.output_mut(|cikti| cikti.copied_text = mesaj.clone());
+            self.logs.push(
+                "[i] Mesaj panoya kopyalandı; WhatsApp Desktop'a yapıştırabilirsiniz.".to_string(),
+            );
+        }
         if gonder {
             self.gonderimi_baslat(idx, gonderen);
             kapat = true;
@@ -1920,7 +2122,7 @@ impl LeadApp {
                                         .unwrap_or("teklif");
                                     egui::Frame::none()
                                         .fill(GIRINTI)
-                                        .stroke(egui::Stroke::new(1.0_f32, VURGU.gamma_multiply(0.35)))
+                                        .stroke(egui::Stroke::new(1.0_f32, ton(VURGU, 0.45)))
                                         .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -2162,6 +2364,8 @@ impl LeadApp {
                                     }
                                     if whatsapp_numarasi(&lead.phone).is_none() {
                                         pill(ui, "telefon yok", KIRMIZI);
+                                    } else if !mobil_numara(&lead.phone) {
+                                        pill(ui, "sabit hat", MAVI);
                                     }
                                 });
                             });
@@ -2176,11 +2380,8 @@ impl LeadApp {
                                 KIRMIZI
                             };
                             egui::Frame::none()
-                                .fill(durum_rengi.gamma_multiply(0.10))
-                                .stroke(egui::Stroke::new(
-                                    1.0_f32,
-                                    durum_rengi.gamma_multiply(0.30),
-                                ))
+                                .fill(ton(durum_rengi, 0.12))
+                                .stroke(egui::Stroke::new(1.0_f32, ton(durum_rengi, 0.35)))
                                 .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
                                 .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                                 .show(ui, |ui| {
@@ -2947,6 +3148,206 @@ impl LeadApp {
         }
     }
 
+    /// Renklendirme paneli: demo sayfasının vurgu, zemin ve metin rengini
+    /// kullanıcı seçer. Hareket ve düzen aynı kalır; yalnızca renkler değişir.
+    /// Değerler `ayarlar.json`'a yazılır ve yeni üretilen demolara uygulanır.
+    fn renklendirme_paneli(&mut self, ctx: &egui::Context) {
+        if !self.tema_panel_acik {
+            return;
+        }
+        let mut acik = true;
+        let mut degisti = false;
+        egui::Window::new("renklendirme")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(296.0)
+            .anchor(egui::Align2::RIGHT_TOP, [-22.0, 84.0])
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .rounding(egui::Rounding::same(14.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .stroke(egui::Stroke::new(1.0_f32, KENAR)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    bolum_etiketi(ui, "RENKLENDİRME");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "✕").clicked() {
+                            acik = false;
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Hareketler ve düzen aynı kalır; yalnızca renkler değişir.",
+                    )
+                    .size(10.5)
+                    .color(DIM),
+                );
+                ui.add_space(10.0);
+
+                // Hazır paletler: tek tıkla tüm renkleri birlikte ayarlar.
+                ui.horizontal_wrapped(|ui| {
+                    for (ad, zemin, yazi, vurgu) in DEMO_PALETLER {
+                        let secili = self.tema_zemin == zemin
+                            && self.tema_yazi == yazi
+                            && self.tema_vurgu == vurgu;
+                        let metin = egui::RichText::new(ad)
+                            .size(10.5)
+                            .color(if secili { KOYU_YAZI } else { METIN });
+                        let buton = egui::Button::new(metin)
+                            .fill(if secili { VURGU } else { KART })
+                            .rounding(egui::Rounding::same(999.0))
+                            .min_size(egui::vec2(0.0, 24.0));
+                        if ui.add(buton).clicked() {
+                            self.tema_zemin = zemin.to_string();
+                            self.tema_yazi = yazi.to_string();
+                            self.tema_vurgu = vurgu.to_string();
+                            degisti = true;
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+
+                if renk_secici(ui, "Arka plan", &mut self.tema_zemin, DEMO_ZEMIN) {
+                    degisti = true;
+                }
+                if renk_secici(ui, "Yazı rengi", &mut self.tema_yazi, DEMO_YAZI) {
+                    degisti = true;
+                }
+                if renk_secici(ui, "Vurgu rengi", &mut self.tema_vurgu, "#e8a33d") {
+                    degisti = true;
+                }
+                ui.add_space(10.0);
+
+                // Küçük önizleme: seçilen üç renk yan yana.
+                let (onizleme, _) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 54.0), egui::Sense::hover());
+                let boya = ui.painter();
+                boya.rect_filled(
+                    onizleme,
+                    egui::Rounding::same(10.0),
+                    egui::Color32::from_rgb(
+                        renk_coz(&self.tema_zemin)[0],
+                        renk_coz(&self.tema_zemin)[1],
+                        renk_coz(&self.tema_zemin)[2],
+                    ),
+                );
+                let yazi_rengi = egui::Color32::from_rgb(
+                    renk_coz(&self.tema_yazi)[0],
+                    renk_coz(&self.tema_yazi)[1],
+                    renk_coz(&self.tema_yazi)[2],
+                );
+                boya.text(
+                    onizleme.left_center() + egui::vec2(14.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    "Örnek başlık",
+                    baslik_font(14.0),
+                    yazi_rengi,
+                );
+                let vurgu = egui::Color32::from_rgb(
+                    renk_coz(if self.tema_vurgu.is_empty() { "#e8a33d" } else { &self.tema_vurgu })[0],
+                    renk_coz(if self.tema_vurgu.is_empty() { "#e8a33d" } else { &self.tema_vurgu })[1],
+                    renk_coz(if self.tema_vurgu.is_empty() { "#e8a33d" } else { &self.tema_vurgu })[2],
+                );
+                boya.rect_filled(
+                    egui::Rect::from_min_size(
+                        onizleme.right_center() + egui::vec2(-78.0, -11.0),
+                        egui::vec2(62.0, 22.0),
+                    ),
+                    egui::Rounding::same(999.0),
+                    vurgu,
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("Yeni üretilen demolara uygulanır. Renk seçilmezse sektör rengi kullanılır.")
+                        .size(10.0)
+                        .color(SOLUK),
+                );
+                ui.add_space(6.0);
+                let uygula_genislik = ui.available_width();
+                if ikincil_buton(
+                    ui,
+                    "Mevcut demolara uygula",
+                    true,
+                    Some(egui::vec2(uygula_genislik, 28.0)),
+                )
+                .on_hover_text(
+                    "Demos klasöründeki üretilmiş sayfaları bu renklerle yeniden yazar; \
+                     hareket ve metinler değişmez",
+                )
+                .clicked()
+                {
+                    let zemin = gecerli_renk(&self.tema_zemin, DEMO_ZEMIN);
+                    let yazi = gecerli_renk(&self.tema_yazi, DEMO_YAZI);
+                    let vurgu = self.tema_vurgu.starts_with('#').then(|| self.tema_vurgu.clone());
+                    let (guncellenen, atlanan) =
+                        demolari_renklendir(DEMO_KLASORU, &zemin, &yazi, vurgu.as_deref());
+                    if guncellenen == 0 && atlanan == 0 {
+                        self.logs
+                            .push("[i] Demos klasöründe güncellenecek demo bulunamadı.".to_string());
+                    } else {
+                        self.logs.push(format!(
+                            "[✓] {guncellenen} demo yeni renklerle güncellendi ({} atlandı).",
+                            atlanan
+                        ));
+                    }
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if birincil_buton(ui, "Kaydet", true, Some(egui::vec2(78.0, 30.0))).clicked() {
+                        self.temayi_kaydet();
+                        degisti = false;
+                    }
+                    if hayalet_buton(ui, "Otomatiğe dön").clicked() {
+                        self.tema_vurgu.clear();
+                        self.tema_zemin.clear();
+                        self.tema_yazi.clear();
+                        self.temayi_kaydet();
+                        degisti = false;
+                    }
+                });
+            });
+        // Seçim değiştiyse kapanışta da yaz: kullanıcı Kaydet'i unutmasın.
+        if degisti {
+            self.temayi_kaydet();
+        }
+        if !acik {
+            self.tema_panel_acik = false;
+        }
+    }
+
+    /// Renklendirme seçimlerini ayar dosyasına yazar.
+    fn temayi_kaydet(&mut self) {
+        ayar_yaz(&UygulamaAyari {
+            whatsapp_phone: self.whatsapp_phone.clone(),
+            demo_vurgu: self.tema_vurgu.clone(),
+            demo_zemin: self.tema_zemin.clone(),
+            demo_yazi: self.tema_yazi.clone(),
+        });
+        self.logs.push(format!(
+            "[✓] Demo renkleri kaydedildi: zemin {}, yazı {}, vurgu {}.",
+            if self.tema_zemin.is_empty() {
+                "otomatik"
+            } else {
+                &self.tema_zemin
+            },
+            if self.tema_yazi.is_empty() {
+                "otomatik"
+            } else {
+                &self.tema_yazi
+            },
+            if self.tema_vurgu.is_empty() {
+                "sektör rengi"
+            } else {
+                &self.tema_vurgu
+            }
+        ));
+    }
+
     /// Gönderen numarayı denetler ve diske yazar; bir sonraki açılışta
     /// aynı numara geri okunur. Bu bir WhatsApp doğrulaması değildir,
     /// yalnızca mesajlarda kullanılacak numaranın kaydıdır.
@@ -2957,6 +3358,9 @@ impl LeadApp {
                 self.whatsapp_status = format!("Kayıtlı: +{numara}");
                 ayar_yaz(&UygulamaAyari {
                     whatsapp_phone: self.whatsapp_phone.clone(),
+                    demo_vurgu: self.tema_vurgu.clone(),
+                    demo_zemin: self.tema_zemin.clone(),
+                    demo_yazi: self.tema_yazi.clone(),
                 });
                 self.logs.push(format!(
                     "[✓] Gönderen numara kaydedildi: +{numara}. Mesajlar tek tıkla hazırlanır, göndermeyi siz onaylarsınız."
@@ -3069,6 +3473,44 @@ impl LeadApp {
                             .color(renk),
                     );
                 });
+                ui.add_space(6.0);
+                // Günlük hak: hesabın askıya alınmaması için 15 mesajla sınırlı.
+                let gonderilen = self.defter.gun_gonderim(&bugun_anahtari());
+                let kalan = GUNLUK_GONDERIM_LIMITI.saturating_sub(gonderilen);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Bugün {gonderilen}/{GUNLUK_GONDERIM_LIMITI}"))
+                            .size(10.5)
+                            .color(SOLUK),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(if kalan == 0 {
+                                "hak doldu, yarın devam".to_string()
+                            } else {
+                                format!("{kalan} mesaj kaldı")
+                            })
+                            .size(10.5)
+                            .color(if kalan == 0 {
+                                KIRMIZI
+                            } else {
+                                YESIL
+                            }),
+                        );
+                    });
+                });
+                if let Some(kayitli) = whatsapp_numarasi(&self.whatsapp_phone) {
+                    if !mobil_numara(&kayitli) {
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "Bu numara sabit hat görünüyor; gönderimi cep numaranızdan yapın.",
+                            )
+                            .size(10.0)
+                            .color(KIRMIZI),
+                        );
+                    }
+                }
                 ui.add_space(2.0);
                 ui.label(
                     egui::RichText::new("Otomatik gönderim yok; hesabınız askıya alınmaz.")
@@ -3188,6 +3630,8 @@ impl eframe::App for LeadApp {
         let sektor = self.sectors[self.selected_sector_idx];
 
         // --- Üst bar ---------------------------------------------------------
+        self.renklendirme_paneli(ctx);
+
         egui::TopBottomPanel::top("ust_bar")
             .exact_height(72.0)
             .frame(
@@ -3242,6 +3686,13 @@ impl eframe::App for LeadApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         durum_pill(ui, self.is_running);
+                        ui.add_space(10.0);
+                        if hayalet_buton(ui, "Renklendirme")
+                            .on_hover_text("Demo sayfasının arka plan, yazı ve vurgu renkleri")
+                            .clicked()
+                        {
+                            self.tema_panel_acik = !self.tema_panel_acik;
+                        }
                         ui.add_space(10.0);
                         if secili > 0 {
                             ui.label(
@@ -3325,8 +3776,10 @@ impl eframe::App for LeadApp {
                 });
                 ui.add_space(10.0);
 
-                let wa_yuksekligi = if self.whatsapp_acik { 200.0 } else { 72.0 };
-                let kaydirma_yuksekligi = (ui.available_height() - wa_yuksekligi - 78.0).max(160.0);
+                // WhatsApp kartı açıkken daha yüksek; altındaki tara düğmesi
+                // pencere dışına taşmasın diye pay bırakılır.
+                let wa_yuksekligi = if self.whatsapp_acik { 252.0 } else { 104.0 };
+                let kaydirma_yuksekligi = (ui.available_height() - wa_yuksekligi - 96.0).max(140.0);
                 egui::ScrollArea::vertical()
                     .max_height(kaydirma_yuksekligi)
                     .auto_shrink([false, false])
@@ -3525,6 +3978,7 @@ impl eframe::App for LeadApp {
         self.detay_paneli(ctx, &gonderen);
         self.sektor_paneli(ctx);
         self.takip_paneli(ctx);
+        self.bugun_listesi_paneli(ctx, &gonderen);
         self.onizleme_paneli(ctx, &gonderen);
 
         // --- Orta panel: sonuçlar --------------------------------------------
@@ -3667,6 +4121,12 @@ impl eframe::App for LeadApp {
                             self.takip_panel_acik = true;
                         }
                         ui.add_space(10.0);
+                        let bugun_sayisi = self.bugun_listesi().len();
+                        if hayalet_buton(ui, &format!("Bugünün listesi ({bugun_sayisi})")).clicked()
+                        {
+                            self.bugun_panel_acik = true;
+                        }
+                        ui.add_space(10.0);
                         let gunluk = self.defter.gun_gonderim(&bugun);
                         ui.label(
                             egui::RichText::new(format!(
@@ -3805,7 +4265,7 @@ fn adim_karti(ui: &mut egui::Ui, no: &str, baslik: &str, aciklama: &str, genisli
         egui::Align2::LEFT_TOP,
         no,
         baslik_font(11.0),
-        VURGU.gamma_multiply(0.85),
+        VURGU,
     );
     p.text(
         rect.left_top() + egui::vec2(40.0, 13.0),
@@ -3918,7 +4378,7 @@ fn bos_durum(
             } else if uyari.is_some() {
                 "Kayıt az: bu sektör ilçede tek tük kayıtlı olabilir.\nİl geneli taraması tüm ilçeleri sırayla gezer."
             } else {
-                "Soldan il, ilçe ve sektör seçip “İşletmeleri tara” butonuna basın.\nListede yalnızca web sitesi olmayan gerçek işletmeler görünür."
+                "Soldan il, ilçe ve sektör seçip “İşletmeleri tara” butonuna basın.\nListede yalnızca telefonu olan ve web sitesi olmayan gerçek işletmeler görünür."
             })
             .size(11.5)
             .color(SOLUK),
@@ -3930,8 +4390,8 @@ fn bos_durum(
             ui.horizontal(|ui| {
                 ui.add_space(((ui.available_width() - kart_genislik) / 2.0).max(0.0));
                 egui::Frame::none()
-                    .fill(VURGU.gamma_multiply(0.09))
-                    .stroke(egui::Stroke::new(1.0_f32, VURGU.gamma_multiply(0.45)))
+                    .fill(ton(VURGU, 0.08))
+                    .stroke(egui::Stroke::new(1.0_f32, ton(VURGU, 0.45)))
                     .rounding(egui::Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                     .show(ui, |ui| {
@@ -4010,11 +4470,7 @@ fn filtre_cipi(ui: &mut egui::Ui, metin: &str, secili: bool) -> egui::Response {
         .ctx()
         .animate_bool_with_time(yanit.id, yanit.hovered(), 0.10);
     let (dolgu, kenar, yazi) = if secili {
-        (
-            VURGU.gamma_multiply(0.15),
-            VURGU.gamma_multiply(0.50),
-            VURGU,
-        )
+        (ton(VURGU, 0.12), ton(VURGU, 0.50), koyu(VURGU, 0.15))
     } else {
         (
             KART,
@@ -4295,8 +4751,16 @@ impl SonucOnbellek {
         if gun < 0 || gun > ttl {
             return None;
         }
+        // Eski önbellek kayıtları kural değişmeden önce telefonsuz işletmeler
+        // içerebilir; önbellekten dönen liste de aynı süzgeçten geçer.
+        let leads = kayit
+            .leads
+            .iter()
+            .filter(|isletme| telefon_gecerli(&isletme.phone))
+            .cloned()
+            .collect();
         Some(SonucOnbellekKaydi {
-            leads: kayit.leads.clone(),
+            leads,
             siteli: kayit.siteli,
             gun,
         })
@@ -4527,6 +4991,14 @@ const GOOGLE_KOTA_DOSYASI: &str = "google_kota.json";
 /// Tek taramada en fazla kaç ilçe için Google'a düşülür; il geneli tarama
 /// 39 ilçeyi gezdiği için bütçe tek taramada tükenmesin.
 const GOOGLE_TARAMA_SINIRI: usize = 5;
+/// OSM listesi bu sayının altında dönerse hibritte Google'dan tamamlanır.
+/// Overpass kayıtları telefonu çok seyrek taşıyor (ölçüm: 100 sitesiz cafenin
+/// yalnızca 4'ünde numara var); "tamamen boş" eşiği listeyi 3-4 kayıtta
+/// bırakıyordu. Takviye de tarama bütçesine sayılır.
+const GOOGLE_TAKVIYE_ESIGI: usize = 8;
+// Eşik anlamlı olmalı: 0 olsa hiç tamamlanmaz, SONUC_SINIRI olsa her tarama
+// Google'a düşer. Derleme zamanında doğrulanır.
+const _: () = assert!(GOOGLE_TAKVIYE_ESIGI > 0 && GOOGLE_TAKVIYE_ESIGI < SONUC_SINIRI);
 
 /// Google anahtarı ve istek bütçesi. Değerler ortam değişkeninden, yoksa
 /// çalışma dizinindeki `.env` dosyasından okunur.
@@ -4645,7 +5117,29 @@ struct UygulamaAyari {
     /// Demo altbilgisinde ve mesajlarda görünen gönderen WhatsApp numarası.
     #[serde(default)]
     whatsapp_phone: String,
+    /// Demo renklendirmesi (#rrggbb). Boş bırakılan alan otomatik seçilir:
+    /// vurgu sektör renginden, zemin/metin varsayılan koyu temadan gelir.
+    #[serde(default)]
+    demo_vurgu: String,
+    #[serde(default)]
+    demo_zemin: String,
+    #[serde(default)]
+    demo_yazi: String,
 }
+
+/// Renklendirme paneli kapalıyken kullanılan varsayılan demo renkleri.
+const DEMO_ZEMIN: &str = "#08080a";
+const DEMO_YAZI: &str = "#f5f3ef";
+
+/// Renklendirme panelindeki hazır paletler: (ad, zemin, yazı, vurgu).
+/// Vurgu boş bırakılan palette sektör rengi kullanılır.
+const DEMO_PALETLER: [(&str, &str, &str, &str); 5] = [
+    ("Sektör rengi", "#08080a", "#f5f3ef", ""),
+    ("Gece mavisi", "#0a1020", "#eef2ff", "#5b8cff"),
+    ("Orman", "#08130f", "#eef7f1", "#3ecf8e"),
+    ("Bordo", "#140a0d", "#f7eef0", "#e0577a"),
+    ("Fildişi", "#f6f1e7", "#1b1a17", "#b4551f"),
+];
 
 fn ayar_oku_yoldan(yol: &str) -> UygulamaAyari {
     fs::read_to_string(yol)
@@ -4859,6 +5353,8 @@ fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), St
                 })
                 .unwrap_or_default();
             let kimlik = yer.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            // İşletmenin kendi fotoğrafı: Places Photo API'sinde indirilir.
+            let foto = en_iyi_foto(yer.get("photos"));
             isletmeler.push(BusinessLead {
                 name: ad.to_string(),
                 address: yer
@@ -4899,13 +5395,15 @@ fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), St
                 yayin_linki: None,
                 karne_linki: None,
                 mesaj_varyanti: None,
+                foto: foto.clone(),
             });
         }
     }
 
+    // Telefonu olmayan kayıt müşteri adayı değildir; eleme 20'lik sınırdan
+    // önce yapılır ki kota telefonu olan kayıtlarla dolsun.
+    isletmeler.retain(|isletme| telefon_gecerli(&isletme.phone));
     leads_sirala(&mut isletmeler);
-    // İki küme ayrı kotalarla çekildiği için toplam sınır burada uygulanır:
-    // en yüksek potansiyelli SONUC_SINIRI kayıt kalır.
     isletmeler.truncate(SONUC_SINIRI);
     Ok((isletmeler, siteli))
 }
@@ -4952,7 +5450,7 @@ fn google_arama(
             // alanlarla aynı ücret kademesi, yani ek maliyet getirmez. Yorum
             // sayısı ve yıldız puanı "gerçek müşteri trafiği var" sinyali
             // olarak puanlamada ve dijital karnede kullanılır.
-                "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.regularOpeningHours.weekdayDescriptions,places.userRatingCount,places.rating,places.businessStatus",
+                "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.regularOpeningHours.weekdayDescriptions,places.userRatingCount,places.rating,places.businessStatus,places.photos",
             )
             .send_string(&govde.to_string())
             .map_err(http_hata)?
@@ -7409,6 +7907,7 @@ fn overpass_isle(
         let telefon = etiket(tags, "phone")
             .or_else(|| etiket(tags, "contact:phone"))
             .unwrap_or("");
+        let foto = foto_etiketi(tags);
 
         isletmeler.push(BusinessLead {
             name: ad.to_string(),
@@ -7431,12 +7930,15 @@ fn overpass_isle(
             yayin_linki: None,
             karne_linki: None,
             mesaj_varyanti: None,
+            foto: foto.clone(),
         });
     }
 
+    // Telefonu olmayan kayıt müşteri adayı değildir: kime teklif götürüleceği
+    // belli olmaz. Eleme 20'lik sınırdan ÖNCE yapılır ki kota telefonu olan
+    // kayıtlarla dolsun.
+    isletmeler.retain(|isletme| telefon_gecerli(&isletme.phone));
     leads_sirala(&mut isletmeler);
-    // İki küme ayrı kotalarla çekildiği için toplam sınır burada uygulanır:
-    // en yüksek potansiyelli SONUC_SINIRI kayıt kalır.
     isletmeler.truncate(SONUC_SINIRI);
     Ok((isletmeler, siteli))
 }
@@ -7777,10 +8279,11 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str, kaynak: Kaynak) 
                     None => agdan += 1,
                 }
                 yedek_sunucu_bildir(tx, ilce, sunucu, &mut yedek_bildirildi);
-                // İlçe OSM'de boşsa ve tarama bütçesi varsa Google'a düşülür;
-                // böylece tek tarama tüm ücretsiz kotayı tüketmez.
+                // OSM listesi zayıfsa ve tarama bütçesi varsa Google'dan
+                // tamamlanır; böylece tek tarama tüm ücretsiz kotayı tüketmez.
+                let takviye_once = liste.len();
                 if kaynak == Kaynak::Hibrit
-                    && liste.is_empty()
+                    && takviye_once < GOOGLE_TAKVIYE_ESIGI
                     && google_denemesi < GOOGLE_TARAMA_SINIRI
                 {
                     google_denemesi += 1;
@@ -7793,9 +8296,24 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str, kaynak: Kaynak) 
                             il,
                             ilce,
                             sektor,
-                            "OSM'de kayıt yok",
+                            if takviye_once == 0 {
+                                "OSM'de kayıt yok"
+                            } else {
+                                "OSM listesi zayıf"
+                            },
                         ) {
-                            liste = gelen;
+                            liste = google_takviye_ekle(liste, gelen);
+                            // Takviyeli liste önbelleğe yazılır: aynı ilçe
+                            // yeniden taranınca Google kotası ikinci kez
+                            // harcanmaz.
+                            if liste.len() > takviye_once {
+                                sonuc_onbellek.ekle(il, ilce, sektor, &liste, ilce_siteli, sunucu);
+                                sonuc_onbellek.kaydet();
+                                let _ = tx.send(Mesaj::Log(format!(
+                                    "[i] {ilce}: OSM'de yalnızca {takviye_once} kayıt vardı; Google'dan {} kayıt tamamlandı.",
+                                    liste.len() - takviye_once
+                                )));
+                            }
                         }
                     } else if google_denemesi == 1 {
                         let _ = tx.send(Mesaj::Log(
@@ -7886,7 +8404,7 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str, kaynak: Kaynak) 
         .filter(|isletme| potansiyel_puani(isletme) >= SICAK_ESIK)
         .count();
     let _ = tx.send(Mesaj::Log(format!(
-        "[✓] {il} il geneli bitti: {} ilçe tarandı, {} kayıt ({} sıcak fırsat), {} web sitesi olan kayıt ayıklandı{}.",
+        "[✓] {il} il geneli bitti: {} ilçe tarandı, {} kayıt ({} sıcak fırsat), {} web sitesi olan kayıt ayıklandı{} (telefonu olmayan kayıt listeye alınmadı).",
         taranan,
         bulunanlar.len(),
         yuksek,
@@ -7991,8 +8509,9 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str, kayna
                 )));
             }
             yedek_sunucu_bildir(tx, ilce, sunucu, &mut yedek_bildirildi);
-            // Hibritte OSM boş dönerse ve bütçe varsa Google yedeği devreye girer.
-            if kaynak == Kaynak::Hibrit && liste.is_empty() {
+            // Hibritte OSM listesi zayıfsa Google yedeği devreye girer.
+            let takviye_once = liste.len();
+            if kaynak == Kaynak::Hibrit && takviye_once < GOOGLE_TAKVIYE_ESIGI {
                 let ayar = GoogleAyar::oku();
                 if ayar.acik() {
                     let mut kota = kota_oku();
@@ -8004,9 +8523,23 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str, kayna
                         il,
                         ilce,
                         sektor,
-                        "OSM'de kayıt yok",
+                        if takviye_once == 0 {
+                            "OSM'de kayıt yok"
+                        } else {
+                            "OSM listesi zayıf"
+                        },
                     ) {
-                        liste = gelen;
+                        liste = google_takviye_ekle(liste, gelen);
+                        // Takviyeli liste önbelleğe yazılır; aynı ilçe tekrar
+                        // taranınca Google kotası ikinci kez harcanmaz.
+                        if liste.len() > takviye_once {
+                            sonuc_onbellek.ekle(il, ilce, sektor, &liste, siteli, sunucu);
+                            sonuc_onbellek.kaydet();
+                            let _ = tx.send(Mesaj::Log(format!(
+                                "[i] {ilce}: OSM'de yalnızca {takviye_once} kayıt vardı; Google'dan {} kayıt tamamlandı.",
+                                liste.len() - takviye_once
+                            )));
+                        }
                     }
                 } else {
                     let _ = tx.send(Mesaj::Log(
@@ -8021,12 +8554,12 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str, kayna
                 .count();
             let ozet = if siteli == 0 {
                 format!(
-                    "[✓] {} potansiyel müşteri bulundu · {yuksek} sıcak fırsat.",
+                    "[✓] {} potansiyel müşteri bulundu · {yuksek} sıcak fırsat (telefonu olmayan kayıt listeye alınmadı).",
                     liste.len()
                 )
             } else {
                 format!(
-                    "[✓] {} potansiyel müşteri bulundu ({} sitesi olan kayıt ayıklandı) · {yuksek} sıcak fırsat.",
+                    "[✓] {} potansiyel müşteri bulundu ({} sitesi olan kayıt ayıklandı) · {yuksek} sıcak fırsat (telefonu olmayan kayıt listeye alınmadı).",
                     liste.len(),
                     siteli
                 )
@@ -8096,7 +8629,21 @@ fn dosya_slug(metin: &str) -> String {
     }
 }
 
-/// "+90 532 123 45 67", "0532..." ve "532..." biçimlerini wa.me numarasına çevirir.
+/// Numarayı wa.me biçimine çevirir; sabit hat ise WhatsApp'ta hesap yoktur.
+fn mobil_numara(ham: &str) -> bool {
+    let rakamlar: String = ham
+        .chars()
+        .filter(|karakter| karakter.is_ascii_digit())
+        .collect();
+    // Türkiye mobil numaraları +90 5XX XXX XX XX biçimindedir.
+    let yerel = rakamlar
+        .strip_prefix("90")
+        .or_else(|| rakamlar.strip_prefix('0'))
+        .unwrap_or(&rakamlar);
+    yerel.len() == 10 && yerel.starts_with('5')
+}
+
+/// "\+90 532 123 45 67", "0532..." ve "532..." biçimlerini wa.me numarasına çevirir.
 fn whatsapp_numarasi(ham: &str) -> Option<String> {
     let rakamlar: String = ham
         .chars()
@@ -8117,6 +8664,13 @@ fn whatsapp_numarasi(ham: &str) -> Option<String> {
         rakamlar
     };
     (10..=15).contains(&numara.len()).then_some(numara)
+}
+
+/// Arama sonucunda müşteri adayı olmanın ön koşulu: ulaşılabilir bir telefon.
+/// Sabit hat da geçerlidir (WhatsApp hesabı çıkmazsa telefonla aranır); önemli
+/// olan teklifin gideceği bir numaranın bulunması.
+fn telefon_gecerli(ham: &str) -> bool {
+    whatsapp_numarasi(ham).is_some()
 }
 
 /// Sektörün web sitesine duyduğu ihtiyaç: müşterisi internette arayan, menü /
@@ -8271,6 +8825,30 @@ fn incelemeye_gore_sirala(liste: &mut [BusinessLead]) {
             .then_with(|| potansiyel_puani(b).cmp(&potansiyel_puani(a)))
             .then_with(|| arama_anahtari(&a.name).cmp(&arama_anahtari(&b.name)))
     });
+}
+
+/// Aynı işletmenin OSM ve Google bağlantısı farklıdır; takviyede tekrar
+/// eklenmemesi için ad anahtarı kullanılır.
+fn isletme_adi_anahtari(lead: &BusinessLead) -> String {
+    arama_anahtari(&lead.name)
+}
+
+/// Google'dan gelen kayıtları OSM listesine katar. Listede aynı adla duran
+/// işletme tekrar eklenmez; sonuç potansiyele göre yeniden sıralanır ve
+/// `SONUC_SINIRI` korunur.
+fn google_takviye_ekle(
+    mut liste: Vec<BusinessLead>,
+    gelen: Vec<BusinessLead>,
+) -> Vec<BusinessLead> {
+    let mut adlar: HashSet<String> = liste.iter().map(isletme_adi_anahtari).collect();
+    for lead in gelen {
+        if adlar.insert(isletme_adi_anahtari(&lead)) {
+            liste.push(lead);
+        }
+    }
+    leads_sirala(&mut liste);
+    liste.truncate(SONUC_SINIRI);
+    liste
 }
 
 fn leads_sirala(liste: &mut [BusinessLead]) {
@@ -8535,340 +9113,6 @@ fn whatsapp_mesaji_varyant(
     }
 }
 
-fn hizmet_kartlari(baslik: &str, kartlar: &[(&str, &str, &str)]) -> String {
-    let mut govde = String::new();
-    for (ikon, ad, aciklama) in kartlar {
-        govde.push_str(&format!(
-            r##"<div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5">
-<div class="text-xl mb-2">{ikon}</div>
-<div class="font-semibold mb-1">{ad}</div>
-<p class="text-sm text-zinc-400">{aciklama}</p>
-</div>
-"##
-        ));
-    }
-    format!(
-        r##"<section class="mt-14">
-<h2 class="text-2xl font-bold mb-6">{baslik}</h2>
-<div class="grid gap-4 sm:grid-cols-2">
-{govde}</div>
-</section>
-"##
-    )
-}
-
-fn menu_bolumu() -> String {
-    let kalemler = [
-        ("Günün Çorbası", "Mevsim sebzeleriyle, her gün taze"),
-        ("Izgara Ana Yemek", "Günlük hazırlanan ana yemekler"),
-        ("Ev Yapımı Tatlı", "Günün tatlısı, sıcak servis"),
-        ("Türk Kahvesi", "Yanında ikramla"),
-    ];
-    let mut govde = String::new();
-    for (ad, aciklama) in kalemler {
-        govde.push_str(&format!(
-            r##"<div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4">
-<div class="font-semibold">{ad}</div>
-<div class="text-xs text-zinc-500 mt-1">{aciklama}</div>
-</div>
-"##
-        ));
-    }
-    format!(
-        r##"<section class="mt-14">
-<h2 class="text-2xl font-bold mb-2">Menü</h2>
-<p class="text-zinc-500 text-sm mb-6">Örnek menü — gerçek menünüzle değiştirilecek.</p>
-<div class="grid gap-3 sm:grid-cols-2">
-{govde}</div>
-</section>
-"##
-    )
-}
-
-fn galeri_bolumu() -> String {
-    let kutular = [
-        ("✂️", "Saç Kesimi", "from-amber-500/40"),
-        ("🎨", "Boya & Röfle", "from-rose-500/40"),
-        ("🧴", "Bakım", "from-emerald-500/40"),
-        ("👰", "Gelin Saçı", "from-sky-500/40"),
-        ("💄", "Makyaj", "from-fuchsia-500/40"),
-        ("💅", "Tırnak", "from-orange-500/40"),
-    ];
-    let mut govde = String::new();
-    for (ikon, etiket, renk) in kutular {
-        govde.push_str(&format!(
-            r##"<div class="aspect-square rounded-xl bg-gradient-to-br {renk} to-zinc-900 border border-zinc-800 flex flex-col items-center justify-center gap-2 p-3 text-center"><span aria-hidden="true" class="text-3xl">{ikon}</span><span class="text-sm font-medium">{etiket}</span><span class="text-[10px] uppercase tracking-widest text-white/40">örnek görsel</span></div>
-"##
-        ));
-    }
-    format!(
-        r##"<section class="mt-14">
-<h2 class="text-2xl font-bold mb-2">Galeri</h2>
-<p class="text-zinc-500 text-sm mb-6">Örnek görseller — kendi fotoğraflarınızla değiştirilecek.</p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-{govde}</div>
-</section>
-"##
-    )
-}
-
-/// İşletmenin sektörüne göre demo sayfasına eklenen bölüm.
-fn demo_bolumu(sektor: &str) -> String {
-    match demo_turu(sektor) {
-        Demo::Menu => menu_bolumu(),
-        Demo::Kafe => kafe_bolumu(),
-        Demo::Unlu => unlu_bolumu(),
-        Demo::Urun => urun_bolumu(),
-        Demo::Galeri => galeri_bolumu(),
-        Demo::Klinik => klinik_bolumu(),
-        Demo::Otel => otel_bolumu(),
-        Demo::Egitim => egitim_bolumu(),
-        Demo::Ofis => ofis_bolumu(sektor),
-        Demo::Servis => servis_bolumu(sektor),
-        Demo::Eglence => eglence_bolumu(sektor),
-    }
-}
-
-fn kafe_bolumu() -> String {
-    hizmet_kartlari(
-        "Menü",
-        &[
-            (
-                "☕",
-                "Kahveler",
-                "Filtre kahve, Türk kahvesi ve soğuk seçenekler.",
-            ),
-            (
-                "🍰",
-                "Tatlılar",
-                "Günlük hazırlanan pasta ve tatlı çeşitleri.",
-            ),
-            ("🥐", "Atıştırmalıklar", "Sandviç, tost ve kahvaltı tabağı."),
-        ],
-    )
-}
-
-fn unlu_bolumu() -> String {
-    hizmet_kartlari(
-        "Ürünlerimiz",
-        &[
-            (
-                "🥖",
-                "Taze Üretim",
-                "Her gün taze çıkan ekmek ve hamur işleri.",
-            ),
-            (
-                "🎂",
-                "Özel Sipariş",
-                "Doğum günü ve davetler için özel pasta.",
-            ),
-            ("🤍", "Yanında", "Kahve, çay ve günlük atıştırmalıklar."),
-        ],
-    )
-}
-
-fn urun_bolumu() -> String {
-    hizmet_kartlari(
-        "Ürünler",
-        &[
-            (
-                "🆕",
-                "Yeni Gelenler",
-                "Sezonun yeni ürünleri ve kampanyalar.",
-            ),
-            (
-                "⭐",
-                "Çok Satanlar",
-                "Müşterilerin en çok tercih ettiği ürünler.",
-            ),
-            ("🚚", "Teslimat", "Mağazadan teslim veya adrese gönderim."),
-        ],
-    )
-}
-
-fn klinik_bolumu() -> String {
-    hizmet_kartlari(
-        "Hizmetlerimiz",
-        &[
-            (
-                "🩺",
-                "Muayene ve Kontrol",
-                "Durum değerlendirmesi ve tedavi planı.",
-            ),
-            ("✨", "Tedavi", "Uzman kadroyla planlı ve takipli tedavi."),
-            ("📅", "Randevu", "Uygun saate hızlı randevu."),
-        ],
-    )
-}
-
-fn otel_bolumu() -> String {
-    hizmet_kartlari(
-        "Odalar ve Konaklama",
-        &[
-            (
-                "🛏️",
-                "Standart Oda",
-                "Konforlu yatak, klima ve ücretsiz Wi-Fi.",
-            ),
-            ("🌅", "Deluxe Oda", "Geniş oda, manzara ve kahvaltı dahil."),
-            (
-                "☕",
-                "Kahvaltı & Olanaklar",
-                "Açık büfe kahvaltı, otopark, resepsiyon.",
-            ),
-        ],
-    )
-}
-
-fn egitim_bolumu() -> String {
-    hizmet_kartlari(
-        "Kurslar",
-        &[
-            ("🎯", "Bireysel Ders", "Kişiye özel program."),
-            ("👥", "Grup Sınıfı", "Küçük gruplarla düzenli ders."),
-            ("🆓", "Deneme Dersi", "Ücretsiz tanışma dersi."),
-        ],
-    )
-}
-
-/// Profesyonel hizmetler: sektöre göre hazırlanmış üç kart.
-fn ofis_bolumu(sektor: &str) -> String {
-    let kartlar: &[(&str, &str, &str)] = match sektor {
-        "Mimarlık" => &[
-            (
-                "📐",
-                "Mimari Proje",
-                "Konsept, ruhsat ve uygulama projeleri.",
-            ),
-            ("🛋️", "İç Mimarlık", "Mekân tasarımı ve malzeme seçimi."),
-            (
-                "🧱",
-                "Tadilat & Uygulama",
-                "Anahtar teslim tadilat ve denetim.",
-            ),
-        ],
-        "Emlak" => &[
-            ("🏠", "Satılık & Kiralık", "Bölgedeki güncel portföy."),
-            ("📊", "Değerleme", "Mülkünüz için gerçekçi fiyat analizi."),
-            (
-                "📝",
-                "Tapu & Sözleşme",
-                "Süreç boyunca resmî işlem desteği.",
-            ),
-        ],
-        "Muhasebe" => &[
-            (
-                "🧾",
-                "Vergi & Beyanname",
-                "Aylık ve yıllık beyanname takibi.",
-            ),
-            ("🏢", "Şirket Kuruluşu", "Kuruluş işlemleri ve açılış."),
-            (
-                "👥",
-                "Bordro & Danışmanlık",
-                "Personel ve mali danışmanlık.",
-            ),
-        ],
-        "Nakliyat" => &[
-            ("🚚", "Şehir İçi Taşıma", "Ev ve ofis taşımacılığı."),
-            ("🛣️", "Şehirler Arası", "Planlı ve sigortalı nakliye."),
-            ("📦", "Paketleme", "Eşyalarınız için güvenli paketleme."),
-        ],
-        "Yazılım" => &[
-            ("💻", "Web & Mobil", "İşletmenize özel uygulamalar."),
-            ("⚡", "Otomasyon", "Tekrarlayan işleri otomatikleştirme."),
-            ("🛡️", "Bakım & Destek", "Güncelleme, yedekleme ve destek."),
-        ],
-        _ => &[
-            (
-                "📋",
-                "Danışmanlık",
-                "İhtiyacınıza uygun çözüm ve süreç planı.",
-            ),
-            (
-                "🧮",
-                "Teklif & Planlama",
-                "Şeffaf fiyat, net takvim ve kapsam.",
-            ),
-            ("🤝", "Takip & Destek", "İş bitiminde de yanınızdayız."),
-        ],
-    };
-    hizmet_kartlari("Hizmetlerimiz", kartlar)
-}
-
-/// Tamir, bakım ve teknik servis sektörleri.
-fn servis_bolumu(sektor: &str) -> String {
-    let kartlar: &[(&str, &str, &str)] = match sektor {
-        "Oto Tamir" | "Lastikçi" | "Oto Yıkama" | "Oto Kiralama" => &[
-            (
-                "🛠️",
-                "Bakım & Onarım",
-                "Periyodik bakım, fren ve süspansiyon.",
-            ),
-            (
-                "🛞",
-                "Lastik & Balans",
-                "Lastik değişimi, balans ve rot ayarı.",
-            ),
-            ("📅", "Randevu", "Sıra beklemeden teslim ve teslim alma."),
-        ],
-        "Tesisatçı" | "Elektrikçi" | "Klima" | "Boyacı" | "Marangoz" | "Camcı" | "Çilingir" => {
-            &[
-                ("🔧", "Keşif & Teklif", "Yerinde inceleme, net fiyat."),
-                ("🏠", "Uygulama", "Temiz çalışma, planlanan günde teslim."),
-                ("🛡️", "Garanti", "İşçilik garantisi ve acil destek hattı."),
-            ]
-        }
-        "Terzi" | "Kuru Temizleme" | "Ayakkabı Tamiri" => &[
-            ("✂️", "Özel İşçilik", "Ölçüye ve isteğe göre düzenleme."),
-            ("⏱️", "Hızlı Teslim", "Aynı gün teslim seçeneği."),
-            (
-                "🧺",
-                "Bakım & Paketleme",
-                "Temiz, ütülü ve korumalı teslim.",
-            ),
-        ],
-        "Matbaa" => &[
-            ("🖨️", "Dijital Baskı", "Kartvizit, broşür ve afiş."),
-            ("🎨", "Tasarım", "Dosya hazırlama ve baskı öncesi kontrol."),
-            ("🚚", "Teslim", "Şehir içi hızlı teslimat."),
-        ],
-        _ => &[
-            ("🔧", "Bakım", "Periyodik kontrol ve düzenli bakım."),
-            ("⚙️", "Onarım", "Arıza tespiti ve kalıcı çözüm."),
-            ("📞", "Destek", "Telefonla ön bilgi ve yerinde servis."),
-        ],
-    };
-    hizmet_kartlari("Servis Hizmetleri", kartlar)
-}
-
-/// Spor, eğlence ve etkinlik mekânları.
-fn eglence_bolumu(sektor: &str) -> String {
-    if sektor == "Spor Salonu" {
-        return hizmet_kartlari(
-            "Üyelik & Dersler",
-            &[
-                ("🏋️", "Fitness Salonu", "Alet ve serbest ağırlık alanı."),
-                ("🧘", "Grup Dersleri", "Yoga, pilates ve kardiyo."),
-                ("🎯", "Kişisel Antrenör", "Hedefe özel program."),
-            ],
-        );
-    }
-    hizmet_kartlari(
-        "Program & Hizmetler",
-        &[
-            ("🗓️", "Program", "Güncel etkinlik ve seans saatleri."),
-            (
-                "🎟️",
-                "Rezervasyon",
-                "Telefon veya WhatsApp ile yer ayırtma.",
-            ),
-            ("🎉", "Özel Gün", "Doğum günü, davet ve grup organizasyonu."),
-        ],
-    )
-}
-
-/// OSM `opening_hours` gün kodlarını Türkçeye çevirir; saat ve notlara dokunmaz.
 fn gun_kodu_cevir(kelime: &str) -> Option<&'static str> {
     match kelime {
         "Mo" => Some("Pzt"),
@@ -9052,462 +9296,455 @@ fn program_js(program: &[Vec<(u32, u32)>; 7]) -> String {
     format!("[{}]", gunler.join(","))
 }
 
-/// İşletme koordinatlarından OpenStreetMap gömülü haritası üretir.
-fn konum_bolumu_html(isletme_adi: &str, enlem: f64, boylam: f64) -> String {
-    let ad = html_kacis(isletme_adi);
-    let boylam_pay = 0.004;
-    let enlem_pay = 0.003;
-    let bbox = format!(
-        "{:.4},{:.4},{:.4},{:.4}",
-        boylam - boylam_pay,
-        enlem - enlem_pay,
-        boylam + boylam_pay,
-        enlem + enlem_pay
-    );
-    let embed = format!(
-        "https://www.openstreetmap.org/export/embed.html?bbox={}&layer=mapnik&marker={enlem:.5},{boylam:.5}",
-        url_encode(&bbox)
-    );
-    let link = format!(
-        "https://www.openstreetmap.org/?mlat={enlem:.5}&mlon={boylam:.5}#map=18/{enlem:.5}/{boylam:.5}"
-    );
-    format!(
-        r##"<section id="konum" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
-<h2 class="text-2xl md:text-3xl font-black tracking-tight mb-2">Konum</h2>
-<p class="text-zinc-400 text-[14.5px] mb-8">{ad} — haritada yakından görün.</p>
-<div class="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.02]">
-<iframe title="{ad} konumu" width="100%" height="340" style="border:0;display:block" loading="lazy" src="{embed}"></iframe>
-</div>
-<a class="inline-flex mt-4 text-[13.5px] font-semibold accent hover:underline" href="{link}" target="_blank" rel="noopener">Haritada aç ↗</a>
-</section>
-"##
-    )
-}
-
-/// Hero'nun arkasında kaydırmaya tepki veren canvas animasyonu.
-/// Videodaki "frame sequence + scroll" efektinin ücretsiz karşılığı: dış dosya,
-/// video veya API yok — koridor halkaları ve parçacıklar sayfada çizilir.
-fn hero_animasyon_script() -> String {
-    r##"<script>
-(function () {
-  var tuval = document.getElementById("vr-tuval");
-  if (!tuval || !tuval.getContext) return;
-  var ctx = tuval.getContext("2d");
-  var bolum = document.getElementById("ust-hero") || tuval.parentElement;
-  var azalt = window.matchMedia("(prefers-reduced-motion: reduce)");
-  var w = 0, h = 0, ilerleme = 0, gorunur = true, kosuyor = false, son = 0;
-
-  function renk() {
-    var ham = (getComputedStyle(document.documentElement).getPropertyValue("--accent") || "").trim();
-    var m = /^#?([0-9a-f]{6})$/i.exec(ham);
-    if (!m) return "255,176,87";
-    var n = parseInt(m[1], 16);
-    return ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255);
-  }
-  var vurgu = renk();
-
-  function boyutla() {
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    w = tuval.clientWidth || 0;
-    h = tuval.clientHeight || 0;
-    tuval.width = Math.max(1, Math.round(w * dpr));
-    tuval.height = Math.max(1, Math.round(h * dpr));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  function olc() {
-    var k = bolum.getBoundingClientRect();
-    ilerleme = Math.min(1, Math.max(0, -k.top / (k.height || 1)));
-  }
-
-  var HALKA = 22, YILDIZ = 46;
-
-  function ciz(zaman) {
-    if (!w || !h) return;
-    ctx.clearRect(0, 0, w, h);
-    var cx = w / 2, cy = h * 0.58, taban = Math.min(w, h);
-    var kayma = ilerleme * 1.7 + (zaman || 0) * 0.000045;
-
-    for (var i = 0; i < HALKA; i++) {
-      var z = ((i / HALKA) + kayma) % 1;
-      var yaricap = taban * (0.05 + z * z * 0.95);
-      var alfa = 0.6 * (1 - z) * Math.min(1, z * 5);
-      if (alfa <= 0.003) continue;
-      ctx.strokeStyle = "rgba(" + vurgu + "," + alfa.toFixed(3) + ")";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, yaricap * 1.3, yaricap * 0.6, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    for (var s = 0; s < 12; s++) {
-      var a = (s / 12) * Math.PI * 2 + kayma * 0.6;
-      var ic = taban * 0.05, dis = taban * 1.1;
-      var grad = ctx.createLinearGradient(
-        cx + Math.cos(a) * ic, cy + Math.sin(a) * ic * 0.5,
-        cx + Math.cos(a) * dis, cy + Math.sin(a) * dis * 0.5
-      );
-      grad.addColorStop(0, "rgba(" + vurgu + ",0.20)");
-      grad.addColorStop(1, "rgba(" + vurgu + ",0)");
-      ctx.strokeStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * ic, cy + Math.sin(a) * ic * 0.5);
-      ctx.lineTo(cx + Math.cos(a) * dis, cy + Math.sin(a) * dis * 0.5);
-      ctx.stroke();
-    }
-
-    for (var j = 0; j < YILDIZ; j++) {
-      var pz = ((j / YILDIZ) + kayma * 1.25) % 1;
-      var pa = (j * 2.399963) % (Math.PI * 2);
-      var pr = taban * (0.04 + pz * pz);
-      var palfa = 0.5 * (1 - pz) * Math.min(1, pz * 6);
-      if (palfa <= 0.01) continue;
-      ctx.fillStyle = "rgba(255,255,255," + (palfa * 1.4).toFixed(3) + ")";
-      ctx.fillRect(cx + Math.cos(pa) * pr * 1.3, cy + Math.sin(pa) * pr * 0.6, 1.6, 1.6);
-    }
-  }
-
-  function dongu(zaman) {
-    if (azalt.matches || !gorunur) { kosuyor = false; return; }
-    kosuyor = true;
-    if (zaman - son > 33) { ciz(zaman); son = zaman; }
-    requestAnimationFrame(dongu);
-  }
-
-  function baslat() {
-    if (!kosuyor && gorunur && !azalt.matches) requestAnimationFrame(dongu);
-  }
-
-  window.addEventListener("scroll", function () {
-    olc();
-    if (azalt.matches) ciz(0);
-  }, { passive: true });
-
-  window.addEventListener("resize", function () {
-    boyutla(); olc(); ciz(son);
-  });
-
-  if ("IntersectionObserver" in window) {
-    new IntersectionObserver(function (girdiler) {
-      gorunur = girdiler[0].isIntersecting;
-      if (gorunur) { olc(); baslat(); }
-    }, { threshold: 0 }).observe(tuval);
-  }
-
-  if (azalt.addEventListener) {
-    azalt.addEventListener("change", function () {
-      if (azalt.matches) { kosuyor = false; ciz(0); } else { baslat(); }
-    });
-  }
-
-  boyutla(); olc(); ciz(0); baslat();
-})();
-</script>"##
-        .to_string()
-}
-
-fn demo_html(isletme: &BusinessLead, gonderen: &str) -> String {
-    let ad = html_kacis(&isletme.name);
-    let adres = html_kacis(&isletme.address);
-    let sektor = html_kacis(&isletme.category);
-    let bolum = demo_bolumu(&isletme.category);
-    let kaynak = html_kacis(&isletme.kaynak);
-    // Karne, demo ile aynı klasöre aynı ad köküyle yazılır: göreli bağlantı yeter.
-    let karne_linki = format!(
-        "<p class=\"mt-2\"><a class=\"text-amber-400 hover:underline\" href=\"{}\">Dijital görünürlük karnesi</a></p>",
-        karne_dosya_adi(isletme)
-    );
-    let konum = match isletme.konum {
-        Some((enlem, boylam)) => konum_bolumu_html(&isletme.name, enlem, boylam),
-        None => String::new(),
-    };
-    let saatler = calisma_saatleri_metni(&isletme.calisma_saatleri);
-    let (saat_satiri, durum_script) = if saatler.is_empty() {
-        (String::new(), String::new())
-    } else {
-        let okunur = html_kacis(&saatler);
-        match haftalik_program(&isletme.calisma_saatleri) {
-            Some(program) => (
-                format!(
-                    "<p class=\"mt-1\">🕒 {okunur}</p>\n<p id=\"acik-durum\" class=\"mt-1\"></p>"
-                ),
-                format!(
-                    r##"<script>
-const program = {program};
-const gunAdlari = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"];
-function ikiHane(sayi) {{ return String(sayi).padStart(2, "0"); }}
-function saatMetni(dakika) {{ return ikiHane(Math.floor(dakika / 60) % 24) + ":" + ikiHane(dakika % 60); }}
-function kalanMetni(dakika) {{
-  const gun = Math.floor(dakika / 1440);
-  const saat = Math.floor((dakika % 1440) / 60);
-  const dk = dakika % 60;
-  const parcalar = [];
-  if (gun > 0) parcalar.push(gun + " gün");
-  if (saat > 0) parcalar.push(saat + " sa");
-  if (dk > 0) parcalar.push(dk + " dk");
-  return parcalar.length ? parcalar.join(" ") : "0 dk";
-}}
-function durumHesapla() {{
-  const simdi = new Date();
-  const gun = (simdi.getDay() + 6) % 7;
-  const dakika = simdi.getHours() * 60 + simdi.getMinutes();
-  for (const [bas, son] of (program[gun] || [])) {{
-    if (dakika >= bas && dakika < son) {{
-      if (bas === 0 && son >= 1440) return "🟢 Şu an açık · 24 saat";
-      if (son >= 1440) return "🟢 Şu an açık · gece yarısına kadar";
-      const kalan = son - dakika;
-      const ayrinti = "kapanış " + saatMetni(son) + " (" + kalanMetni(kalan) + " kaldı)";
-      return kalan <= 15 ? "🟠 Kapanmak üzere · " + ayrinti : "🟢 Şu an açık · " + ayrinti;
-    }}
-  }}
-  for (let i = 0; i < 7; i++) {{
-    const hedef = (gun + i) % 7;
-    for (const [bas] of (program[hedef] || [])) {{
-      if (i === 0 && bas <= dakika) continue;
-      const gunEtiketi = i === 0 ? "bugün" : (i === 1 ? "yarın" : gunAdlari[hedef]);
-      const acilisa = i * 1440 + bas - dakika;
-      return "🔴 Şu an kapalı · açılış " + gunEtiketi + " " + saatMetni(bas) + " · " + kalanMetni(acilisa) + " kaldı";
-    }}
-  }}
-  return "🔴 Şu an kapalı";
-}}
-function durumGuncelle() {{
-  const durum = document.getElementById("acik-durum");
-  if (!durum) return;
-  const mesaj = durumHesapla();
-  const renk = mesaj.startsWith("🟢")
-    ? "text-emerald-400"
-    : (mesaj.startsWith("🟠") ? "text-amber-400" : "text-rose-400");
-  durum.textContent = mesaj;
-  durum.className = "mt-1 text-sm font-semibold " + renk;
-}}
-durumGuncelle();
-setInterval(durumGuncelle, 60000);
-</script>
-"##,
-                    program = program_js(&program)
-                ),
-            ),
-            None => (format!("<p class=\"mt-1\">🕒 {okunur}</p>"), String::new()),
+fn base64_kodla(veri: &[u8]) -> String {
+    const ALFABE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut cikti = String::with_capacity(veri.len().div_ceil(3) * 4);
+    for parca in veri.chunks(3) {
+        let b0 = parca[0] as u32;
+        let b1 = *parca.get(1).unwrap_or(&0) as u32;
+        let b2 = *parca.get(2).unwrap_or(&0) as u32;
+        let uc = (b0 << 16) | (b1 << 8) | b2;
+        cikti.push(ALFABE[(uc >> 18) as usize & 63] as char);
+        cikti.push(ALFABE[(uc >> 12) as usize & 63] as char);
+        if parca.len() > 1 {
+            cikti.push(ALFABE[(uc >> 6) as usize & 63] as char);
+        } else {
+            cikti.push('=');
         }
-    };
-    let anahtar = dosya_slug(&isletme.name);
-    let hazirlayan = if gonderen.trim().is_empty() {
-        "Nexus Enterprise".to_string()
+        if parca.len() > 2 {
+            cikti.push(ALFABE[uc as usize & 63] as char);
+        } else {
+            cikti.push('=');
+        }
+    }
+    cikti
+}
+
+/// Demo sayfasına gömülen fontlar (SIL OFL 1.1): başlık Space Grotesk,
+/// gövde Inter. Ayrıntı: varliklar/fontlar/LISANSLAR.md
+const FONT_BASLIK: &[u8] = include_bytes!("../varliklar/fontlar/space-grotesk-tr.woff2");
+const FONT_GOVDE: &[u8] = include_bytes!("../varliklar/fontlar/inter-tr.woff2");
+
+/// `@font-face` tanımları: fontlar base64 olarak sayfaya gömülür.
+fn font_css() -> &'static str {
+    static ONBELLEK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ONBELLEK.get_or_init(|| {
+        format!(
+            "@font-face{{font-family:'Space Grotesk';font-style:normal;font-weight:300 700;font-display:swap;src:url(data:font/woff2;base64,{}) format('woff2')}}\n\
+             @font-face{{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url(data:font/woff2;base64,{}) format('woff2')}}\n",
+            base64_kodla(FONT_BASLIK),
+            base64_kodla(FONT_GOVDE)
+        )
+    })
+}
+
+// --- İşletme fotoğrafı -----------------------------------------------------
+
+/// Places fotoğraf listesinden manşet için en uygun olanı seçer: yatay ve en
+/// büyük alanlı fotoğraf. İlk sıradaki fotoğraf işletme sahibinin manşet
+/// seçimi değildir; dikey bir cephe fotoğrafı olabilir ve hero'da kötü durur.
+fn en_iyi_foto(fotolar: Option<&serde_json::Value>) -> Option<Foto> {
+    let liste = fotolar?.as_array()?;
+    let mut en_iyi: Option<(&str, f64)> = None;
+    for foto in liste {
+        let Some(ad) = foto.get("name").and_then(|ad| ad.as_str()) else {
+            continue;
+        };
+        if ad.trim().is_empty() {
+            continue;
+        }
+        let genislik = foto.get("widthPx").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let yukseklik = foto.get("heightPx").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let yatay = genislik > 0.0 && genislik >= yukseklik;
+        // Yatay fotoğraflar dikey olanların önüne geçer; eşitlikte alan büyüğü.
+        let puan = if yatay { 1e12 } else { 0.0 } + genislik * yukseklik;
+        if en_iyi.map(|(_, onceki)| puan > onceki).unwrap_or(true) {
+            en_iyi = Some((ad, puan));
+        }
+    }
+    Some(Foto {
+        url: format!("google:{}", en_iyi?.0),
+        atif: "Google · işletme fotoğrafı".to_string(),
+    })
+}
+
+/// OSM kaydındaki fotoğraf etiketlerini indirilebilir kaynağa çevirir.
+/// Yalnızca gerçekten var olan iki etiket kullanılır: `wikimedia_commons` ve
+/// `image` (http adresi). Fotoğraf yoksa demo soyut kompozisyonla üretilir.
+fn foto_etiketi(tags: &serde_json::Value) -> Option<Foto> {
+    if let Some(dosya) = etiket(tags, "wikimedia_commons") {
+        let ad = dosya.trim().trim_start_matches("File:").replace(' ', "_");
+        if !ad.is_empty() {
+            return Some(Foto {
+                url: format!("commons:{ad}"),
+                atif: String::new(),
+            });
+        }
+    }
+    let url = etiket(tags, "image").filter(|url| url.starts_with("http"))?;
+    Some(Foto {
+        url: url.to_string(),
+        atif: "işletme kaydı".to_string(),
+    })
+}
+
+/// İndirilen verinin gerçek türünü ilk baytlardan okur. Sunucunun bildirdiği
+/// `content-type` her zaman doğru olmadığı için içerik esas alınır.
+fn foto_mime(veri: &[u8]) -> Option<&'static str> {
+    if veri.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if veri.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("image/png")
+    } else if veri.len() >= 12 && &veri[0..4] == b"RIFF" && &veri[8..12] == b"WEBP" {
+        Some("image/webp")
     } else {
-        html_kacis(gonderen)
-    };
-    // Open Graph: link WhatsApp/SMS önizlemesinde başlıklı ve açıklamalı
-    // görünsün. Etiketler, tanımlayıcı alanın hemen altında durur.
-    let ozet_metni = if isletme.address.is_empty() {
-        format!("{sektor} · {ad} için hazırlanmış mobil uyumlu site taslağı")
+        None
+    }
+}
+
+/// Fotoğrafı indirir; 2.5 MB üstü dosyalar demoyu şişirmemek için atlanır.
+fn foto_indir(url: &str, google_anahtari: Option<&str>) -> Option<(Vec<u8>, String)> {
+    use std::io::Read;
+    let ajan = http_ajani();
+    let istek = if let Some(ad) = url.strip_prefix("google:") {
+        let anahtar = google_anahtari.filter(|anahtar| !anahtar.trim().is_empty())?;
+        ajan.get(&format!(
+            "https://places.googleapis.com/v1/{ad}/media?maxHeightPx=1600&maxWidthPx=1600"
+        ))
+        .set("X-Goog-Api-Key", anahtar)
+    } else if let Some(dosya) = url.strip_prefix("commons:") {
+        // Dosya adı Türkçe/aksanlı karakter içerebilir: yüzde kodlaması şart.
+        ajan.get(&format!(
+            "https://commons.wikimedia.org/wiki/Special:FilePath/{}?width=1200",
+            url_encode(dosya)
+        ))
     } else {
-        format!("{sektor} · {adres} · {ad} için hazırlanmış mobil uyumlu site taslağı")
+        ajan.get(url)
     };
-    let paylasim = format!(
-        concat!(
-            "<meta name=\"description\" content=\"{ozet}\">\n",
-            "<meta property=\"og:type\" content=\"website\">\n",
-            "<meta property=\"og:site_name\" content=\"{ad}\">\n",
-            "<meta property=\"og:title\" content=\"{ad} — {sektor}\">\n",
-            "<meta property=\"og:description\" content=\"{ozet}\">\n",
-            "<meta property=\"og:locale\" content=\"tr_TR\">\n",
-            "<meta name=\"twitter:card\" content=\"summary\">\n",
-            "<meta name=\"robots\" content=\"noindex\">"
-        ),
-        ad = ad,
-        sektor = sektor,
-        ozet = ozet_metni
+    let yanit = istek.timeout(Duration::from_secs(20)).call().ok()?;
+    let mut veri = Vec::new();
+    yanit
+        .into_reader()
+        .take(2_500_001)
+        .read_to_end(&mut veri)
+        .ok()?;
+    if veri.len() < 1024 || veri.len() > 2_500_000 {
+        return None;
+    }
+    let mime = foto_mime(&veri)?;
+    Some((veri, mime.to_string()))
+}
+
+/// Commons dosyasının yazar ve lisansı. CC BY-SA gibi lisanslarda atıf zorunlu
+/// olduğu için fotoğraf ancak bu bilgi alınabiliyorsa kullanılır.
+fn commons_atif(dosya: &str) -> Option<String> {
+    let ajan = http_ajani();
+    let sorgu = format!(
+        "https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=extmetadata&titles=File:{dosya}"
     );
-    let tel_blogu = match whatsapp_numarasi(&isletme.phone) {
-        Some(tel) => format!(
-            "<a href=\"tel:+{tel}\" class=\"inline-flex items-center gap-2 rounded-full accent-bg px-6 py-3 text-[14px] font-bold shadow-lg transition hover:-translate-y-0.5\">📞 Hemen Ara</a>"
-        ),
-        None => String::new(),
+    let metin = ajan
+        .get(&sorgu)
+        .timeout(Duration::from_secs(15))
+        .call()
+        .ok()?
+        .into_string()
+        .ok()?;
+    let deger: serde_json::Value = serde_json::from_str(&metin).ok()?;
+    let ust = deger
+        .pointer("/query/pages")
+        .and_then(|sayfalar| sayfalar.as_object())
+        .and_then(|sayfalar| sayfalar.values().next())
+        .and_then(|sayfa| sayfa.pointer("/imageinfo/0/extmetadata"))?;
+    let alan = |ad: &str| {
+        ust.pointer(&format!("/{ad}/value"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())
     };
+    let sanatci = alan("Artist")
+        .map(|metin| html_temizle(&metin))
+        .unwrap_or_default();
+    let lisans = alan("LicenseShortName").unwrap_or_default();
+    let atif = match (sanatci.is_empty(), lisans.is_empty()) {
+        (false, false) => format!("{sanatci} · {lisans} · Wikimedia Commons"),
+        (false, true) => format!("{sanatci} · Wikimedia Commons"),
+        (true, false) => format!("{lisans} · Wikimedia Commons"),
+        (true, true) => return None,
+    };
+    Some(atif)
+}
 
-    // --- Yeni demo iskeletinin parçaları ---------------------------------
-    // Sektör rengi CSS değişkeni olarak verilir: her demo kendi paletiyle gelir.
-    let vurgu = hex_renk(sektor_rengi(&isletme.category));
-    let adres_eki = if adres.is_empty() {
-        String::new()
+/// `Artist` alanı HTML içerebilir ("<a href=...>Ad</a>").
+fn html_temizle(metin: &str) -> String {
+    let mut temiz = String::with_capacity(metin.len());
+    let mut icerde = false;
+    for karakter in metin.chars() {
+        match karakter {
+            '<' => icerde = true,
+            '>' => icerde = false,
+            _ if !icerde => temiz.push(karakter),
+            _ => {}
+        }
+    }
+    temiz.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Demoya gömülecek fotoğraf: (mime, base64) ve altbilgi atfı.
+fn demo_fotografi(isletme: &BusinessLead) -> (Option<(String, String)>, Option<String>) {
+    let Some(foto) = &isletme.foto else {
+        return (None, None);
+    };
+    let google = GoogleAyar::oku();
+    let anahtar = Some(google.anahtar.as_str());
+    let Some((veri, mime)) = foto_indir(&foto.url, anahtar) else {
+        return (None, None);
+    };
+    let atif = if foto.atif.trim().is_empty() {
+        foto.url
+            .strip_prefix("commons:")
+            .and_then(commons_atif)
+            .or_else(|| Some("Wikimedia Commons".to_string()))
     } else {
-        format!(" · {adres}")
+        Some(foto.atif.clone())
     };
-    let konum_var = !konum.is_empty();
-    let konum_menu = if konum_var {
-        "<a class=\"hover:text-white transition\" href=\"#konum\">Konum</a>\n".to_string()
+    (Some((mime, base64_kodla(&veri))), atif)
+}
+
+/// Renk seçicide kullanılan `#rrggbb` → `[r, g, b]` dönüşümü.
+fn renk_coz(hex: &str) -> [u8; 3] {
+    let govde = hex.trim().trim_start_matches('#');
+    if govde.len() != 6 {
+        return [0, 0, 0];
+    }
+    let kanal = |bas: usize| u8::from_str_radix(&govde[bas..bas + 2], 16).unwrap_or(0);
+    [kanal(0), kanal(2), kanal(4)]
+}
+
+/// Renklendirme panelindeki tek satır: etiket, renk seçici ve "oto" düğmesi.
+/// Renk seçici değiştiyse `true` döner.
+fn renk_secici(ui: &mut egui::Ui, etiket: &str, deger: &mut String, varsayilan: &str) -> bool {
+    let mut degisti = false;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(etiket).size(11.5).color(SOLUK));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let oto = ui.add(
+                egui::Button::new(egui::RichText::new("oto").size(9.5).color(DIM)).frame(false),
+            );
+            if oto.on_hover_text("Otomatik renge dön").clicked() && !deger.is_empty() {
+                deger.clear();
+                degisti = true;
+            }
+            let mut rgb = renk_coz(if deger.is_empty() { varsayilan } else { deger });
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                *deger = renk_yaz(rgb);
+                degisti = true;
+            }
+        });
+    });
+    degisti
+}
+
+/// `[r, g, b]` → `#rrggbb`.
+fn renk_yaz(rgb: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])
+}
+
+/// Kalıcı renk ayarı için güvenli değer: geçersiz metin varsayılana döner.
+fn gecerli_renk(deger: &str, varsayilan: &str) -> String {
+    let govde = deger.trim().trim_start_matches('#');
+    if govde.len() == 6 && govde.chars().all(|karakter| karakter.is_ascii_hexdigit()) {
+        format!("#{}", govde.to_lowercase())
     } else {
-        String::new()
+        varsayilan.to_string()
+    }
+}
+
+fn demo_turu_adi(sektor: &str) -> &'static str {
+    match demo_turu(sektor) {
+        Demo::Menu => "menu",
+        Demo::Kafe => "kafe",
+        Demo::Unlu => "unlu",
+        Demo::Urun => "urun",
+        Demo::Galeri => "galeri",
+        Demo::Klinik => "klinik",
+        Demo::Otel => "otel",
+        Demo::Egitim => "egitim",
+        Demo::Ofis => "ofis",
+        Demo::Servis => "servis",
+        Demo::Eglence => "eglence",
+    }
+}
+
+/// İşletme kaydını tek dosyalık demo sayfasına çevirir.
+///
+/// Sayfanın kendisi `demo_site` modülünde: orada sektöre özel metinler,
+/// CSS ve hareket kodu durur. Burada yalnızca kayıttaki gerçek veriler
+/// (ad, adres, telefon, saatler, konum, puan) hazırlanır.
+fn demo_html(isletme: &BusinessLead, gonderen: &str) -> String {
+    let program = haftalik_program(&isletme.calisma_saatleri);
+    // Gün gün saat tablosu; program çözülemiyorsa ham metin gösterilir.
+    let saat_satirlari = match &program {
+        Some(program) => program
+            .iter()
+            .enumerate()
+            .map(|(gun, araliklar)| {
+                let metin = if araliklar.is_empty() {
+                    "Kapalı".to_string()
+                } else {
+                    araliklar
+                        .iter()
+                        .map(|(bas, son)| format!("{}–{}", saat_metni(*bas), saat_metni(*son)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                (GUN_ADLARI[gun].to_string(), metin)
+            })
+            .collect(),
+        None => Vec::new(),
     };
-    let konum_menu_mobil = if konum_var {
-        "<a class=\"block\" href=\"#konum\">Konum</a>\n".to_string()
+    let puan = isletme
+        .yildiz_puani
+        .map(|puan| format!("{puan:.1}").replace('.', ","));
+    let yorum = isletme.inceleme_sayisi.map(|adet| format!("{adet} yorum"));
+    let kaynak = if isletme.kaynak.contains("google") {
+        "Google"
     } else {
-        String::new()
+        "OpenStreetMap"
     };
-    let konum_butonu = if konum_var {
-        "<a href=\"#konum\" class=\"inline-flex items-center gap-2 rounded-full border border-white/15 px-6 py-3 text-[14px] font-semibold transition hover:border-white/40\">Konumu gör</a>".to_string()
+    // Renklendirme paneli: boş alan otomatik (sektör rengi / koyu tema).
+    let ayar = ayar_oku();
+    let sektor_vurgusu = hex_renk(sektor_rengi(&isletme.category));
+    let vurgu = gecerli_renk(&ayar.demo_vurgu, &sektor_vurgusu);
+    let zemin = gecerli_renk(&ayar.demo_zemin, DEMO_ZEMIN);
+    let yazi = gecerli_renk(&ayar.demo_yazi, DEMO_YAZI);
+    let (foto, foto_atif) = demo_fotografi(isletme);
+    demo_site::uret(&demo_site::Girdi {
+        ad: isletme.name.clone(),
+        adres: isletme.address.clone(),
+        sektor: isletme.category.clone(),
+        tur: demo_turu_adi(&isletme.category),
+        vurgu,
+        zemin,
+        yazi,
+        foto,
+        foto_atif,
+        telefon: whatsapp_numarasi(&isletme.phone),
+        telefon_goster: isletme.phone.trim().to_string(),
+        konum: isletme.konum,
+        program: program.as_ref().map(program_js),
+        saat_metni: calisma_saatleri_metni(&isletme.calisma_saatleri),
+        saat_satirlari,
+        puan,
+        yorum,
+        karne: Some(karne_dosya_adi(isletme)),
+        kaynak: kaynak.to_string(),
+        gonderen: if gonderen.trim().is_empty() {
+            "Nexus Enterprise".to_string()
+        } else {
+            gonderen.to_string()
+        },
+        anahtar: dosya_slug(&isletme.name),
+        font_css: font_css(),
+    })
+}
+
+/// Demo dosyasındaki bir CSS rengini okur (`--accent:#e8a33d` → `#e8a33d`).
+fn css_renk_degiskeni(html: &str, ad: &str) -> Option<String> {
+    let anahtar = format!("--{ad}:");
+    let bas = html.find(&anahtar)? + anahtar.len();
+    let kalan = &html[bas..];
+    let son = kalan.find([';', '}'])?;
+    let deger = kalan[..son].trim().to_string();
+    deger.starts_with('#').then_some(deger)
+}
+
+/// Üretilmiş bir demonun kök renklerini değiştirir; hareket ve düzen aynı kalır.
+/// Kök değişkenler yoksa (elle yazılmış sayfa) `None` döner ve dosya atlanır.
+fn demo_renklerini_degistir(
+    html: &str,
+    zemin: &str,
+    yazi: &str,
+    vurgu: Option<&str>,
+) -> Option<String> {
+    let eski_vurgu = css_renk_degiskeni(html, "accent")?;
+    let vurgu = vurgu
+        .filter(|deger| deger.starts_with('#'))
+        .unwrap_or(&eski_vurgu)
+        .to_string();
+    let karsi = if demo_site::parlak_mi(&vurgu) {
+        "#12100e"
     } else {
-        String::new()
+        "#f8f5f0"
     };
-    let cipler = demo_cipleri(isletme, konum_var, !saatler.is_empty());
-    let telefon_metni = if isletme.phone.is_empty() {
-        "Kayıtta yok".to_string()
+
+    // `:root{...--ink:<değer>;` bloğunu tek seferde yeniden yaz.
+    let bas = html.find(":root{--accent:")?;
+    let kalan = &html[bas..];
+    let ink = kalan.find("--ink:")? + "--ink:".len();
+    let son = kalan[ink..].find([';', '}'])?;
+    let mut yeni = String::with_capacity(html.len());
+    yeni.push_str(&html[..bas]);
+    yeni.push_str(&format!(
+        ":root{{--accent:{vurgu};--accent-karsi:{karsi};--bg:{zemin};--ink:{yazi};"
+    ));
+    yeni.push_str(&html[bas + ink + son..]);
+
+    // Açık zeminde gölge/harita/ışık katmanlarının yönü değişir.
+    let sinif = if demo_site::parlak_mi(zemin) {
+        "<html lang=\"tr\" class=\"tema-acik\">"
     } else {
-        html_kacis(&isletme.phone)
+        "<html lang=\"tr\">"
     };
-    // Mobilde ekranın altında duran tek dokunuşluk arama düğmesi.
-    let sticky_cta = match whatsapp_numarasi(&isletme.phone) {
-        Some(tel) => format!(
-            "<a href=\"tel:+{tel}\" class=\"md:hidden fixed inset-x-4 bottom-4 z-30 accent-bg text-center font-extrabold py-4 rounded-2xl shadow-2xl\">📞 Hemen Ara</a>"
-        ),
-        None => "<a href=\"#iletisim\" class=\"md:hidden fixed inset-x-4 bottom-4 z-30 accent-bg text-center font-extrabold py-4 rounded-2xl shadow-2xl\">İletişim</a>".to_string(),
+    let yeni = yeni
+        .replace("<html lang=\"tr\" class=\"tema-acik\">", sinif)
+        .replace("<html lang=\"tr\">", sinif);
+    // Tarayıcı çubuğu rengi de vurguyu izlesin.
+    Some(yeni.replace(
+        &format!("content=\"{eski_vurgu}\""),
+        &format!("content=\"{vurgu}\""),
+    ))
+}
+
+/// Klasördeki tüm demo sayfalarını seçili renklerle yeniden yazar.
+/// Karneler kendi paletini kullandığı için atlanır. (güncellenen, atlanan)
+fn demolari_renklendir(
+    klasor: &str,
+    zemin: &str,
+    yazi: &str,
+    vurgu: Option<&str>,
+) -> (usize, usize) {
+    let mut guncellenen = 0;
+    let mut atlanan = 0;
+    let Ok(girdiler) = fs::read_dir(klasor) else {
+        return (0, 0);
     };
-    let lead_metni = demo_lead(&isletme.category);
-    let hero_script = hero_animasyon_script();
-
-    format!(
-        r##"<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{ad} — {sektor}</title>
-{paylasim}
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-:root{{--accent:{vurgu}}}
-html{{scroll-behavior:smooth}}
-body{{background:#08090d}}
-.accent{{color:var(--accent)}}
-.accent-bg{{background:var(--accent);color:#08090d}}
-.glow{{position:absolute;border-radius:9999px;filter:blur(90px);opacity:.26;pointer-events:none}}
-@keyframes yuz{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(22px)}}}}
-.yuz{{animation:yuz 14s ease-in-out infinite}}
-.grid-bg{{background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:54px 54px;mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 70%)}}
-.reveal{{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}}
-.reveal.in{{opacity:1;transform:none}}
-.card{{transition:transform .2s ease,border-color .2s ease}}
-.card:hover{{transform:translateY(-4px);border-color:var(--accent)}}
-@media (prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important}}.reveal{{opacity:1;transform:none}}}}
-</style>
-<noscript><style>.reveal{{opacity:1;transform:none}}</style></noscript>
-</head>
-<body class="bg-[#08090d] text-zinc-100 antialiased">
-
-<div class="accent-bg text-center text-[11.5px] font-bold tracking-wide py-2 px-4 relative z-50">12 SAAT GEÇERLİ TASLAK DEMO — {ad} için hazırlandı</div>
-
-<header class="sticky top-0 z-40 backdrop-blur-xl bg-[#08090d]/75 border-b border-white/10">
-<div class="max-w-5xl mx-auto px-5 h-16 flex items-center gap-5">
-<a href="#ust" class="flex items-center gap-2.5 font-extrabold tracking-tight text-[15px] min-w-0">
-<span class="w-2.5 h-2.5 rounded-full accent-bg shrink-0"></span>
-<span class="truncate">{ad}</span>
-</a>
-<nav class="hidden md:flex items-center gap-6 ml-auto text-[13.5px] text-zinc-400">
-<a class="hover:text-white transition" href="#hizmetler">Hizmetler</a>
-{konum_menu}
-<a class="hover:text-white transition" href="#iletisim">İletişim</a>
-</nav>
-<a href="#iletisim" class="hidden md:inline-flex items-center rounded-full border border-white/15 px-4 py-2 text-[13px] font-semibold hover:border-white/40 transition">İletişim</a>
-<button id="menu-dugme" class="md:hidden ml-auto rounded-lg border border-white/15 px-3 py-1.5 text-sm" aria-label="Menüyü aç" aria-expanded="false">☰</button>
-</div>
-<div id="menu" class="hidden md:hidden border-t border-white/10 px-5 py-4 space-y-3 text-sm text-zinc-300">
-<a class="block" href="#hizmetler">Hizmetler</a>
-{konum_menu_mobil}
-<a class="block" href="#iletisim">İletişim</a>
-</div>
-</header>
-
-<main id="ust">
-<section id="ust-hero" class="relative overflow-hidden border-b border-white/10">
-<div class="glow yuz w-[520px] h-[520px] -top-40 -right-32" style="background:var(--accent)"></div>
-<div class="glow yuz w-[380px] h-[380px] -bottom-48 -left-24" style="background:#6d5dfc"></div>
-<div class="absolute inset-0 grid-bg"></div>
-<canvas id="vr-tuval" aria-hidden="true" class="absolute inset-0 w-full h-full pointer-events-none opacity-90"></canvas>
-<div class="relative max-w-5xl mx-auto px-5 py-20 md:py-28 min-h-[78vh] flex flex-col justify-center items-start reveal">
-<span class="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.03] px-3.5 py-1.5 text-[11px] uppercase tracking-[0.16em] accent">{sektor}{adres_eki}</span>
-<h1 class="mt-6 text-[clamp(38px,7vw,70px)] leading-[1.02] font-black tracking-tight">{ad}</h1>
-<p class="mt-5 max-w-[58ch] text-[15px] md:text-[17px] leading-relaxed text-zinc-400">{lead_metni}</p>
-<div class="mt-9 flex flex-wrap gap-3">{tel_blogu}{konum_butonu}</div>
-<div class="mt-10 flex flex-wrap gap-2.5 text-[12.5px] text-zinc-400">{cipler}</div>
-</div>
-</section>
-
-<section id="hizmetler" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
-{bolum}
-</section>
-
-{konum}
-
-<section id="iletisim" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
-<h2 class="text-2xl md:text-3xl font-black tracking-tight mb-2">İletişim</h2>
-<p class="text-zinc-400 text-[14.5px] mb-8">Adres, telefon ve çalışma saatleri aşağıda; tek tıkla arayabilirsiniz.</p>
-<div class="grid gap-4 sm:grid-cols-2">
-<div class="rounded-xl border border-white/10 bg-white/[0.02] p-5">
-<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Adres</div>
-<div class="text-[14px] leading-relaxed">{adres}</div>
-</div>
-<div class="rounded-xl border border-white/10 bg-white/[0.02] p-5">
-<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Telefon</div>
-<div class="text-[14px] leading-relaxed">{telefon_metni}</div>
-</div>
-</div>
-<div class="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5">
-<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Çalışma saatleri</div>
-{saat_satiri}
-</div>
-{karne_linki}
-</section>
-</main>
-
-<footer class="border-t border-white/10 py-10 pb-28 md:pb-10 text-[13px] text-zinc-500">
-<div class="max-w-5xl mx-auto px-5 flex flex-wrap gap-4 justify-between items-center">
-<p>Bu taslak {hazirlayan} tarafından {ad} için hazırlandı.</p>
-<p>Demo süresi: 12 saat · Kaynak: {kaynak}</p>
-</div>
-</footer>
-
-{sticky_cta}
-{durum_script}
-<script>
-const menuDugme = document.getElementById("menu-dugme");
-const menu = document.getElementById("menu");
-if (menuDugme && menu) {{
-  menuDugme.addEventListener("click", () => {{
-    const acik = menu.classList.toggle("hidden") === false;
-    menuDugme.setAttribute("aria-expanded", acik ? "true" : "false");
-  }});
-  menu.querySelectorAll("a").forEach((bag) => bag.addEventListener("click", () => {{
-    menu.classList.add("hidden");
-    menuDugme.setAttribute("aria-expanded", "false");
-  }}));
-}}
-const gozlemci = "IntersectionObserver" in window
-  ? new IntersectionObserver((girisler) => {{
-      girisler.forEach((giris) => {{
-        if (!giris.isIntersecting) return;
-        giris.target.classList.add("in");
-        gozlemci.unobserve(giris.target);
-      }});
-    }}, {{ threshold: 0, rootMargin: "0px 0px -8% 0px" }})
-  : null;
-document.querySelectorAll(".reveal").forEach((oge) => {{
-  if (gozlemci) gozlemci.observe(oge);
-  else oge.classList.add("in");
-}});
-
-const anahtar = "demo_{anahtar}";
-const baslangic = Number(localStorage.getItem(anahtar) || Date.now());
-localStorage.setItem(anahtar, baslangic);
-if (Date.now() - baslangic > 12 * 60 * 60 * 1000) {{
-  document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#18181b;color:#fff;text-align:center;padding:24px;font-family:sans-serif"><h1 style="color:#ef4444">Demo süresi doldu</h1></div>';
-}}
-</script>
-{hero_script}
-</body>
-</html>
-"##
-    )
+    for girdi in girdiler.flatten() {
+        let yol = girdi.path();
+        if yol.extension().and_then(|uzanti| uzanti.to_str()) != Some("html") {
+            continue;
+        }
+        let Some(ad) = yol.file_name().and_then(|ad| ad.to_str()) else {
+            continue;
+        };
+        if ad.starts_with("karne-") {
+            continue;
+        }
+        let Ok(html) = fs::read_to_string(&yol) else {
+            atlanan += 1;
+            continue;
+        };
+        match demo_renklerini_degistir(&html, zemin, yazi, vurgu) {
+            Some(yeni) if yeni != html => {
+                if fs::write(&yol, yeni).is_ok() {
+                    guncellenen += 1;
+                } else {
+                    atlanan += 1;
+                }
+            }
+            Some(_) => {}
+            None => atlanan += 1,
+        }
+    }
+    (guncellenen, atlanan)
 }
 
 fn demo_uret(isletme: &BusinessLead, gonderen: &str) -> Result<String, String> {
@@ -10410,7 +10647,7 @@ mod testler {
         let json = r#"{"elements":[
             {"type":"node","id":1,"lat":41.0,"lon":29.0,"tags":{"name":"Sitesiz Kafe","amenity":"cafe","phone":"+90 212 000 00 00"}},
             {"type":"node","id":2,"lat":41.1,"lon":29.1,"tags":{"name":"Siteli Kafe","amenity":"cafe","website":"https://ornek.com"}},
-            {"type":"way","id":3,"center":{"lat":41.2,"lon":29.2},"tags":{"name":"Adresli Restoran","amenity":"restaurant","addr:street":"Barbaros Bulvarı","addr:housenumber":"12"}},
+            {"type":"way","id":3,"center":{"lat":41.2,"lon":29.2},"tags":{"name":"Adresli Restoran","amenity":"restaurant","phone":"0212 111 22 33","addr:street":"Barbaros Bulvarı","addr:housenumber":"12"}},
             {"type":"node","id":4,"tags":{"amenity":"cafe"}}
         ]}"#;
 
@@ -10438,6 +10675,98 @@ mod testler {
         );
     }
 
+    #[test]
+    fn telefonsuz_kayit_musteri_adayi_degildir() {
+        // Teklif telefona gider; numarası olmayan kayıt listeye girmemeli.
+        assert!(telefon_gecerli("+90 532 123 45 67"));
+        assert!(telefon_gecerli("0212 444 62 62"), "sabit hat da geçerli");
+        assert!(!telefon_gecerli(""));
+        assert!(!telefon_gecerli("telefon yok"));
+        assert!(!telefon_gecerli("1234"));
+
+        let osm = r#"{"elements":[
+            {"type":"node","id":1,"lat":41.0,"lon":29.0,"tags":{"name":"Numaralı Kafe","amenity":"cafe","phone":"0212 444 62 62"}},
+            {"type":"node","id":2,"lat":41.0,"lon":29.1,"tags":{"name":"Numarasız Kafe","amenity":"cafe"}}
+        ]}"#;
+        let (liste, _) = overpass_isle(osm, "İstanbul", "Beşiktaş", "Kafe").expect("çözümlenmeli");
+        assert_eq!(liste.len(), 1, "telefonsuz kayıt listeye girmemeli");
+        assert_eq!(liste[0].name, "Numaralı Kafe");
+
+        let google = r#"{"places":[
+            {"id":"a","displayName":{"text":"Numaralı Kuaför"},"nationalPhoneNumber":"0216 000 00 00"},
+            {"id":"b","displayName":{"text":"Numarasız Kuaför"}}
+        ]}"#;
+        let (gliste, _) = google_isle(google, "Kuaför").expect("çözümlenmeli");
+        assert_eq!(gliste.len(), 1, "Google'da da telefonsuz kayıt elenir");
+        assert_eq!(gliste[0].name, "Numaralı Kuaför");
+    }
+
+    #[test]
+    fn onbellekteki_telefonsuz_kayit_listeye_girmez() {
+        // Kural değişmeden önce yazılmış önbellek kayıtları da süzülür.
+        let mut onbellek = SonucOnbellek::default();
+        let mut telsiz = ornek_isletme();
+        telsiz.name = "Numarasız Dükkan".to_string();
+        telsiz.phone.clear();
+        onbellek.kayitlar.insert(
+            SonucOnbellek::anahtar("İstanbul", "Beşiktaş", "Kafe"),
+            SonucKaydi {
+                tarih: bugun_anahtari(),
+                siteli: 0,
+                leads: vec![ornek_isletme(), telsiz],
+                sunucu: String::new(),
+            },
+        );
+
+        let kayit = onbellek
+            .al("İstanbul", "Beşiktaş", "Kafe")
+            .expect("önbellek kaydı dönmeli");
+        assert_eq!(kayit.leads.len(), 1, "telefonsuz kayıt önbellekten süzülür");
+        assert_eq!(kayit.leads[0].name, "Kafe <Deneme>");
+    }
+
+    #[test]
+    fn google_takviyesi_listeyi_tamamlar() {
+        let mut osm = ornek_isletme();
+        osm.name = "Deniz Kafe".to_string();
+
+        // Aynı işletme Google'da da geldi: ad aynı, bağlantı farklı.
+        let mut ayni = ornek_isletme();
+        ayni.name = "Deniz Kafe".to_string();
+        ayni.kaynak = "https://www.google.com/maps/place/?q=place_id:a".to_string();
+
+        let mut yeni = ornek_isletme();
+        yeni.name = "Yeni Fırın".to_string();
+        yeni.kaynak = "https://www.google.com/maps/place/?q=place_id:b".to_string();
+
+        let sonuc = google_takviye_ekle(vec![osm], vec![ayni, yeni]);
+        assert_eq!(sonuc.len(), 2, "aynı ad iki kez eklenmemeli");
+        assert!(sonuc.iter().any(|lead| lead.name == "Yeni Fırın"));
+        assert!(sonuc.iter().any(|lead| lead.name == "Deniz Kafe"));
+    }
+
+    #[test]
+    fn google_takviyesi_yirmi_kaydi_asmaz() {
+        let liste: Vec<BusinessLead> = (0..15)
+            .map(|sira| {
+                let mut lead = ornek_isletme();
+                lead.name = format!("OSM {sira}");
+                lead
+            })
+            .collect();
+        let gelen: Vec<BusinessLead> = (0..15)
+            .map(|sira| {
+                let mut lead = ornek_isletme();
+                lead.name = format!("Google {sira}");
+                lead.kaynak = format!("https://www.google.com/maps/place/?q=place_id:{sira}");
+                lead
+            })
+            .collect();
+
+        let sonuc = google_takviye_ekle(liste, gelen);
+        assert_eq!(sonuc.len(), SONUC_SINIRI, "20 kayıt sınırı korunmalı");
+    }
+
     fn ornek_isletme() -> BusinessLead {
         BusinessLead {
             name: "Kafe <Deneme>".to_string(),
@@ -10460,6 +10789,7 @@ mod testler {
             yayin_linki: None,
             karne_linki: None,
             mesaj_varyanti: None,
+            foto: None,
         }
     }
 
@@ -10525,6 +10855,16 @@ mod testler {
                 yayin_linki: None,
                 karne_linki: None,
                 mesaj_varyanti: None,
+                // Elle inceleme: meyhane demosuna gerçek bir Commons fotoğrafı
+                // (CC BY-SA 4.0) eklenir; fotoğrafsız hâli diğer demolar gösterir.
+                foto: if sektor == "Restoran" {
+                    Some(Foto {
+                        url: "commons:Restaurant_Näsinneula.jpg".to_string(),
+                        atif: String::new(),
+                    })
+                } else {
+                    None
+                },
             };
             let dosya = demo_dosya_adi(&lead);
             let demo_yolu = format!("demos/{dosya}");
@@ -11029,9 +11369,9 @@ mod testler {
     #[test]
     fn sosyal_medyali_kayit_listeye_girer() {
         let json = r#"{"elements":[
-            {"type":"node","id":10,"lat":41.0,"lon":29.0,"timestamp":"2026-09-01T12:00:00Z","tags":{"name":"Instagram Kafe","amenity":"cafe","website":"https://instagram.com/instagramkafe"}},
-            {"type":"node","id":11,"lat":41.0,"lon":29.1,"tags":{"name":"Site Sahibi","amenity":"cafe","website":"https://kafesitesi.com"}},
-            {"type":"node","id":12,"lat":41.0,"lon":29.2,"tags":{"name":"Facebook Berber","shop":"hairdresser","contact:facebook":"https://facebook.com/berber"}}
+            {"type":"node","id":10,"lat":41.0,"lon":29.0,"timestamp":"2026-09-01T12:00:00Z","tags":{"name":"Instagram Kafe","amenity":"cafe","phone":"+90 532 000 00 01","website":"https://instagram.com/instagramkafe"}},
+            {"type":"node","id":11,"lat":41.0,"lon":29.1,"tags":{"name":"Site Sahibi","amenity":"cafe","phone":"+90 532 000 00 02","website":"https://kafesitesi.com"}},
+            {"type":"node","id":12,"lat":41.0,"lon":29.2,"tags":{"name":"Facebook Berber","shop":"hairdresser","phone":"+90 532 000 00 03","contact:facebook":"https://facebook.com/berber"}}
         ]}"#;
 
         let (liste, siteli) =
@@ -11050,6 +11390,221 @@ mod testler {
         assert!(
             instagram.son_guncelleme_gun.is_some(),
             "OSM timestamp gün sayısına çevrilmeli"
+        );
+    }
+
+    #[test]
+    fn demo_renkleri_degistirilir_icerik_korunur() {
+        let html = "<!DOCTYPE html>\n<html lang=\"tr\">\n<head><meta name=\"theme-color\" content=\"#e8a33d\">\
+<style>:root{--accent:#e8a33d;--accent-karsi:#12100e;--bg:#08080a;--ink:#f5f3ef;--f-baslik:x}</style>\
+</head><body><h1>Ateşin dili</h1></body></html>";
+
+        let yeni = demo_renklerini_degistir(html, "#f4efe5", "#1b1a17", Some("#b4551f"))
+            .expect("kök renkler bulunmalı");
+        assert!(yeni.contains("--bg:#f4efe5"), "zemin değişti");
+        assert!(yeni.contains("--ink:#1b1a17"), "yazı rengi değişti");
+        assert!(yeni.contains("--accent:#b4551f"), "vurgu değişti");
+        assert!(
+            yeni.contains("--accent-karsi:#f8f5f0"),
+            "koyu vurgu üzerinde açık yazı"
+        );
+        assert!(yeni.contains("--f-baslik:x"), "diğer değişkenler korunur");
+        assert!(yeni.contains("Ateşin dili"), "içerik korunur");
+        assert!(
+            yeni.contains("<html lang=\"tr\" class=\"tema-acik\">"),
+            "açık zeminde tema sınıfı eklenir"
+        );
+        assert!(
+            yeni.contains("content=\"#b4551f\""),
+            "tarayıcı çubuğu rengi de güncellenir"
+        );
+    }
+
+    #[test]
+    fn karanlik_zemine_donunce_tema_sinifi_kalkar() {
+        let html = "<html lang=\"tr\" class=\"tema-acik\">\
+<style>:root{--accent:#b4551f;--accent-karsi:#f8f5f0;--bg:#f4efe5;--ink:#1b1a17;}</style></html>";
+        let yeni = demo_renklerini_degistir(html, "#08080a", "#f5f3ef", None)
+            .expect("kök renkler bulunmalı");
+        assert!(
+            yeni.contains("<html lang=\"tr\">"),
+            "koyu temada sınıf kaldırılır"
+        );
+        assert!(!yeni.contains("tema-acik\">"), "sınıf kalmamalı");
+    }
+
+    #[test]
+    fn kok_rengi_olmayan_sayfa_atlanir() {
+        let html = "<html><body>elle yazılmış sayfa</body></html>";
+        assert!(demo_renklerini_degistir(html, "#f4efe5", "#1b1a17", None).is_none());
+    }
+
+    #[test]
+    fn demolari_renklendir_sadece_demolari_yazar() {
+        let kok = std::env::temp_dir().join(format!("renk-testi-{}", std::process::id()));
+        let demos = kok.join("demos");
+        fs::create_dir_all(&demos).expect("klasör");
+        let demo = demos.join("kafe-1.html");
+        fs::write(
+            &demo,
+            "<html lang=\"tr\"><style>:root{--accent:#e8a33d;--accent-karsi:#12100e;--bg:#08080a;--ink:#f5f3ef;}</style></html>",
+        )
+        .expect("demo");
+        let karne = demos.join("karne-kafe-1.html");
+        fs::write(
+            &karne,
+            "<html><style>:root{--accent:#123456;}</style></html>",
+        )
+        .expect("karne");
+        let yabanci = demos.join("notlar.html");
+        fs::write(&yabanci, "<html>not</html>").expect("not");
+
+        let (guncellenen, atlanan) =
+            demolari_renklendir(demos.to_str().expect("yol"), "#f4efe5", "#1b1a17", None);
+        assert_eq!(guncellenen, 1, "yalnız demo güncellenir");
+        assert_eq!(atlanan, 1, "kök rengi olmayan sayfa atlanır");
+
+        let okunan = fs::read_to_string(&demo).expect("demo okunur");
+        assert!(okunan.contains("--bg:#f4efe5"), "yeni zemin yazıldı");
+        assert!(
+            fs::read_to_string(&karne)
+                .expect("karne")
+                .contains("--accent:#123456"),
+            "karne dosyasına dokunulmaz"
+        );
+        let _ = fs::remove_dir_all(&kok);
+    }
+
+    #[test]
+    fn gercek_demo_dosyasi_yeniden_renklendirilir() {
+        let kaynak = std::path::Path::new("demos/bogazici-meyhane-101.html");
+        if !kaynak.exists() {
+            return; // demolar üretilmemişse atlanır
+        }
+        let kok = std::env::temp_dir().join(format!("gercek-demo-{}", std::process::id()));
+        fs::create_dir_all(&kok).expect("klasör");
+        let hedef = kok.join("meyhane.html");
+        fs::copy(kaynak, &hedef).expect("kopya");
+
+        let (guncellenen, atlanan) = demolari_renklendir(
+            kok.to_str().expect("yol"),
+            "#08130f",
+            "#eef7f1",
+            Some("#3ecf8e"),
+        );
+        assert_eq!((guncellenen, atlanan), (1, 0), "tek demo güncellenir");
+
+        let html = fs::read_to_string(&hedef).expect("okunur");
+        assert!(html.contains("--bg:#08130f"), "zemin yazıldı");
+        assert!(html.contains("--ink:#eef7f1"), "yazı rengi yazıldı");
+        assert!(html.contains("--accent:#3ecf8e"), "vurgu yazıldı");
+        assert!(
+            html.contains("<html lang=\"tr\">"),
+            "koyu zeminde açık tema sınıfı kalkar"
+        );
+        // Yazı tipi yığını ve metin içeriği renk değişiminden etkilenmez.
+        assert!(html.contains("Space Grotesk"), "font yığını korunur");
+        assert!(html.contains("--f-govde:"), "gövde font değişkeni korunur");
+        assert!(html.len() > 3000, "sayfa içeriği korunur");
+
+        let _ = fs::remove_dir_all(&kok);
+    }
+
+    #[test]
+    fn bugun_sirasi_karalisteyi_ve_gonderilenleri_atlar() {
+        let mut cep = ornek_isletme();
+        cep.name = "Cep Telefonlu".to_string();
+        let mut sabit = ornek_isletme();
+        sabit.name = "Sabit Hatlı".to_string();
+        sabit.phone = "+90 212 444 62 62".to_string();
+        let mut telsiz = ornek_isletme();
+        telsiz.name = "Telefonsuz".to_string();
+        telsiz.phone.clear();
+        let mut retli = ornek_isletme();
+        retli.name = "Ret Veren".to_string();
+        retli.durum = musteriler::Durum::Reddetti;
+        let mut gonderilmis = ornek_isletme();
+        gonderilmis.name = "Bugün Yazılan".to_string();
+
+        let liste = vec![cep, sabit, telsiz, retli, gonderilmis];
+        let sira = bugun_sirasi(&liste, 15, |lead| lead.name == "Bugün Yazılan");
+        assert_eq!(
+            sira,
+            vec![0, 1],
+            "telefonu olan, kara listede olmayan ve bugün yazılmamış olanlar"
+        );
+
+        // Günlük hak daralınca liste kesilir.
+        assert_eq!(bugun_sirasi(&liste, 1, |_| false), vec![0]);
+        assert!(bugun_sirasi(&liste, 0, |_| false).is_empty(), "hak kalmadı");
+    }
+
+    #[test]
+    fn sabit_hat_ile_cep_numarasi_ayrilir() {
+        assert!(mobil_numara("+90 532 123 45 67"), "cep numarası");
+        assert!(mobil_numara("0532 123 45 67"), "başında sıfır");
+        assert!(mobil_numara("5321234567"), "yalnız rakam");
+        assert!(!mobil_numara("+90 212 444 62 62"), "İstanbul sabit hat");
+        assert!(!mobil_numara("0312 222 33 44"), "Ankara sabit hat");
+        assert!(!mobil_numara(""), "boş numara");
+    }
+
+    #[test]
+    fn uzun_mesaj_baglanti_sinirinda_kirpilir() {
+        let kisa = "Merhaba, siteniz hazır.";
+        assert_eq!(mesaj_sinirla(kisa), kisa, "kısa mesaj değişmez");
+
+        let uzun = "a".repeat(MESAJ_SINIRI + 50);
+        let kirpilan = mesaj_sinirla(&uzun);
+        assert_eq!(
+            kirpilan.chars().count(),
+            MESAJ_SINIRI + 1,
+            "sınırda kesilip üç nokta eklenir"
+        );
+        assert!(kirpilan.ends_with('…'));
+    }
+
+    #[test]
+    fn hazir_mesaj_baglantiya_sigar() {
+        let mesaj = whatsapp_mesaji(&ornek_isletme());
+        assert!(
+            mesaj.chars().count() <= MESAJ_SINIRI,
+            "mesaj {} karakter; sınır {MESAJ_SINIRI}",
+            mesaj.chars().count()
+        );
+    }
+
+    #[test]
+    fn arayuz_acik_tema() {
+        // Beyaz zemin + koyu yeşil vurgu; vurgu üzerindeki yazı beyaz.
+        assert!(
+            ARKA_PLAN.r() > 230 && ARKA_PLAN.g() > 230 && ARKA_PLAN.b() > 230,
+            "sayfa zemini açık olmalı"
+        );
+        assert_eq!(KART, egui::Color32::WHITE, "kartlar beyaz");
+        assert!(
+            VURGU.g() > VURGU.r() && VURGU.g() > VURGU.b(),
+            "vurgu yeşil olmalı"
+        );
+        assert!(VURGU.g() < 140, "vurgu koyu yeşil olmalı");
+        assert_eq!(KOYU_YAZI, egui::Color32::WHITE, "vurgu üzerinde beyaz yazı");
+        assert!(
+            METIN.r() < 80 && METIN.g() < 80 && METIN.b() < 80,
+            "metin koyu olmalı"
+        );
+    }
+
+    #[test]
+    fn ton_beyaza_koyu_murekkebe_gider() {
+        let acik = ton(VURGU, 0.12);
+        assert!(
+            acik.r() > 200 && acik.g() > 200 && acik.b() > 200,
+            "ton açık bir dolgu üretmeli"
+        );
+        let koyu_renk = koyu(VURGU, 0.45);
+        assert!(
+            koyu_renk.r() < VURGU.r() + 40 && koyu_renk.g() < VURGU.g(),
+            "koyu() rengi metin yönünde koyulaştırmalı"
         );
     }
 
@@ -11199,6 +11754,7 @@ mod testler {
     fn kayitli_numara_acilista_yuklenir() {
         let ayar = UygulamaAyari {
             whatsapp_phone: "+90 532 123 45 67".to_string(),
+            ..UygulamaAyari::default()
         };
         let (telefon, durum, bagli) = whatsapp_baslangic(&ayar);
         assert_eq!(telefon, "+90 532 123 45 67");
@@ -11226,10 +11782,17 @@ mod testler {
 
         let ayar = UygulamaAyari {
             whatsapp_phone: "+90 532 123 45 67".to_string(),
+            demo_vurgu: "#5b8cff".to_string(),
+            demo_zemin: "#f6f1e7".to_string(),
+            demo_yazi: "#1b1a17".to_string(),
         };
         ayar_yaz_yoldan(&yol, &ayar).expect("ayar yazılmalı");
         let okunan = ayar_oku_yoldan(&yol);
         assert_eq!(okunan.whatsapp_phone, "+90 532 123 45 67");
+        // Renk seçimleri de kalıcı: yeni açılışta demolara uygulanır.
+        assert_eq!(okunan.demo_zemin, "#f6f1e7");
+        assert_eq!(okunan.demo_vurgu, "#5b8cff");
+        assert_eq!(okunan.demo_yazi, "#1b1a17");
         assert_eq!(
             whatsapp_numarasi(&okunan.whatsapp_phone).as_deref(),
             Some("905321234567")
@@ -11283,13 +11846,13 @@ mod testler {
     fn demo_html_iskelet_bilesenlerini_icerir() {
         let html = demo_html(&ornek_isletme(), "+90 500 111 22 33");
         // Sabit menü, mobil menü ve alt arama düğmesi (mobilde tek dokunuş).
-        assert!(html.contains("sticky top-0"), "sabit menü olmalı");
+        assert!(html.contains("class=\"ust\""), "sabit menü olmalı");
         assert!(
-            html.contains("id=\"menu-dugme\""),
+            html.contains("id=\"mobil-dugme\""),
             "mobil menü düğmesi olmalı"
         );
-        assert!(html.contains("id=\"menu\""));
-        assert!(html.contains("md:hidden fixed inset-x-4 bottom-4"));
+        assert!(html.contains("id=\"mobil-menu\""));
+        assert!(html.contains("class=\"mobil-cta\""));
         // Sektör rengi CSS değişkeni olarak gömülür.
         assert!(html.contains("--accent:#"), "sektör rengi gömülmeli");
         // Scroll animasyonu ve hareket azaltma tercihi.
@@ -11300,58 +11863,257 @@ mod testler {
     }
 
     #[test]
-    fn demo_hero_kaydirma_animasyonu_disaridan_bagimli_degil() {
+    fn demo_fontlari_gomulu_ve_disaridan_bagimsiz() {
         let html = demo_html(&ornek_isletme(), "");
-        // Canvas + hero kimliği: kaydırma ilerlemesi bu bölümden ölçülür.
-        assert!(html.contains("id=\"vr-tuval\""), "canvas tuvali olmalı");
+        assert!(html.contains("@font-face{font-family:'Space Grotesk'"));
+        assert!(html.contains("@font-face{font-family:'Inter'"));
         assert!(
-            html.contains("id=\"ust-hero\""),
-            "hero bölümü kimlikli olmalı"
+            html.contains("data:font/woff2;base64,"),
+            "font gömülü olmalı"
         );
-        // Animasyon betiği ücretsiz ve çevrimdışı: dış istek yok.
-        let betik_basi = html
-            .find("var tuval = document.getElementById")
-            .expect("betik");
-        let betik = &html[betik_basi..];
-        assert!(
-            !betik.contains("http"),
-            "animasyon dış kaynak çağırmamalı: {betik}"
-        );
-        assert!(!betik.contains("<video"), "video dosyası gerekmez");
-        // Hareket azaltma tercihi ve sekme dışındayken durma korunur.
-        assert!(betik.contains("prefers-reduced-motion"));
-        assert!(betik.contains("IntersectionObserver"));
-        // Sektör rengi animasyonda da kullanılır.
-        assert!(betik.contains("--accent"));
+        assert!(!html.contains("fonts.googleapis.com"));
+        assert!(!html.contains("fonts.gstatic.com"));
+        assert!(html.contains("--f-baslik:'Space Grotesk'"));
+        assert!(html.contains("font-family:var(--f-govde)"));
+        // Gömülü veri gerçekten font boyutunda olmalı (boş yer tutucu değil).
+        let basi = html.find("base64,").expect("base64");
+        let govde = &html[basi..basi + 20_000.min(html.len() - basi)];
+        assert!(govde.len() > 10_000, "gömülü font çok kısa");
+        // Base64 kodlayıcı bilinen bir vektörü doğru üretir.
+        assert_eq!(base64_kodla(b"Merhaba"), "TWVyaGFiYQ==");
+        assert_eq!(base64_kodla(b"a"), "YQ==");
+        assert_eq!(base64_kodla(b"ab"), "YWI=");
+        assert_eq!(base64_kodla(b"abc"), "YWJj");
     }
 
     #[test]
-    fn demo_slogani_sektore_gore_bolum_soyler() {
-        assert!(demo_lead("Restoran").starts_with("Menü"));
-        assert!(demo_lead("Kuaför").starts_with("Hizmetler ve randevu"));
-        assert!(demo_lead("Otel").starts_with("Odalar"));
-        assert!(demo_lead("Dil Kursu").starts_with("Kurslar"));
-        assert!(demo_lead("Diş Kliniği").starts_with("Hizmetler"));
-        // İşletme hakkında doğrulanmamış iddia yazılmaz.
-        let metin = demo_lead("Restoran");
-        assert!(!metin.contains("en iyi") && !metin.contains("taze malzeme"));
+    fn demo_fener_efekti_yalniz_fare_ve_harekette_calisir() {
+        let html = demo_html(&ornek_isletme(), "");
+        assert!(html.contains("id=\"fener\""), "fener katmanı olmalı");
+        assert!(html.contains("#fener"));
+        assert!(
+            html.contains("(hover: hover) and (pointer: fine)"),
+            "dokunmatikte kapalı olmalı"
+        );
+        let basi = html
+            .find("var fener = document.getElementById")
+            .expect("fener betiği");
+        let betik = &html[basi..];
+        assert!(
+            betik.contains("pointerType === \"touch\""),
+            "dokunmayı atlamalı"
+        );
+        assert!(html.contains("prefers-reduced-motion"));
+        assert!(!betik.contains("http"), "dış kaynak çağırmamalı");
+    }
+
+    /// Renklendirme paneli demo sayfasına gerçekten yansıyor mu?
+    fn ornek_girdi(zemin: &str, yazi: &str) -> demo_site::Girdi {
+        demo_site::Girdi {
+            ad: "Deneme Kafe".to_string(),
+            adres: "Cihangir, Beyoğlu / İstanbul".to_string(),
+            sektor: "Kafe".to_string(),
+            tur: "kafe",
+            vurgu: "#e8a33d".to_string(),
+            zemin: zemin.to_string(),
+            yazi: yazi.to_string(),
+            foto: None,
+            foto_atif: None,
+            telefon: Some("905321234567".to_string()),
+            telefon_goster: "+90 532 123 45 67".to_string(),
+            konum: Some((41.03, 28.98)),
+            program: None,
+            saat_metni: String::new(),
+            saat_satirlari: Vec::new(),
+            puan: None,
+            yorum: None,
+            karne: None,
+            kaynak: "OpenStreetMap".to_string(),
+            gonderen: "Nexus".to_string(),
+            anahtar: "deneme".to_string(),
+            font_css: font_css(),
+        }
     }
 
     #[test]
-    fn demo_cipleri_yalniz_dolu_ozellikleri_yazar() {
+    fn renk_secimi_demoya_uygulanir() {
+        let koyu = demo_site::uret(&ornek_girdi("#08080a", "#f5f3ef"));
+        assert!(koyu.contains("--bg:#08080a") && koyu.contains("--ink:#f5f3ef"));
+        assert!(
+            !koyu.contains("class=\"tema-acik\""),
+            "koyu zeminde açık tema sınıfı olmamalı"
+        );
+        // Fotoğraf yoksa soyut kompozisyon kullanılır, <img> eklenmez.
+        assert!(!koyu.contains("<img"));
+
+        let acik = demo_site::uret(&ornek_girdi("#f6f1e7", "#1b1a17"));
+        assert!(acik.contains("--bg:#f6f1e7") && acik.contains("--ink:#1b1a17"));
+        assert!(
+            acik.contains("class=\"tema-acik\""),
+            "açık zeminde harita/ışık katmanları uyarlanmalı"
+        );
+        // Renk dışında hiçbir şey değişmiyor: aynı bölümler, aynı hareket.
+        for katman in ["data-rise", "data-par", "id=\"fener\"", "class=\"akis\""] {
+            assert!(koyu.contains(katman) && acik.contains(katman), "{katman}");
+        }
+    }
+
+    #[test]
+    fn gecersiz_renk_varsayilana_doner() {
+        assert_eq!(gecerli_renk("#5B8CFF", DEMO_ZEMIN), "#5b8cff");
+        assert_eq!(gecerli_renk("mavi", DEMO_ZEMIN), DEMO_ZEMIN);
+        assert_eq!(gecerli_renk("#12345", DEMO_YAZI), DEMO_YAZI);
+        assert_eq!(gecerli_renk("", DEMO_YAZI), DEMO_YAZI);
+        // Renk seçici dönüşümü iki yönlü çalışır.
+        assert_eq!(renk_yaz(renk_coz("#5b8cff")), "#5b8cff");
+    }
+
+    #[test]
+    fn en_iyi_foto_yatay_ve_buyuk_olanı_secer() {
+        let fotolar = serde_json::json!([
+            { "name": "places/x/photos/dikey", "widthPx": 900, "heightPx": 1600 },
+            { "name": "places/x/photos/yatay-kucuk", "widthPx": 800, "heightPx": 600 },
+            { "name": "places/x/photos/yatay-buyuk", "widthPx": 1600, "heightPx": 1200 }
+        ]);
+        let secilen = en_iyi_foto(Some(&fotolar)).expect("fotoğraf seçilmeli");
+        assert_eq!(secilen.url, "google:places/x/photos/yatay-buyuk");
+        assert!(secilen.atif.contains("Google"), "atıf korunmalı");
+    }
+
+    #[test]
+    fn foto_bilgisi_yoksa_uydurulmaz() {
+        assert!(en_iyi_foto(None).is_none(), "fotoğraf listesi yok");
+        assert!(
+            en_iyi_foto(Some(&serde_json::json!([]))).is_none(),
+            "boş liste"
+        );
+        let adsiz = serde_json::json!([{ "widthPx": 1200, "heightPx": 800 }]);
+        assert!(en_iyi_foto(Some(&adsiz)).is_none(), "adı olmayan fotoğraf");
+    }
+
+    #[test]
+    fn durum_gostergesi_tema_renklerini_kullanir() {
+        let html = demo_html(&ornek_isletme(), "+90 500 000 00 00");
+        assert!(
+            html.contains("--accent-karsi:"),
+            "vurgu üzerindeki yazı ayrı renkte olmalı"
+        );
+        assert!(
+            html.contains(".durum-metin.acik") && html.contains(".tema-acik .durum-metin.acik"),
+            "açık/kapalı yazısı temaya göre renklenmeli"
+        );
+        assert!(
+            !html.contains("metin.style.color"),
+            "satır içi renk yazılmamalı; sınıf kullanılmalı"
+        );
+        assert!(
+            !html.contains("#fb7185"),
+            "kapalı durumu için sabit kırmızı kullanılmamalı"
+        );
+    }
+
+    #[test]
+    fn foto_etiketi_osm_kayitlarini_cozer() {
+        let commons = serde_json::json!({
+            "wikimedia_commons": "File:Restaurant room.jpg",
+            "image": "https://ornek.com/foto.jpg"
+        });
+        let foto = foto_etiketi(&commons).expect("commons fotoğrafı");
+        assert_eq!(foto.url, "commons:Restaurant_room.jpg");
+
+        let dogrudan = serde_json::json!({ "image": "https://ornek.com/foto.jpg" });
+        assert_eq!(
+            foto_etiketi(&dogrudan).map(|foto| foto.url),
+            Some("https://ornek.com/foto.jpg".to_string())
+        );
+
+        // Etiket yoksa uydurma fotoğraf üretilmez.
+        assert!(foto_etiketi(&serde_json::json!({ "name": "Kafe" })).is_none());
+        assert!(foto_etiketi(&serde_json::json!({ "image": "yerel.jpg" })).is_none());
+    }
+
+    #[test]
+    fn foto_mime_icerikten_okunur() {
+        assert_eq!(foto_mime(&[0xFF, 0xD8, 0xFF, 0x00]), Some("image/jpeg"));
+        assert_eq!(
+            foto_mime(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A]),
+            Some("image/png")
+        );
+        let mut webp = b"RIFF".to_vec();
+        webp.extend_from_slice(&[0, 0, 0, 0]);
+        webp.extend_from_slice(b"WEBP");
+        assert_eq!(foto_mime(&webp), Some("image/webp"));
+        assert_eq!(foto_mime(b"<html>"), None);
+    }
+
+    #[test]
+    fn demo_hareket_katmanlari_disaridan_bagimli_degil() {
+        let html = demo_html(&ornek_isletme(), "");
+        // Dış istek yok: CSS, JS ve fontlar sayfanın içinde.
+        assert!(!html.contains("cdn.tailwindcss.com"), "CDN kullanılmamalı");
+        assert!(!html.contains("fonts.googleapis.com"));
+        // Tek dış kaynak gömülü harita çerçevesi olabilir; görsel/betik yok.
+        assert!(!html.contains("<img"), "görsel dış sunucudan gelmemeli");
+        assert_eq!(
+            html.matches("src=\"http").count(),
+            html.matches("src=\"https://www.openstreetmap.org").count(),
+            "dış kaynak yalnızca harita olmalı"
+        );
+        // Hareket katmanları: açılım, parallax, akan şerit, imleç ışığı.
+        assert!(html.contains("class=\"hero\""));
+        assert!(html.contains("data-rise"));
+        assert!(html.contains("data-par"));
+        assert!(html.contains("class=\"akis\""));
+        assert!(html.contains("id=\"fener\""));
+        assert!(html.contains("(hover: hover) and (pointer: fine)"));
+        // Erişilebilirlik: hareket azaltma tercihi ve menü durumu.
+        assert!(html.contains("prefers-reduced-motion"));
+        assert!(html.contains("aria-expanded"));
+    }
+
+    #[test]
+    fn demo_sektore_gore_icerik_uretir() {
         let mut lead = ornek_isletme();
-        lead.phone.clear();
-        let cipler = demo_cipleri(&lead, false, false);
-        assert!(cipler.contains("Mobil uyumlu"));
-        assert!(!cipler.contains("Tek tıkla arama"));
-        assert!(!cipler.contains("Harita gömülü"));
+        lead.category = "Restoran".to_string();
+        let restoran = demo_html(&lead, "");
+        assert!(restoran.contains("Ateşin ve sofranın"));
+        assert!(restoran.contains("Adana kebap"));
+
+        lead.category = "Kuaför".to_string();
+        let kuafor = demo_html(&lead, "");
+        assert!(kuafor.contains("Aynaya bakmadan"));
+        assert!(kuafor.contains("Boya &amp; röfle"));
+
+        lead.category = "Diş Kliniği".to_string();
+        let klinik = demo_html(&lead, "");
+        assert!(klinik.contains("Tedavi planı"));
+
+        assert_ne!(restoran, kuafor);
+        assert_ne!(restoran, klinik);
+    }
+
+    #[test]
+    fn demo_eksik_veride_uydurma_puan_yazmaz() {
+        let mut bos = ornek_isletme();
+        bos.phone.clear();
+        bos.konum = None;
+        bos.calisma_saatleri.clear();
+        bos.yildiz_puani = None;
+        bos.inceleme_sayisi = None;
+        let html = demo_html(&bos, "");
+        assert!(!html.contains("★"), "puan yoksa yıldız gösterilmemeli");
+        assert!(
+            !html.contains("export/embed.html"),
+            "konum yoksa harita yok"
+        );
+        assert!(html.contains("Telefonla öğrenin"), "saat yoksa yönlendirme");
+        assert!(!html.contains("tel:+"), "telefon yoksa arama düğmesi yok");
 
         let mut dolu = ornek_isletme();
-        dolu.phone = "+90 532 123 45 67".to_string();
-        let cipler = demo_cipleri(&dolu, true, true);
-        assert!(cipler.contains("Tek tıkla arama"));
-        assert!(cipler.contains("Harita gömülü"));
-        assert!(cipler.contains("Açık/kapalı göstergesi"));
+        dolu.yildiz_puani = Some(4.6);
+        dolu.inceleme_sayisi = Some(312);
+        let html = demo_html(&dolu, "");
+        assert!(html.contains("4,6 ★") && html.contains("312 yorum"));
     }
 
     #[test]
@@ -11365,7 +12127,8 @@ mod testler {
         let html = demo_html(&ornek_isletme(), "+90 500 111 22 33");
         assert!(html.contains("Kafe &lt;Deneme&gt;"));
         assert!(html.contains("tel:+905321234567"));
-        assert!(html.contains("Demo süresi: 12 saat"));
+        assert!(html.contains("Taslak demo"));
+        assert!(html.contains("suresi-doldu"), "12 saat sınırı korunmalı");
         assert!(
             html.contains("Menü"),
             "restoran demosunda menü bölümü olmalı"
@@ -11374,41 +12137,16 @@ mod testler {
             html.contains("export/embed.html") && html.contains("marker=41.04285,29.00753"),
             "konum varsa gömülü harita olmalı"
         );
-        assert!(html.contains("Pzt-Cum 09:00-18:00 · Cmt 10:00-16:00"));
-        assert!(
-            html.contains("id=\"acik-durum\""),
-            "açık/kapalı satırı olmalı"
-        );
-        assert!(
-            html.contains("const program ="),
-            "haftalık program JS'e gömülmeli"
-        );
-        assert!(
-            html.contains("setInterval(durumGuncelle, 60000)"),
-            "gösterge dakikada bir güncellenmeli"
-        );
-        assert!(
-            html.contains("kalanMetni"),
-            "kapanışa kalan süre hesaplanmalı"
-        );
+        // Saatler gün gün tabloya yazılır.
+        assert!(html.contains("09:00–18:00") && html.contains("Pazar"));
+        // Açık/kapalı göstergesi dakikada bir tazelenir.
+        assert!(html.contains("setInterval(durumHesapla, 60000)"));
+        assert!(html.contains("kalanMetni"));
         assert!(
             html.contains("\" gün\"") && html.contains("/ 1440"),
             "bir günden uzun süreler gün olarak yazılmalı"
         );
-        assert!(
-            html.contains("Kapanmak üzere") && html.contains("text-amber-400"),
-            "kapanışa 15 dk kala turuncu uyarı olmalı"
-        );
-
-        let mut konumsuz = ornek_isletme();
-        konumsuz.konum = None;
-        konumsuz.calisma_saatleri = String::new();
-        let sade = demo_html(&konumsuz, "");
-        assert!(
-            !sade.contains("export/embed.html"),
-            "konum yoksa harita eklenmemeli"
-        );
-        assert!(!sade.contains("🕒"), "saat yoksa satır eklenmemeli");
+        assert!(html.contains("Kapanmak üzere"), "15 dk uyarısı olmalı");
     }
 
     #[test]
@@ -11751,31 +12489,43 @@ mod testler {
         let mut belirsiz = ornek_isletme();
         belirsiz.calisma_saatleri = "Mo-Fr sunrise-sunset".to_string();
         assert!(
-            !demo_html(&belirsiz, "").contains("id=\"acik-durum\""),
+            !demo_html(&belirsiz, "").contains("var PROGRAM = ["),
             "çözülemeyen saatlerde gösterge eklenmemeli"
         );
     }
 
     #[test]
-    fn demo_bolumu_sektore_gore_degisir() {
-        let restoran = demo_bolumu("Restoran");
-        assert!(restoran.contains("Menü") && restoran.contains("Günün Çorbası"));
-
-        let kuaför = demo_bolumu("Kuaför");
-        assert!(kuaför.contains("Galeri") && kuaför.contains("Saç Kesimi"));
-
-        let klinik = demo_bolumu("Diş Kliniği");
-        assert!(klinik.contains("Hizmetlerimiz") && klinik.contains("Randevu"));
-
-        let firin = demo_bolumu("Fırın");
-        assert!(firin.contains("Ürünlerimiz") && firin.contains("Taze Üretim"));
-
-        let otel = demo_bolumu("Pansiyon");
-        assert!(otel.contains("Odalar ve Konaklama"));
-
-        assert_ne!(restoran, kuaför);
-        assert_ne!(restoran, firin);
-        assert_ne!(kuaför, klinik);
+    fn demo_sektor_sablonlari_birbirinden_farkli() {
+        let sektorler = [
+            "Restoran",
+            "Kafe",
+            "Fırın",
+            "Kuaför",
+            "Diş Kliniği",
+            "Otel",
+            "Dil Kursu",
+            "Avukat",
+            "Çekici",
+            "Düğün Salonu",
+            "Giyim Mağazası",
+        ];
+        let mut ciktilar = Vec::new();
+        for sektor in sektorler {
+            let mut lead = ornek_isletme();
+            lead.category = sektor.to_string();
+            let html = demo_html(&lead, "");
+            assert!(html.len() > 4000, "{sektor} demosu çok kısa");
+            ciktilar.push((sektor, html));
+        }
+        for i in 0..ciktilar.len() {
+            for j in (i + 1)..ciktilar.len() {
+                assert_ne!(
+                    ciktilar[i].1, ciktilar[j].1,
+                    "{} ile {} aynı sayfayı üretiyor",
+                    ciktilar[i].0, ciktilar[j].0
+                );
+            }
+        }
     }
 
     #[test]
@@ -12058,7 +12808,7 @@ mod testler {
                 tanim.ad
             );
             assert!(
-                !demo_bolumu(tanim.ad).is_empty(),
+                !demo_turu_adi(tanim.ad).is_empty(),
                 "demo bölümü yok: {}",
                 tanim.ad
             );
@@ -12187,7 +12937,7 @@ mod testler {
                 "{ad} eşlemesi: {kurallar:?}"
             );
             assert!(sektor_grubu(ad) != "Diğer", "{ad} grubu tanımsız");
-            assert!(!demo_bolumu(ad).is_empty(), "{ad} demo şablonu yok");
+            assert!(!demo_turu_adi(ad).is_empty(), "{ad} demo şablonu yok");
         }
         assert!(
             SEKTORLER.len() >= 315,
@@ -12291,7 +13041,7 @@ mod testler {
                 "Wednesday: 9:00 AM – 6:00 PM","Thursday: 9:00 AM – 6:00 PM",
                 "Friday: 9:00 AM – 6:00 PM","Saturday: 10:00 AM – 2:00 PM","Sunday: Closed"]}},
             {"id":"def","displayName":{"text":"Siteli Kuaför"},"websiteUri":"https://ornek.com"},
-            {"id":"ghi","displayName":{"text":"Gece Kuaförü"},"formattedAddress":"X"}
+            {"id":"ghi","displayName":{"text":"Gece Kuaförü"},"formattedAddress":"X","nationalPhoneNumber":"0555 000 00 00"}
         ]}"#;
         let (liste, siteli) = google_isle(ham, "Kuaför").expect("yanıt çözümlenmeli");
         assert_eq!(siteli, 1, "web siteli kayıt ayıklandı");

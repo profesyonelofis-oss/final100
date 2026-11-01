@@ -11,19 +11,32 @@ Depoda iki ayrı uygulama var:
 
 ## İşletme Keşif — masaüstü uygulaması
 
+Arayüz açık temadır: beyaz paneller, koyu yeşil vurgu (#14663d) ve ince
+kenarlar. Uzun süre bakılan bir satış aracı olduğu için kontrast gözetildi;
+vurgu zeminler üzerindeki yazı beyazdır.
+
 81 il ve tüm ilçeler, 47 grupta 320 sektör. Tarama OpenStreetMap (Overpass)
 üzerinden yapılır; ilçe boş dönerse Google Places yedeği devreye girer ve
-ücretsiz kota defterde sayılır. Bulunan işletme için demo sayfası, dijital
+ücretsiz kota defterde sayılır. Listeye yalnızca **telefonu olan ve gerçek web
+sitesi olmayan** işletmeler girer: numarası olmayan kayıt teklif götürülebilir
+bir müşteri sayılmaz, eleme 20'lik sınırdan önce yapılır.
+
+Overpass kayıtları telefonu seyrek taşıdığı (ölçüm: 100 sitesiz cafenin
+yalnızca 4'ünde numara var) hibrit taramada OSM listesi **8 kaydın altında**
+kalırsa Google'dan tamamlanır; tarama başına en fazla 5 ilçe için. Takviyeli
+liste önbelleğe yazılır, aynı ilçe tekrar taranınca kota ikinci kez harcanmaz. Bulunan işletme için demo sayfası, dijital
 görünürlük karnesi ve GitHub Pages yayın linki üretilir.
 
 Demo tek dosyalık bir sayfadır: sabit cam menü, sektöre göre renklenen
 animasyonlu hero, mobil menü, kaydırdıkça açılan bölümler ve mobilde sabit
-arama düğmesi. Ücretli araç veya API kullanmaz; sayfa kendi kendine yeter
-(yalnızca Tailwind CDN ve gömülü OSM haritası ağdan gelir).
+arama düğmesi. Kendi CSS'i ve gömülü fontu vardır; CSS/JS çatısı, CDN veya
+ücretli API kullanmaz (ağdan yalnızca gömülü OSM harita çerçevesi gelir).
+İşletmenin kendi fotoğrafı varsa (Google Places veya OSM `image` etiketi)
+indirilip sayfaya gömülür; yoksa uydurma görsel konmaz.
 
 ```bash
 cargo run                 # derle ve aç
-cargo test --all-targets  # 95 test (2 ağ testi varsayilan kapalı)
+cargo test --all-targets  # 120 test (3 ağ testi varsayılan kapalı)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
@@ -33,7 +46,10 @@ cargo fmt --all -- --check
 1. İl / ilçe / sektör seç, tara. Liste satın alma potansiyeline göre sıralanır.
 2. Karttaki WhatsApp düğmesi mesajı **önce önizler**: metin, karakter sayısı,
    link sayısı ve kalan günlük hak. Yayın linki yoksa önizlemeden önce yayınlanır.
-3. "WhatsApp'ı aç ve gönder" sohbeti hazırlar; gönderimi siz yaparsınız.
+3. "WhatsApp'ı aç ve gönder" sohbetlerini hazırlar; gönderimi siz yaparsınız.
+   WhatsApp Desktop kullananlar için **Metni kopyala** düğmesi aynı mesajı panoya alır.
+   Kayıtlı numara sabit hatsa (0212/0312...) uygulama "sabit hat" diye işaretler;
+   o numarada WhatsApp hesabı olmayabilir.
 4. "Gönderdim" işaretlenince kayıt takip kuyruğuna girer; 3 gün sonra
    "Takip kuyruğu" panelinden tek tuşla hatırlatma mesajı hazırlanır.
 5. Görüşme notu ve son gönderim tarihi sağdaki işletme detayında durur.
@@ -44,12 +60,20 @@ cargo fmt --all -- --check
    listeler; "Tahsilat" düğmesi kalan bakiyeyi ve linki içeren mesajı hazırlar.
 8. Yanlış ya da süresi geçmiş bir yayın **Yayından kaldır** ile silinir; link 404
    döner ve kayıttaki adres temizlenir.
+9. Üst şeritteki **Bugünün listesi**, potansiyele göre sıradaki işletmeleri
+   (kara liste, bugün yazılanlar ve telefondan yoksunlar hariç) günlük hak
+   kadar listeler; satırdaki **Hazırla** mesaj önizlemesini açar.
+10. Renklendirme panelindeki **Mevcut demolara uygula**, demos klasöründeki
+    üretilmiş sayfaları seçili renklerle yeniden yazar (hareket ve metin
+    değişmez; karneler kendi paletini korur).
 
 **Kurallar ve sınırlar**
 
 | Konu | Davranış |
 |---|---|
-| Günlük gönderim | En fazla **15** mesaj; sayaç defterde, yeniden başlatınca da sürer |
+| Günlük gönderim | En fazla **15** mesaj; sayaç defterde, yeniden başlatınca da sürer; kalan hak WhatsApp ayarında ve önizlemede yazar |
+| Mesaj uzunluğu | wa.me bağlantısına sığması için 900 karakterde kırpılır (fazlası "…" ile kesilir) |
+| Arama süzgeci | Telefonu olmayan ve gerçek web sitesi olan kayıt listeye alınmaz (sabit hat geçerlidir; sosyal medya hesabı site sayılmaz) |
 | Kara liste | "RET" / "Reddetti" işaretlenen işletmeye bir daha mesaj hazırlanmaz |
 | A/B denemesi | Varyant sektör içinde dengeli dağıtılır, kayıtta sabit kalır |
 | Örneklem | Kol başına 30 gönderimin altında panel "örneklem yetersiz" uyarısı verir |
