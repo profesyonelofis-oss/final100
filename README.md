@@ -32,7 +32,9 @@ python app.py
 Tarayıcıda: http://127.0.0.1:5000
 
 İlk açılışta **İlk Kurulum** ekranından yönetici kullanıcı adı/şifre oluşturulur.
-Ardından bu bilgilerle giriş yapılır.
+Şifre en az 8 karakter olmalı, bir harf ve bir rakam içermeli, kullanıcı adını
+içermemelidir; zayıf şifreler reddedilir. Aynı kural üyelik kaydında ve panelden
+şifre belirlerken de geçerlidir. Ardından bu bilgilerle giriş yapılır.
 
 ## 2) Kendi alan adınızda (domainde) yayınlama
 

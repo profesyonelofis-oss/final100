@@ -98,9 +98,10 @@
           {% endif %}
           <form method="post" action="/kullanici/{{ k[1] }}/sifre" class="sifre-form"
                 id="sifre-form-{{ k[1] }}" style="display:none; margin-top:8px; gap:4px;">
-            <input type="password" name="sifre" placeholder="Yeni şifre" required
-                   style="width:110px; padding:5px 6px;">
-            <input type="password" name="sifre2" placeholder="Tekrar" required
+            <input type="password" name="sifre" placeholder="Yeni şifre (8+ karakter)"
+                   required minlength="8" title="En az 8 karakter, bir harf ve bir rakam"
+                   style="width:150px; padding:5px 6px;">
+            <input type="password" name="sifre2" placeholder="Tekrar" required minlength="8"
                    style="width:90px; padding:5px 6px;">
             <button type="submit" class="btn small">Kaydet</button>
           </form>

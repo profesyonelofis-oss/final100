@@ -38,11 +38,14 @@
         <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus
                autocapitalize="none" autocorrect="off" spellcheck="false"
                autocomplete="username">
-        <label for="sifre">ŞİFRE (en az 4 karakter)</label>
-        <input type="password" id="sifre" name="sifre" required minlength="4"
+        <label for="sifre">ŞİFRE (en az 8 karakter)</label>
+        <input type="password" id="sifre" name="sifre" required minlength="8"
                autocomplete="new-password">
+        <div style="font-size:11px; color:var(--metin2); margin:-4px 0 10px;">
+          En az 8 karakter; bir harf ve bir rakam içermeli, kullanıcı adınızı içermemeli.
+        </div>
         <label for="sifre2">ŞİFRE (tekrar)</label>
-        <input type="password" id="sifre2" name="sifre2" required minlength="4"
+        <input type="password" id="sifre2" name="sifre2" required minlength="8"
                autocomplete="new-password">
         <button type="submit" class="btn">KAYIT OL (3 GÜN ÜCRETSİZ DENEME)</button>
       </form>

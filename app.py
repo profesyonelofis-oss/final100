@@ -228,6 +228,33 @@ def sifremi_unuttum():
     return render_template("sifremi_unuttum.html")
 
 
+# ---------------------------------------------------------------------------
+# Sifre gucu: ilk kurulumda olusturulan yonetici hesabi icin asgari kural.
+# Uzunluk yetse bile en cok tahmin edilen sifreler kabul edilmez.
+# ---------------------------------------------------------------------------
+
+ZAYIF_SIFRELER = {
+    "12345678", "123456789", "1234567890", "password", "passw0rd", "qwerty12",
+    "sifre123", "sifre1234", "admin123", "admin1234", "karaoglu1", "zeytin123",
+    "zeytin2024", "zeytin2025", "zeytin2026", "1q2w3e4r", "abc12345",
+}
+
+
+def sifre_kurali_hatasi(sifre, kullanici_adi=""):
+    """Yonetici sifresi icin asgari gucluluk kurali; uygunsa None doner."""
+    if len(sifre) < 8:
+        return "Sifre en az 8 karakter olmali."
+    if not any(karakter.isalpha() for karakter in sifre):
+        return "Sifre en az bir harf icermeli."
+    if not any(karakter.isdigit() for karakter in sifre):
+        return "Sifre en az bir rakam icermeli."
+    if sifre.lower() in ZAYIF_SIFRELER:
+        return "Bu sifre cok tahmin edilebilir; farkli bir sifre secin."
+    if kullanici_adi and kullanici_adi.lower() in sifre.lower():
+        return "Sifre kullanici adini icermemeli."
+    return None
+
+
 @app.route("/ilk-kurulum", methods=["GET", "POST"])
 def ilk_kurulum():
     webdb.init_db()
@@ -237,8 +264,11 @@ def ilk_kurulum():
         ad = request.form.get("kullanici_adi", "").strip()
         s1 = request.form.get("sifre", "")
         s2 = request.form.get("sifre2", "")
-        if not ad or len(s1) < 4:
-            flash("Kullanıcı adı girin, şifre en az 4 karakter olsun.", "hata")
+        kural_hatasi = sifre_kurali_hatasi(s1, ad)
+        if len(ad) < 3:
+            flash("Kullanıcı adı en az 3 karakter olmalı.", "hata")
+        elif kural_hatasi:
+            flash(kural_hatasi + " Yönetici hesabı için güçlü bir şifre belirleyin.", "hata")
         elif s1 != s2:
             flash("Şifreler birbiriyle uyuşmuyor.", "hata")
         else:
@@ -260,8 +290,11 @@ def kayit():
         cihaz_id = request.form.get("cihaz_id", "").strip()
         ip = request.remote_addr or ""
         mac = _mac_adresi_cikar()
-        if not ad or len(s1) < 4:
-            flash("Kullan\u0131c\u0131 ad\u0131 girin, \u015fifre en az 4 karakter olsun.", "hata")
+        kural_hatasi = sifre_kurali_hatasi(s1, ad)
+        if len(ad) < 3:
+            flash("Kullanıcı adı en az 3 karakter olmalı.", "hata")
+        elif kural_hatasi:
+            flash(kural_hatasi + " Güçlü bir şifre belirleyin.", "hata")
         elif s1 != s2:
             flash("\u015eifreler birbiriyle uyu\u015fmuyor.", "hata")
         elif not cihaz_id:
@@ -1011,10 +1044,11 @@ def kullanici_sifre(ad):
         return redirect(url_for("genel_bakis"))
     s1 = request.form.get("sifre", "")
     s2 = request.form.get("sifre2", "")
+    kural_hatasi = sifre_kurali_hatasi(s1, ad)
     if not webdb.get_user(ad):
         flash("Kullanıcı bulunamadı.", "hata")
-    elif len(s1) < 4:
-        flash("Şifre en az 4 karakter olmalı.", "hata")
+    elif kural_hatasi:
+        flash(kural_hatasi + " Şifre güncellenmedi.", "hata")
     elif s1 != s2:
         flash("Şifreler uyuşmuyor.", "hata")
     else:

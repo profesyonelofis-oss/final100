@@ -86,7 +86,10 @@ def main():
         print("\n[2] Ilk kurulum (admin otomatik AKTIF olmali)")
         d, govde, _ = istek("/ilk-kurulum")
         kontrol("Ilk kurulum sayfasi acilir", d == 200)
-        d, _, konum = istek("/ilk-kurulum", {"kullanici_adi": "testadmin", "sifre": "1234", "sifre2": "1234"})
+        d, govde, _ = istek("/ilk-kurulum", {"kullanici_adi": "testadmin", "sifre": "1234", "sifre2": "1234"})
+        kontrol("Zayif sifre ilk kurulumda reddedilir",
+                d == 200 and "en az 8" in govde, f"durum={d}")
+        d, _, konum = istek("/ilk-kurulum", {"kullanici_adi": "testadmin", "sifre": "GucluSifre2026", "sifre2": "GucluSifre2026"})
         kontrol("Admin olusturuldu (yonlendirme)", d in (302, 303), f"durum={d} konum={konum}")
 
         print("\n[3] Giris -> admin tam yetki, onizleme modu YOK")
@@ -98,7 +101,7 @@ def main():
         c_ac = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
         try:
             c_ac.open(urllib.request.Request(BASE + "/giris", data=urllib.parse.urlencode(
-                {"kullanici_adi": "testadmin", "sifre": "1234"}).encode()), timeout=10)
+                {"kullanici_adi": "testadmin", "sifre": "GucluSifre2026"}).encode()), timeout=10)
         except urllib.error.HTTPError:
             pass  # 302 (panel'e yonlendirme) bekleniyor
         cookie = "; ".join(f"{c.name}={c.value}" for c in cj)
@@ -175,7 +178,7 @@ def main():
         import http.client
         conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
         conn.request("POST", "/giris", urllib.parse.urlencode(
-            {"kullanici_adi": "testadmin", "sifre": "1234"}))
+            {"kullanici_adi": "testadmin", "sifre": "GucluSifre2026"}))
         r8 = conn.getresponse()
         kontrol("Kilit suresinde dogru sifre bile reddedilir (302 yok)", r8.status != 302, f"durum={r8.status}")
         r8.read()

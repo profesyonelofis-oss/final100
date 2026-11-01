@@ -193,16 +193,28 @@ Render ucretsiz planda her yeniden baslatmada `data/` silindigi icin, bilgisayar
 
 ---
 
-## Admin kullanici adini / sifresini unuttum (garantili yontem)
+## Admin sifresini unuttum
 
-Klasorde **ADMIN_OLUSTUR.bat** ve **admin_duzelt.py** dosyalari vardir.
+Unutulan sifrenin eski degeri geri getirilmez; yerine yenisi belirlenir.
+Ilk kurulumda yonetici sifresi icin asgari kural sunlardir: en az 8 karakter, en az
+bir harf ve bir rakam, kullanici adini icermemeli, cok tahmin edilen sifreler
+(`12345678` gibi) kabul edilmez. Ayni kural uyelik kaydinda ve panelden baska bir
+kullaniciya sifre belirlenirken de uygulanir.
 
-- **Windows'ta:** `ADMIN_OLUSTUR.bat` dosyasina cift tiklayin.
-- **Linux sunucuda:** `cd /opt/karaoglu && python3 admin_duzelt.py`
+**1) Baska bir yonetici hesabi varsa**
+Sol menu > Ayarlar > Kullanicilar sayfasindan ilgili hesabin sifresini guncelleyin.
 
-Bu araclar `karaoglu` kullanıcısını yoksa OLUSTURUR, varsa sifresini `1234` olarak
-sifirlar; rolunu admin, lisansini aktif yapar. Sonrasinda:
+**2) Hicbir hesaba girilemiyorsa (sunucuda)**
+Once `data/` klasorunun yedegini alin, sonra uygulama klasorunde:
 
-1. Giris ekraninda: kullanici adi `karaoglu`, sifre `1234`
-2. Sol menu > Ayarlar > Kullanicilar sayfasindan yeni uyelikleri Onayla/durdur.
-3. Guvenlik icin ayni sayfadan admin sifresini kendinize gore degistirin.
+```bash
+python -c "import webdb; webdb.set_user_sifre('KULLANICI_ADI', 'YeniGucluSifre2026')"
+```
+
+`KULLANICI_ADI` yerine kendi hesap adinizi yazin; komut yeni sifreyi kaydeder ve
+giris ekranindan bu sifreyle giris yapabilirsiniz.
+
+**3) Hesap adi da bilinmiyorsa**
+`data/zeytin_takip.db` dosyasini yedekleyip `data/` klasorunu bosaltin; uygulama
+yeniden acildiginda **Ilk Kurulum** ekrani gelir ve yeni bir yonetici hesabi
+olusturulur. Bu islem eski hesaplari ve kayitlari kaldirir; yedek sarttir.
