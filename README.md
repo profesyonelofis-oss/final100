@@ -146,12 +146,33 @@ otomatik gelir.
 5. Ücretsiz plan instance saat limitini (750 saat/ay) doldurduysa servis ay sonuna
    kadar askıya alınır; Settings → planı `Starter` yapın.
 
+## Ortam değişkenleri
+
+| Değişken | Varsayılan | Ne yapar |
+|---|---|---|
+| `KARAOGLU_SECRET_KEY` | `data/secret_key` (otomatik üretilir) | Oturum çerezlerinin imza anahtarı; yayında mutlaka verin |
+| `KARAOGLU_DATA_DIR` | `./data` | Veritabanı, logo ve yedek damgasının tutulduğu klasör |
+| `KARAOGLU_GIRIS_AZAMI_HATA` | `5` (1-20) | Bu sayıda hatalı denemeden sonra geçici kilit |
+| `KARAOGLU_GIRIS_KILIT_DAKIKA` | `15` (1-1440) | Kilidin süresi (dakika) |
+| `PORT` | `8000` | `wsgi.py` doğrudan çalıştırıldığında dinlenecek port |
+
+Örnek: `KARAOGLU_GIRIS_AZAMI_HATA=3 KARAOGLU_GIRIS_KILIT_DAKIKA=30` ile
+3 denemede 30 dakikalık kilit uygulanır.
+
 ## Güvenlik notları
 
 - `KARAOGLU_SECRET_KEY` ortam değişkenini mutlaka uzun/rastgele belirleyin.
 - HTTPS kullanın (Let's Encrypt ücretsizdir).
 - `data/` klasörünü düzenli yedekleyin (Ayarlar → Yedek İndir de mevcut).
 - Şifreler PBKDF2-SHA256 ile hash'lenir; hiçbir yerde düz metin saklanmaz.
+- Tüm formlar CSRF jetonuyla korunur; jeton oturuma bağlıdır ve her formda
+  gizli alan olarak taşınır.
+- Girişte kaba kuvvet koruması vardır: `KARAOGLU_GIRIS_AZAMI_HATA` (varsayılan
+  **5**, aralık 1-20) hatalı denemeden sonra hesap + IP için
+  `KARAOGLU_GIRIS_KILIT_DAKIKA` (varsayılan **15** dakika, aralık 1-1440)
+  süreyle geçici kilit uygulanır. Başarılı giriş sayacı sıfırlar. Boş,
+  sayı olmayan veya aralık dışı değerler varsayılana döner. Değerler açılışta
+  okunur; değiştirdikten sonra servisi yeniden başlatın.
 
 ## Masaüstü verilerinizi taşımak isterseniz
 

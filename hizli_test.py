@@ -403,6 +403,33 @@ def main():
     kontrol("Degisken yoksa proje ici data/ kullanilir",
             Path(varsayilan.stdout.strip()).resolve() == (KOK / "data").resolve(),
             varsayilan.stdout.strip() + varsayilan.stderr.strip())
+
+    print("\n[11] Giris kilidi ayarlari ortam degiskeninden okunur")
+    kilit_kod = "import webdb; print(webdb.GIRIS_AZAMI_HATA, webdb.GIRIS_KILIT_DAKIKA)"
+    ayar_ort = {**temiz_ort, "KARAOGLU_DATA_DIR": hedef}
+    ozel_ayar = subprocess.run(
+        [sys.executable, "-c", kilit_kod], cwd=str(KOK),
+        env={**ayar_ort, "KARAOGLU_GIRIS_AZAMI_HATA": "3",
+              "KARAOGLU_GIRIS_KILIT_DAKIKA": "30"},
+        capture_output=True, text=True)
+    kontrol("Ortam degiskenleri kilidi ayarlar (3 / 30)",
+            ozel_ayar.stdout.split() == ["3", "30"],
+            ozel_ayar.stdout.strip() + ozel_ayar.stderr.strip())
+    varsayilan_ayar = subprocess.run(
+        [sys.executable, "-c", kilit_kod], cwd=str(KOK), env=ayar_ort,
+        capture_output=True, text=True)
+    kontrol("Degisken yoksa varsayilanlar (5 / 15)",
+            varsayilan_ayar.stdout.split() == ["5", "15"],
+            varsayilan_ayar.stdout.strip() + varsayilan_ayar.stderr.strip())
+    gecersiz_ayar = subprocess.run(
+        [sys.executable, "-c", kilit_kod], cwd=str(KOK),
+        env={**ayar_ort, "KARAOGLU_GIRIS_AZAMI_HATA": "abc",
+              "KARAOGLU_GIRIS_KILIT_DAKIKA": "99999"},
+        capture_output=True, text=True)
+    kontrol("Gecersiz/aralik disi deger varsayilana doner (5 / 15)",
+            gecersiz_ayar.stdout.split() == ["5", "15"],
+            gecersiz_ayar.stdout.strip() + gecersiz_ayar.stderr.strip())
+
     # testin olusturdugu bos klasoru temizle (projenin gercek data'sina dokunma)
     try:
         if not vardi and (KOK / "data").exists() and not any((KOK / "data").iterdir()):

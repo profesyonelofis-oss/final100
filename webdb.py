@@ -340,8 +340,25 @@ def check_user(kullanici_adi, sifre):
 # ---------------------------------------------------------------------------
 # Giris denemeleri (kaba kuvvet korumasi)
 # ---------------------------------------------------------------------------
-GIRIS_AZAMI_HATA = 5       # bu sayiya ulasilinca kilit acilir
-GIRIS_KILIT_DAKIKA = 15    # kilit suresi (dakika)
+def _env_sayi(ad, varsayilan, en_az, en_cok):
+    """Ortam degiskenini tam sayiya cevirir; bos/gecersiz/aralik disi -> varsayilan.
+
+    Deger import aninda okunur; degistirmek icin uygulamayi yeniden baslatin.
+    """
+    ham = (os.environ.get(ad) or "").strip()
+    if not ham:
+        return varsayilan
+    try:
+        deger = int(ham)
+    except ValueError:
+        return varsayilan
+    return deger if en_az <= deger <= en_cok else varsayilan
+
+
+# Varsayilanlar: 5 hatali deneme -> 15 dakika kilit.
+# KARAOGLU_GIRIS_AZAMI_HATA (1-20) ve KARAOGLU_GIRIS_KILIT_DAKIKA (1-1440) ile degisir.
+GIRIS_AZAMI_HATA = _env_sayi("KARAOGLU_GIRIS_AZAMI_HATA", 5, 1, 20)
+GIRIS_KILIT_DAKIKA = _env_sayi("KARAOGLU_GIRIS_KILIT_DAKIKA", 15, 1, 1440)
 
 
 def giris_kilit_durumu(kullanici_adi, ip):
