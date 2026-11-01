@@ -33,8 +33,12 @@ cargo fmt --all -- --check
    "Takip kuyruğu" panelinden tek tuşla hatırlatma mesajı hazırlanır.
 5. Görüşme notu ve son gönderim tarihi sağdaki işletme detayında durur.
 6. İşletme ilgilenince detaydan **paket** (tek sayfa / çok sayfa / bakım),
-   **tutar** ve **ödeme durumu** girilir; takip panelindeki ciro satırı tahsil
-   edilen ve bekleyen tutarı toplar.
+   **tutar** ve **ödeme durumu** girilir; kısmi ödemede alınan tutar ayrı yazılır
+   ve kalan bakiye görünür.
+7. Takip panelindeki **ÖDEME BEKLEYEN** bölümü, üç günü dolan tahsilatları
+   listeler; "Tahsilat" düğmesi kalan bakiyeyi ve linki içeren mesajı hazırlar.
+8. Yanlış ya da süresi geçmiş bir yayın **Yayından kaldır** ile silinir; link 404
+   döner ve kayıttaki adres temizlenir.
 
 **Kurallar ve sınırlar**
 
@@ -48,7 +52,9 @@ cargo fmt --all -- --check
 | Defter | `musteri_kayitlari.json`; her yazmadan önce `musteri_kayitlari.yedek.json` |
 | Ayarlar | `ayarlar.json`: gönderen WhatsApp numarası; açılışta geri okunur |
 | Teklif | Paket seçilince varsayılan tutar yazılır (4.500 / 8.500 / 750 ₺); elle değiştirilebilir |
-| Ödeme | Teklif verilince "bekliyor"; kısmi veya ödendi olarak işaretlenir |
+| Ödeme | Teklif verilince "bekliyor"; kısmi tutar ayrı tutulur, kalan bakiye hesaplanır |
+| Yayın | Demo ve karne `gh-pages` dalına gider; "Yayından kaldır" dosyaları siler |
+| Sektör verimi | Sol paneldeki düğme, önbellekteki taramalara göre hangi sektörün kayıt döndürdüğünü günlüğe yazar |
 
 Gizli değerler `.env` dosyasından okunur (`GOOGLE_PLACES_API_KEY`); `.env`,
 `.env` ile üretilen çalışma dosyaları ve üretilen `demos/` klasörü sürüm

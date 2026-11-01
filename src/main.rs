@@ -1062,6 +1062,23 @@ fn sohbet_ac(numara: &str, mesaj: &str, logs: &mut Vec<String>) -> bool {
     }
 }
 
+/// Ödemesi kalan bir işletmeye gönderilecek kısa tahsilat hatırlatması.
+fn odeme_hatirlatma_mesaji(kayit: &musteriler::Musteri) -> String {
+    let paket = kayit.paket.map(|paket| paket.etiket()).unwrap_or("site");
+    let kalan = musteriler::Defter::kalan_bakiye(kayit);
+    let mut metin = format!(
+        "Merhaba, {} için hazırladığımız {paket} paketinde {kalan} ₺ ödeme kaldı.",
+        kayit.ad
+    );
+    if let Some(link) = kayit.yayin_linki.as_deref() {
+        metin.push_str(&format!(" Siteniz yayında: {link}"));
+    }
+    metin.push_str(
+        " Uygun olduğunuzda IBAN'ı iletebilirim. İstemezseniz \"RET\" yazın, bir daha yazmam.",
+    );
+    metin
+}
+
 /// Yanıt bekleyen bir işletmeye gönderilecek kısa hatırlatma.
 fn takip_mesaji(kayit: &musteriler::Musteri) -> String {
     let gecen = kayit
@@ -1082,6 +1099,46 @@ fn takip_mesaji(kayit: &musteriler::Musteri) -> String {
         " İsterseniz alan adınızda 2 dakikada yayına alabilirim. İstemezseniz \"RET\" yazın, bir daha yazmam.",
     );
     metin
+}
+
+/// Önbellekteki taramalardan sektör başına verim çıkarır:
+/// (sektör, taranan ilçe, kayıt dönen ilçe, toplam işletme). En çok işletme
+/// döndüren sektör başta gelir.
+fn sektor_verimi(onbellek: &SonucOnbellek) -> Vec<(String, usize, usize, usize)> {
+    let adlar: HashMap<String, &'static str> = SEKTORLER
+        .iter()
+        .map(|sektor| (arama_anahtari(sektor.ad), sektor.ad))
+        .collect();
+    let mut toplam: HashMap<&'static str, (usize, usize, usize)> = HashMap::new();
+    for (anahtar, kayit) in &onbellek.kayitlar {
+        let Some(sektor) = anahtar.split('|').nth(2) else {
+            continue;
+        };
+        let Some(ad) = adlar.get(sektor) else {
+            continue;
+        };
+        let giris = toplam.entry(ad).or_default();
+        giris.0 += 1;
+        if !kayit.leads.is_empty() {
+            giris.1 += 1;
+        }
+        giris.2 += kayit.leads.len();
+    }
+    let mut liste: Vec<(String, usize, usize, usize)> = toplam
+        .into_iter()
+        .map(|(ad, (ilce, dolu, isletme))| (ad.to_string(), ilce, dolu, isletme))
+        .collect();
+    liste.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.0.cmp(&b.0)));
+    liste
+}
+
+/// Tutar alanındaki metni sayıya çevirir: yalnız rakamlar, boşsa `None`.
+fn girdi_tutar(metin: &str) -> Option<u32> {
+    let rakamlar: String = metin.chars().filter(|harf| harf.is_ascii_digit()).collect();
+    if rakamlar.is_empty() {
+        return None;
+    }
+    rakamlar.parse().ok()
 }
 
 /// Kart ve detay panelinde müşteri durumunu tek yerde etiketler.
@@ -1340,6 +1397,65 @@ impl LeadApp {
         self.gonderim_kaydet(idx);
     }
 
+    /// Önbellekteki taramalardan hangi sektörün işe yaradığını günlüğe yazar.
+    /// Hangi sektörün boş döndüğünü ölçmeden "sektör sayısı çok" demek yanıltıcı.
+    fn verim_raporunu_yaz(&mut self) {
+        let onbellek = SonucOnbellek::yukle();
+        if onbellek.kayitlar.is_empty() {
+            self.logs.push(
+                "[i] Önbellek boş: birkaç ilçe tarayın, sonra sektör verimini isteyin.".to_string(),
+            );
+            return;
+        }
+        let liste = sektor_verimi(&onbellek);
+        self.logs.push(format!(
+            "[i] Sektör verimi: {} sektör, {} ilçe taraması önbellekte.",
+            liste.len(),
+            onbellek.kayitlar.len()
+        ));
+        for (ad, ilce, dolu, isletme) in liste.iter().take(8) {
+            self.logs.push(format!(
+                "    {ad}: {ilce} ilçe · {dolu} ilçede kayıt · {isletme} işletme"
+            ));
+        }
+        let bos: Vec<&str> = liste
+            .iter()
+            .filter(|kayit| kayit.2 == 0 && kayit.3 == 0)
+            .map(|kayit| kayit.0.as_str())
+            .collect();
+        if !bos.is_empty() {
+            self.logs.push(format!(
+                "[!] Hiç kayıt döndürmeyen sektör ({}): {}",
+                bos.len(),
+                bos.join(", ")
+            ));
+        }
+        let taranmamis = self.sectors.len().saturating_sub(liste.len());
+        if taranmamis > 0 {
+            self.logs.push(format!(
+                "[i] {taranmamis} sektör henüz hiç taranmadı; verim için her sektörü en az bir ilçede deneyin."
+            ));
+        }
+    }
+
+    /// Panelden yapılan yayın işleminden sonra linki deftere işler; link
+    /// kaldırıldıysa kayıttaki adres de temizlenir.
+    fn yayin_linkini_deftere_yaz(&mut self, idx: usize) {
+        if idx >= self.leads.len() {
+            return;
+        }
+        let anahtar = musteriler::anahtar_uret(
+            &self.leads[idx].kaynak,
+            &self.leads[idx].name,
+            self.leads[idx].konum,
+        );
+        match self.leads[idx].yayin_linki.clone() {
+            Some(link) => self.defter.link_ayarla(&anahtar, &link),
+            None => self.defter.link_temizle(&anahtar),
+        }
+        self.defter.kaydet();
+    }
+
     /// Gönderimi deftere yazar; aynı işletme için günde bir kez sayılır.
     fn gonderim_kaydet(&mut self, idx: usize) {
         if idx >= self.leads.len() {
@@ -1526,6 +1642,13 @@ impl LeadApp {
             .into_iter()
             .cloned()
             .collect();
+        // Teklifi verilmiş ama parası gelmemiş kayıtlar ayrı kuyrukta.
+        let odeme_kuyrugu: Vec<musteriler::Musteri> = self
+            .defter
+            .odeme_bekleyenler(&bugun, TAKIP_GUN)
+            .into_iter()
+            .cloned()
+            .collect();
         let ekran = ctx.screen_rect();
         let boyut = egui::vec2(
             (ekran.width() - 200.0).clamp(560.0, 660.0),
@@ -1534,6 +1657,7 @@ impl LeadApp {
         let konum = ekran.center() - boyut * 0.5;
         let mut kapat = false;
         let mut acilacak: Option<String> = None;
+        let mut odeme_acilacak: Option<String> = None;
 
         egui::Area::new(egui::Id::new("takip_ortu"))
             .order(egui::Order::Foreground)
@@ -1611,9 +1735,10 @@ impl LeadApp {
                         ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new(format!(
-                                "{} işletme {} gündür yanıt bekliyor · günlük kalan hak: {}",
+                                "{} işletme {} gündür yanıt bekliyor · {} işletme tahsilat bekliyor · günlük kalan hak: {}",
                                 kayitlar.len(),
                                 TAKIP_GUN,
+                                odeme_kuyrugu.len(),
                                 GUNLUK_GONDERIM_LIMITI
                                     .saturating_sub(self.defter.gun_gonderim(&bugun))
                             ))
@@ -1698,6 +1823,86 @@ impl LeadApp {
                                         });
                                     ui.add_space(6.0);
                                 }
+
+                                // --- Tahsilat kuyruğu ---------------------------
+                                ui.add_space(10.0);
+                                let (ayrac, _) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), 1.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(ayrac, 0.0, KENAR);
+                                ui.add_space(10.0);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "ÖDEME BEKLEYEN ({})",
+                                        odeme_kuyrugu.len()
+                                    ))
+                                    .font(baslik_font(9.5))
+                                    .color(DIM),
+                                );
+                                ui.add_space(6.0);
+                                if odeme_kuyrugu.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Tahsilat sırası boş: teklif verilen kayıtların tamamı ödenmiş ya da henüz 3 gün dolmamış.",
+                                        )
+                                        .size(11.0)
+                                        .color(SOLUK),
+                                    );
+                                }
+                                for kayit in &odeme_kuyrugu {
+                                    let kalan = musteriler::Defter::kalan_bakiye(kayit);
+                                    let paket = kayit
+                                        .paket
+                                        .map(|paket| paket.etiket())
+                                        .unwrap_or("teklif");
+                                    egui::Frame::none()
+                                        .fill(GIRINTI)
+                                        .stroke(egui::Stroke::new(1.0_f32, VURGU.gamma_multiply(0.35)))
+                                        .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.vertical(|ui| {
+                                                    ui.spacing_mut().item_spacing.y = 3.0;
+                                                    ui.label(
+                                                        egui::RichText::new(&kayit.ad)
+                                                            .size(12.5)
+                                                            .color(METIN),
+                                                    );
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "{paket} · {} ₺ kaldı · {}",
+                                                            kalan,
+                                                            kayit.odeme.etiket()
+                                                        ))
+                                                        .size(10.5)
+                                                        .color(VURGU),
+                                                    );
+                                                });
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        let numara =
+                                                            whatsapp_numarasi(&kayit.telefon);
+                                                        let dugme = ikincil_buton(
+                                                            ui,
+                                                            "Tahsilat",
+                                                            numara.is_some(),
+                                                            Some(egui::vec2(86.0, 26.0)),
+                                                        );
+                                                        if dugme.clicked() {
+                                                            odeme_acilacak =
+                                                                Some(kayit.anahtar.clone());
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                        });
+                                    ui.add_space(6.0);
+                                }
                             });
                     });
             });
@@ -1705,8 +1910,40 @@ impl LeadApp {
         if let Some(anahtar) = acilacak {
             self.takip_sohbet_ac(&anahtar, &bugun);
         }
+        if let Some(anahtar) = odeme_acilacak {
+            self.odeme_sohbet_ac(&anahtar, &bugun);
+        }
         if kapat {
             self.takip_panel_acik = false;
+        }
+    }
+
+    /// Tahsilat kuyruğundaki bir işletmeye ödeme hatırlatması hazırlar.
+    fn odeme_sohbet_ac(&mut self, anahtar: &str, bugun: &str) {
+        let Some(kayit) = self.defter.kayit(anahtar).cloned() else {
+            return;
+        };
+        let Some(numara) = whatsapp_numarasi(&kayit.telefon) else {
+            self.logs
+                .push(format!("[!] {}: telefon numarası kayıtta yok.", kayit.ad));
+            return;
+        };
+        if self.defter.gun_gonderim(bugun) >= GUNLUK_GONDERIM_LIMITI {
+            self.logs.push(format!(
+                "[!] Günlük gönderim hakkı doldu ({}/{}). Yarın devam edin.",
+                GUNLUK_GONDERIM_LIMITI, GUNLUK_GONDERIM_LIMITI
+            ));
+            return;
+        }
+        let mesaj = odeme_hatirlatma_mesaji(&kayit);
+        if sohbet_ac(&numara, &mesaj, &mut self.logs) {
+            self.defter.gonderim_kaydet(anahtar, bugun);
+            self.defter.kaydet();
+            self.logs.push(format!(
+                "[✓] {} için tahsilat hatırlatması hazır; kalan {} ₺.",
+                kayit.ad,
+                musteriler::Defter::kalan_bakiye(&kayit)
+            ));
         }
     }
 
@@ -1751,6 +1988,8 @@ impl LeadApp {
         let mut kapat = false;
         let mut yeni_durum: Option<musteriler::Durum> = None;
         let mut wa_iste = false;
+        let mut yayin_iste = false;
+        let mut yayin_kaldir_iste = false;
         // Görüşme notu: panelde düzenlenir, değişince deftere yazılır.
         let mut not_metni = self
             .defter
@@ -1784,9 +2023,15 @@ impl LeadApp {
             .map(|tutar| tutar.to_string())
             .unwrap_or_default();
         let mut odeme = kayit.map(|kayit| kayit.odeme).unwrap_or_default();
+        let mut tahsil_metni = kayit
+            .and_then(|kayit| kayit.tahsil_edilen)
+            .map(|tutar| tutar.to_string())
+            .unwrap_or_default();
         let teklif_tarihi = kayit.and_then(|kayit| kayit.teklif_tarihi.clone());
+        let teklif_toplam = kayit.and_then(|kayit| kayit.teklif_tutari);
         let mut teklif_degisti = false;
         let mut odeme_degisti = false;
+        let mut tahsil_degisti = false;
         // A/B sayaçları panelde tek satırda gösterilir.
         let varyant_ozeti = self.defter.varyant_ozeti();
         let sektor_ozeti = self
@@ -2065,6 +2310,37 @@ impl LeadApp {
                                 }
                             }
                         });
+                        // Kısmi ödemede alınan tutar ayrı tutulur; kalan bakiye
+                        // buradan hesaplanır.
+                        if odeme == musteriler::Odeme::Kismi {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Tahsil edilen")
+                                        .size(10.5)
+                                        .color(SOLUK),
+                                );
+                                let alan = egui::TextEdit::singleline(&mut tahsil_metni)
+                                    .desired_width(72.0)
+                                    .font(egui::TextStyle::Small)
+                                    .hint_text("TL");
+                                if ui.add(alan).lost_focus() {
+                                    tahsil_degisti = true;
+                                }
+                                ui.label(egui::RichText::new("₺").size(10.5).color(SOLUK));
+                            });
+                        }
+                        if let (Some(toplam), Some(tahsil)) = (teklif_toplam, girdi_tutar(&tahsil_metni)) {
+                            if odeme == musteriler::Odeme::Kismi && tahsil < toplam {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Kalan bakiye: {} ₺",
+                                        toplam - tahsil
+                                    ))
+                                    .size(10.0)
+                                    .color(VURGU),
+                                );
+                            }
+                        }
                         if let Some(tarih) = &teklif_tarihi {
                             ui.label(
                                 egui::RichText::new(format!("Teklif tarihi: {tarih}"))
@@ -2218,7 +2494,7 @@ impl LeadApp {
                 .on_hover_text("Demoyu GitHub Pages'e yayınlar; linki müşteriye gönderebilirsiniz")
                 .clicked()
                 {
-                    demo_yayinla(lead, gonderen, &mut self.logs);
+                    yayin_iste = true;
                 }
                 if let Some(link) = lead.yayin_linki.clone() {
                     ui.add_space(2.0);
@@ -2228,6 +2504,13 @@ impl LeadApp {
                             .color(MAVI),
                         link,
                     );
+                    ui.add_space(2.0);
+                    if hayalet_buton(ui, "Yayından kaldır")
+                        .on_hover_text("Linki 404 yapar; demo ve karne yayın dalından silinir")
+                        .clicked()
+                    {
+                        yayin_kaldir_iste = true;
+                    }
                 }
                 ui.add_space(2.0);
                 ui.hyperlink_to(
@@ -2244,12 +2527,7 @@ impl LeadApp {
         }
         if teklif_degisti {
             if let Some(paket) = teklif_paket {
-                let tutar = tutar_metni
-                    .chars()
-                    .filter(|harf| harf.is_ascii_digit())
-                    .collect::<String>()
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| paket.varsayilan_tutar());
+                let tutar = girdi_tutar(&tutar_metni).unwrap_or_else(|| paket.varsayilan_tutar());
                 self.defter
                     .teklif_ayarla(&anahtar, paket, tutar, &bugun_anahtari());
                 self.defter.kaydet();
@@ -2257,6 +2535,16 @@ impl LeadApp {
                     "[i] {}: {} paketi · {tutar} ₺ teklif edildi.",
                     self.leads[idx].name,
                     paket.etiket()
+                ));
+            }
+        }
+        if tahsil_degisti {
+            if let Some(tutar) = girdi_tutar(&tahsil_metni) {
+                self.defter.tahsil_ayarla(&anahtar, tutar);
+                self.defter.kaydet();
+                self.logs.push(format!(
+                    "[i] {}: {} ₺ tahsil edildi.",
+                    self.leads[idx].name, tutar
                 ));
             }
         }
@@ -2271,6 +2559,14 @@ impl LeadApp {
         }
         if wa_iste {
             self.gonderime_hazirla(idx, gonderen);
+        }
+        if yayin_iste {
+            demo_yayinla(&mut self.leads[idx], gonderen, &mut self.logs);
+            self.yayin_linkini_deftere_yaz(idx);
+        }
+        if yayin_kaldir_iste {
+            demo_yayindan_kaldir(&mut self.leads[idx], &mut self.logs);
+            self.yayin_linkini_deftere_yaz(idx);
         }
         if let Some(durum) = yeni_durum {
             let lead = &self.leads[idx];
@@ -2943,16 +3239,28 @@ impl eframe::App for LeadApp {
                         }
                     });
                 });
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} il · {} ilçe · {} sektör",
-                        iller::ILLER.len(),
-                        iller::ILCELER,
-                        self.sectors.len()
-                    ))
-                    .size(10.5)
-                    .color(DIM),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} il · {} ilçe · {} sektör",
+                            iller::ILLER.len(),
+                            iller::ILCELER,
+                            self.sectors.len()
+                        ))
+                        .size(10.5)
+                        .color(DIM),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "Sektör verimi")
+                            .on_hover_text(
+                                "Önbellekteki taramalara göre hangi sektörün kayıt döndürdüğünü günlüğe yazar",
+                            )
+                            .clicked()
+                        {
+                            self.verim_raporunu_yaz();
+                        }
+                    });
+                });
                 ui.add_space(10.0);
 
                 let wa_yuksekligi = if self.whatsapp_acik { 200.0 } else { 72.0 };
@@ -9115,6 +9423,25 @@ fn karne_html(isletme: &BusinessLead, demo_dosyasi: Option<&str>) -> String {
     let kaynak = html_kacis(&isletme.kaynak);
     let tarih = bugun_anahtari();
 
+    // Karne linki de WhatsApp'ta başlıklı ve açıklamalı görünsün.
+    let paylasim = format!(
+        concat!(
+            "<meta name=\"description\" content=\"{aciklama}\">\n",
+            "<meta property=\"og:type\" content=\"website\">\n",
+            "<meta property=\"og:site_name\" content=\"{ad}\">\n",
+            "<meta property=\"og:title\" content=\"{ad} — Dijital Görünürlük Karnesi ({sinif})\">\n",
+            "<meta property=\"og:description\" content=\"{aciklama}\">\n",
+            "<meta property=\"og:locale\" content=\"tr_TR\">\n",
+            "<meta name=\"twitter:card\" content=\"summary\">\n",
+            "<meta name=\"robots\" content=\"noindex\">"
+        ),
+        ad = ad,
+        sinif = sinif,
+        aciklama = format!(
+            "{sektor} · Dijital görünürlük puanı {puan}/100. Eksikler ve atılacak adımlar tek sayfada."
+        )
+    );
+
     let eksikler: Vec<&KarneSatiri> = satirlar.iter().filter(|satir| satir.kayip > 0).collect();
     let eksik_sayisi = eksikler.len();
     let tamam_sayisi = satirlar.len() - eksik_sayisi;
@@ -9202,6 +9529,7 @@ fn karne_html(isletme: &BusinessLead, demo_dosyasi: Option<&str>) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{ad} — Dijital Görünürlük Karnesi</title>
+{paylasim}
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-zinc-950 font-sans text-zinc-100">
@@ -9450,6 +9778,20 @@ fn yayina_gonder(kok: &str, dosyalar: &[String], logs: &mut Vec<String>) -> Resu
     }
 
     // Kök dizin, yayınlanmış tüm demoları listeleyen sayfa olur.
+    yayin_dizini_yenile(&klasor)?;
+    yayin_isle(
+        kok,
+        &klasor,
+        &format!("Demo yayını: {}", yayinlanan.join(", ")),
+        logs,
+    )?;
+    yayin_adresi_bul(kok, &yayinlanan[0])
+}
+
+/// `demos/` klasörünü tarayıp kök dizin sayfasını yeniler; kalan dosyaları
+/// döndürür. Yayınlama ve yayından kaldırma aynı dizini kullanır.
+fn yayin_dizini_yenile(klasor: &str) -> Result<Vec<String>, String> {
+    let hedef_klasor = format!("{klasor}/demos");
     let mut mevcut: Vec<String> = fs::read_dir(&hedef_klasor)
         .map(|kayitlar| {
             kayitlar
@@ -9467,53 +9809,90 @@ fn yayina_gonder(kok: &str, dosyalar: &[String], logs: &mut Vec<String>) -> Resu
     mevcut.sort();
     fs::write(format!("{klasor}/index.html"), yayin_dizini(&mevcut))
         .map_err(|hata| format!("index.html yazılamadı: {hata}"))?;
+    Ok(mevcut)
+}
 
-    if komut_calistir(&klasor, "git", &["add", "-A"]).is_err() {
+/// Yayın dalındaki değişiklikleri commit'leyip push eder. Değişiklik yoksa
+/// hiçbir şey yapmaz (aynı demo ikinci kez yayınlandığında yeni commit açılmaz).
+fn yayin_isle(
+    kok: &str,
+    klasor: &str,
+    mesaj: &str,
+    logs: &mut Vec<String>,
+) -> Result<bool, String> {
+    if komut_calistir(klasor, "git", &["add", "-A"]).is_err() {
         // Boş depoda ilk ekleme; yine de devam edilir.
     }
-    let degisiklik = komut_calistir(&klasor, "git", &["status", "--porcelain"])?;
-    if !degisiklik.trim().is_empty() {
-        let ad = komut_calistir(kok, "git", &["config", "user.name"])
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let eposta = komut_calistir(kok, "git", &["config", "user.email"])
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let ad = if ad.is_empty() {
-            "Demo Yayını".to_string()
-        } else {
-            ad
-        };
-        let eposta = if eposta.is_empty() {
-            "demo@localhost".to_string()
-        } else {
-            eposta
-        };
-        let mesaj = format!("Demo yayını: {}", yayinlanan.join(", "));
-        komut_calistir(
-            &klasor,
-            "git",
-            &[
-                "-c",
-                &format!("user.name={ad}"),
-                "-c",
-                &format!("user.email={eposta}"),
-                "commit",
-                "-m",
-                &mesaj,
-            ],
-        )?;
-    } else {
+    let degisiklik = komut_calistir(klasor, "git", &["status", "--porcelain"])?;
+    if degisiklik.trim().is_empty() {
         logs.push("[i] Yayında değişiklik yok; mevcut link kullanılabilir.".to_string());
+        return Ok(false);
     }
+    let ad = komut_calistir(kok, "git", &["config", "user.name"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let eposta = komut_calistir(kok, "git", &["config", "user.email"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let ad = if ad.is_empty() {
+        "Demo Yayını".to_string()
+    } else {
+        ad
+    };
+    let eposta = if eposta.is_empty() {
+        "demo@localhost".to_string()
+    } else {
+        eposta
+    };
+    komut_calistir(
+        klasor,
+        "git",
+        &[
+            "-c",
+            &format!("user.name={ad}"),
+            "-c",
+            &format!("user.email={eposta}"),
+            "commit",
+            "-m",
+            mesaj,
+        ],
+    )?;
+    komut_calistir(klasor, "git", &["push", "origin", YAYIN_DALI])?;
+    Ok(true)
+}
 
+/// Yayındaki bir dosyanın herkese açık adresini üretir.
+fn yayin_adresi_bul(kok: &str, dosya: &str) -> Result<String, String> {
     let uzak = komut_calistir(kok, "git", &["remote", "get-url", "origin"])?;
     let (sahip, depo) = github_depo(&uzak)
         .ok_or_else(|| format!("origin adresi GitHub deposu değil: {}", uzak.trim()))?;
-    komut_calistir(&klasor, "git", &["push", "origin", YAYIN_DALI])?;
-    Ok(yayin_adresi(&sahip, &depo, &yayinlanan[0]))
+    Ok(yayin_adresi(&sahip, &depo, dosya))
+}
+
+/// Yayındaki bir demoyu (ve karnesini) `gh-pages` dalından kaldırır; dizin
+/// sayfası yenilenir ve değişiklik push edilir. Silinen demo linki artık 404
+/// döner, yani yanlış ya da süresi geçmiş yayın ortada kalmaz.
+fn yayindan_kaldir(kok: &str, demo_adi: &str, logs: &mut Vec<String>) -> Result<(), String> {
+    yayin_hazirla(kok)?;
+    let klasor = format!("{kok}/{YAYIN_KLASORU}");
+    let hedef = format!("{klasor}/demos");
+    let dosyalar = [demo_adi.to_string(), format!("karne-{demo_adi}")];
+    let mut silinen = 0usize;
+    for dosya in &dosyalar {
+        let yol = format!("{hedef}/{dosya}");
+        if std::path::Path::new(&yol).exists() {
+            fs::remove_file(&yol).map_err(|hata| format!("{yol} silinemedi: {hata}"))?;
+            silinen += 1;
+        }
+    }
+    if silinen == 0 {
+        return Err("Yayında bu demo bulunamadı; link eski olabilir.".to_string());
+    }
+    yayin_dizini_yenile(&klasor)?;
+    yayin_isle(kok, &klasor, &format!("Yayından kaldır: {demo_adi}"), logs)?;
+    Ok(())
 }
 
 /// Demoyu (yoksa önce üretip) GitHub Pages'e yayınlar ve adresi döndürür.
@@ -9616,6 +9995,25 @@ fn yayina_gonder_ve_link_al(
 }
 
 /// Demoyu GitHub Pages'e yayınlar, linki günlüğe yazar ve tarayıcıda açar.
+/// Yayındaki demoyu ve karnesini kaldırır; linkler kayıttan silinir.
+fn demo_yayindan_kaldir(lead: &mut BusinessLead, logs: &mut Vec<String>) {
+    let ad = demo_dosya_adi(lead);
+    let kok = std::env::current_dir()
+        .map(|dizin| dizin.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    match yayindan_kaldir(&kok, &ad, logs) {
+        Ok(()) => {
+            lead.yayin_linki = None;
+            lead.karne_linki = None;
+            logs.push(format!(
+                "[✓] {} yayından kaldırıldı; link artık açılmaz.",
+                lead.name
+            ));
+        }
+        Err(hata) => logs.push(format!("[!] Yayından kaldırılamadı: {hata}")),
+    }
+}
+
 fn demo_yayinla(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) {
     if let Some(adres) = yayina_gonder_ve_link_al(lead, gonderen, logs) {
         if let Err(hata) = tarayicida_ac(&adres) {
@@ -10305,6 +10703,99 @@ mod testler {
         let mut baska_kayit = ornek_isletme();
         baska_kayit.kaynak = "https://www.openstreetmap.org/node/999".to_string();
         assert!(!onizleme_gecerli(&onizleme, &baska_kayit));
+    }
+
+    #[test]
+    fn sektor_verimi_onbellekten_hesaplanir() {
+        let mut onbellek = SonucOnbellek::default();
+        let mut kayit = |sektor: &str, ilce: &str, adet: usize| {
+            let leads: Vec<BusinessLead> = (0..adet)
+                .map(|sira| {
+                    let mut lead = ornek_isletme();
+                    lead.name = format!("{sektor}-{ilce}-{sira}");
+                    lead
+                })
+                .collect();
+            onbellek.kayitlar.insert(
+                SonucOnbellek::anahtar("İstanbul", ilce, sektor),
+                SonucKaydi {
+                    tarih: bugun_anahtari(),
+                    siteli: 0,
+                    leads,
+                    sunucu: String::new(),
+                },
+            );
+        };
+        kayit("Kafe", "Beşiktaş", 3);
+        kayit("Kafe", "Kadıköy", 0);
+        kayit("Fırın", "Beşiktaş", 0);
+
+        let verim = sektor_verimi(&onbellek);
+        assert_eq!(verim.len(), 2);
+        // En çok işletme döndüren sektör başta.
+        assert_eq!(verim[0].0, "Kafe");
+        assert_eq!(verim[0].1, 2, "iki ilçe tarandı");
+        assert_eq!(verim[0].2, 1, "biri kayıt döndürdü");
+        assert_eq!(verim[0].3, 3, "toplam üç işletme");
+        // Hiç kayıt döndürmeyen sektör de listede kalır (ölçüm için).
+        assert_eq!(verim[1].0, "Fırın");
+        assert_eq!(verim[1].2, 0);
+        assert_eq!(verim[1].3, 0);
+    }
+
+    #[test]
+    fn odeme_hatirlatmasi_kalan_bakiyeyi_ve_linki_yazar() {
+        let kayit = musteriler::Musteri {
+            anahtar: "osm:node/1".to_string(),
+            ad: "Moda Kafe".to_string(),
+            telefon: "+90 532 123 45 67".to_string(),
+            kategori: "Kafe".to_string(),
+            paket: Some(musteriler::Paket::CokSayfa),
+            teklif_tutari: Some(9000),
+            odeme: musteriler::Odeme::Kismi,
+            tahsil_edilen: Some(3000),
+            yayin_linki: Some("https://ornek.github.io/r/demos/kafe-1.html".to_string()),
+            ..musteriler::Musteri::default()
+        };
+        let mesaj = odeme_hatirlatma_mesaji(&kayit);
+        assert!(mesaj.contains("Moda Kafe"), "{mesaj}");
+        assert!(mesaj.contains("6000 ₺"), "kalan bakiye yazılmalı: {mesaj}");
+        assert!(mesaj.contains("Çok sayfa"), "paket adı yazılmalı: {mesaj}");
+        assert!(mesaj.contains("https://ornek.github.io/r/demos/kafe-1.html"));
+        assert!(mesaj.contains("RET"));
+    }
+
+    #[test]
+    fn karne_html_paylasim_etiketleri_icerir() {
+        let html = karne_html(&ornek_isletme(), None);
+        assert!(html.contains("<meta property=\"og:title\""), "{html}");
+        assert!(html.contains("og:description"));
+        assert!(html.contains("Dijital Görünürlük Karnesi"));
+        assert!(html.contains("name=\"robots\" content=\"noindex\""));
+    }
+
+    #[test]
+    fn yayin_dizini_kalan_dosyalari_listeler() {
+        let kok = std::env::temp_dir().join(format!(
+            "nexus-yayin-{}-{}",
+            std::process::id(),
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let demos = kok.join("demos");
+        fs::create_dir_all(&demos).expect("dizin kurulmalı");
+        fs::write(demos.join("b-2.html"), "<html></html>").expect("dosya");
+        fs::write(demos.join("a-1.html"), "<html></html>").expect("dosya");
+        fs::write(demos.join("notlar.txt"), "metin").expect("dosya");
+
+        let kalan = yayin_dizini_yenile(&kok.to_string_lossy()).expect("dizin yenilenmeli");
+        assert_eq!(kalan, vec!["a-1.html".to_string(), "b-2.html".to_string()]);
+        let index = fs::read_to_string(kok.join("index.html")).expect("index yazılmalı");
+        assert!(index.contains("demos/a-1.html") && index.contains("demos/b-2.html"));
+        assert!(
+            !index.contains("notlar.txt"),
+            "HTML olmayan dosya listelenmez"
+        );
+        let _ = fs::remove_dir_all(&kok);
     }
 
     #[test]
