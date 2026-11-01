@@ -46,6 +46,7 @@ cargo fmt --all -- --check
 | Örneklem | Kol başına 30 gönderimin altında panel "örneklem yetersiz" uyarısı verir |
 | Google kotası | `GOOGLE_GUNLUK_LIMIT` (vars. 10) · `GOOGLE_AYLIK_LIMIT` (vars. 200) |
 | Defter | `musteri_kayitlari.json`; her yazmadan önce `musteri_kayitlari.yedek.json` |
+| Ayarlar | `ayarlar.json`: gönderen WhatsApp numarası; açılışta geri okunur |
 | Teklif | Paket seçilince varsayılan tutar yazılır (4.500 / 8.500 / 750 ₺); elle değiştirilebilir |
 | Ödeme | Teklif verilince "bekliyor"; kısmi veya ödendi olarak işaretlenir |
 

@@ -18,6 +18,8 @@ musteri_kayitlari.json
 konum_onbellek.json
 # sonuc_onbellek.json: ilçe + sektör arama sonucu önbelleği
 sonuc_onbellek.json
+# ayarlar.json: kalıcı uygulama ayarları (gönderen WhatsApp numarası)
+ayarlar.json
 # cikti/: CSV dışa aktarımları
 cikti/
 # demos/: üretilen demo ve karne sayfaları (yayın .yayin/ çalışma kopyasından yapılır)

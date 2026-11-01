@@ -67,6 +67,21 @@ struct BusinessLead {
     mesaj_varyanti: Option<musteriler::Varyant>,
 }
 
+/// Önizlenen mesaj. `anahtar`, önizlemenin hangi işletmeye ait olduğunu
+/// sabitler: liste yeniden taranır ya da sıralanırsa indeks kayar, ama
+/// anahtar tutmuyorsa önizleme kapatılır ve yanlış işletmeye mesaj gitmez.
+#[derive(Clone)]
+struct Onizleme {
+    idx: usize,
+    anahtar: String,
+    mesaj: String,
+}
+
+/// Önizleme hâlâ aynı işletmeye mi ait?
+fn onizleme_gecerli(onizleme: &Onizleme, lead: &BusinessLead) -> bool {
+    musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum) == onizleme.anahtar
+}
+
 /// Taramada kullanılacak veri kaynağı.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kaynak {
@@ -166,8 +181,8 @@ pub struct LeadApp {
     is_whatsapp_connected: bool,
     whatsapp_acik: bool,
     detay_idx: Option<usize>,
-    /// Gönderim öncesi önizleme: (liste indeksi, hazır mesaj metni).
-    onizleme: Option<(usize, String)>,
+    /// Gönderim öncesi önizleme.
+    onizleme: Option<Onizleme>,
     /// Takip kuyruğu paneli (yanıt bekleyen, zamanı gelmiş işletmeler).
     takip_panel_acik: bool,
     ilce_kaydir: bool,
@@ -203,6 +218,8 @@ impl Default for LeadApp {
 
         let sectors: Vec<&'static str> = SEKTORLER.iter().map(|sektor| sektor.ad).collect();
 
+        let (whatsapp_phone, whatsapp_status, whatsapp_bagli) = whatsapp_baslangic(&ayar_oku());
+
         Self {
             cities,
             sectors,
@@ -220,9 +237,9 @@ impl Default for LeadApp {
 
             leads: vec![],
 
-            whatsapp_phone: "+90 500 000 00 00".to_string(),
-            whatsapp_status: "Numara doğrulanmadı".to_string(),
-            is_whatsapp_connected: false,
+            whatsapp_phone,
+            whatsapp_status,
+            is_whatsapp_connected: whatsapp_bagli,
             whatsapp_acik: false,
             detay_idx: None,
             onizleme: None,
@@ -1067,6 +1084,17 @@ fn takip_mesaji(kayit: &musteriler::Musteri) -> String {
     metin
 }
 
+/// Kart ve detay panelinde müşteri durumunu tek yerde etiketler.
+fn durum_pili(ui: &mut egui::Ui, durum: musteriler::Durum) {
+    match durum {
+        musteriler::Durum::Yeni => {}
+        musteriler::Durum::MesajHazir => pill(ui, "mesaj hazır", VURGU),
+        musteriler::Durum::Gonderildi => pill(ui, "gönderildi", MAVI),
+        musteriler::Durum::Ilgilendi => pill(ui, "ilgileniyor", YESIL),
+        musteriler::Durum::Reddetti => pill(ui, "kara liste", KIRMIZI),
+    }
+}
+
 fn detay_satiri(ui: &mut egui::Ui, etiket: &str, deger: &str) {
     ui.label(
         egui::RichText::new(etiket)
@@ -1151,9 +1179,7 @@ fn kart_ciz(
                                     .color(METIN),
                             );
                             pill(ui, &lead.category, kategori_rengi);
-                            if lead.mesaj_hazir {
-                                pill(ui, "mesaj hazır", VURGU);
-                            }
+                            durum_pili(ui, lead.durum);
                             if potansiyel_puani(lead) >= SICAK_ESIK {
                                 pill(ui, "sıcak fırsat", YESIL);
                             }
@@ -1298,7 +1324,11 @@ impl LeadApp {
             yayina_gonder_ve_link_al(&mut self.leads[idx], gonderen, &mut self.logs);
         }
         let mesaj = whatsapp_mesaji(&self.leads[idx]);
-        self.onizleme = Some((idx, mesaj));
+        self.onizleme = Some(Onizleme {
+            idx,
+            anahtar,
+            mesaj,
+        });
     }
 
     /// Önizlemedeki mesajı WhatsApp sohbetine aktarır ve gönderimi deftere işler.
@@ -1323,6 +1353,14 @@ impl LeadApp {
         let bugun = bugun_anahtari();
         let onceki = self.defter.gun_gonderim(&bugun);
         self.defter.gonderim_kaydet(&anahtar, &bugun);
+        // İlk kez temas kuruluyorsa durum "mesaj hazır" olarak kalıcılaşır;
+        // uygulama yeniden açıldığında da kart bu bilgiyi taşır.
+        if self.leads[idx].durum == musteriler::Durum::Yeni {
+            self.defter
+                .durum_ayarla(&anahtar, musteriler::Durum::MesajHazir, &bugun);
+            self.leads[idx].durum = musteriler::Durum::MesajHazir;
+            self.leads[idx].mesaj_hazir = true;
+        }
         let simdiki = self.defter.gun_gonderim(&bugun);
         if simdiki == onceki {
             return;
@@ -1338,11 +1376,17 @@ impl LeadApp {
 
     /// Gönderim öncesi mesaj önizlemesi: metin, uzunluk, link ve kalan hak.
     fn onizleme_paneli(&mut self, ctx: &egui::Context, gonderen: &str) {
-        let Some((idx, mesaj)) = self.onizleme.clone() else {
+        let Some(onizleme) = self.onizleme.clone() else {
             return;
         };
-        if idx >= self.leads.len() {
+        let idx = onizleme.idx;
+        let mesaj = onizleme.mesaj.clone();
+        // Liste yeniden tarandıysa indeks başka işletmeyi gösterebilir;
+        // kimlik tutmuyorsa önizleme kapatılır (yanlış mesaj gitmesin).
+        if idx >= self.leads.len() || !onizleme_gecerli(&onizleme, &self.leads[idx]) {
             self.onizleme = None;
+            self.logs
+                .push("[i] Liste değişti; açık mesaj önizlemesi kapatıldı.".to_string());
             return;
         }
         let ekran = ctx.screen_rect();
@@ -1541,8 +1585,13 @@ impl LeadApp {
                                 ui.set_width(boyut.x - 64.0);
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "Huni: {} kayıt · {} mesaj · {} yanıt (%{oran}) · {} ilgileniyor · {} kara liste",
-                                        huni.toplam, ulasilan, yanit, huni.ilgilenen, huni.kara_liste
+                                        "Huni: {} kayıt · {} mesaj · {} yanıt (%{oran}) · {} ilgileniyor · {} kara liste · {} hazır",
+                                        huni.toplam,
+                                        ulasilan,
+                                        yanit,
+                                        huni.ilgilenen,
+                                        huni.kara_liste,
+                                        huni.hazir
                                     ))
                                     .size(10.5)
                                     .color(SOLUK),
@@ -1795,9 +1844,7 @@ impl LeadApp {
                                 );
                                 ui.horizontal(|ui| {
                                     pill(ui, &lead.category, renk);
-                                    if lead.mesaj_hazir {
-                                        pill(ui, "mesaj hazır", VURGU);
-                                    }
+                                    durum_pili(ui, lead.durum);
                                     if potansiyel_puani(lead) >= SICAK_ESIK {
                                         pill(ui, "sıcak fırsat", YESIL);
                                     }
@@ -2270,6 +2317,8 @@ impl LeadApp {
         self.is_running = true;
         self.leads.clear();
         self.detay_idx = None;
+        // Açık önizleme eski listeye aitti; indeks kayacağı için kapatılır.
+        self.onizleme = None;
         self.bos_ilce_uyari = None;
         self.ilerleme = None;
         let tx = self.log_tx.clone();
@@ -2540,6 +2589,30 @@ impl LeadApp {
         }
     }
 
+    /// Gönderen numarayı denetler ve diske yazar; bir sonraki açılışta
+    /// aynı numara geri okunur. Bu bir WhatsApp doğrulaması değildir,
+    /// yalnızca mesajlarda kullanılacak numaranın kaydıdır.
+    fn numarayi_kaydet(&mut self) {
+        match whatsapp_numarasi(&self.whatsapp_phone) {
+            Some(numara) => {
+                self.is_whatsapp_connected = true;
+                self.whatsapp_status = format!("Kayıtlı: +{numara}");
+                ayar_yaz(&UygulamaAyari {
+                    whatsapp_phone: self.whatsapp_phone.clone(),
+                });
+                self.logs.push(format!(
+                    "[✓] Gönderen numara kaydedildi: +{numara}. Mesajlar tek tıkla hazırlanır, göndermeyi siz onaylarsınız."
+                ));
+            }
+            None => {
+                self.is_whatsapp_connected = false;
+                self.whatsapp_status = "Geçersiz numara".to_string();
+                self.logs
+                    .push("[!] Numara geçersiz. Örnek: +90 532 123 45 67".to_string());
+            }
+        }
+    }
+
     fn whatsapp_ayarlari(&mut self, ui: &mut egui::Ui) {
         bolum_etiketi(ui, "WHATSAPP");
         ui.add_space(6.0);
@@ -2597,14 +2670,11 @@ impl LeadApp {
                             .size(10.5)
                             .color(SOLUK),
                     );
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if hayalet_buton(ui, "Kapat").clicked() {
-                                self.whatsapp_acik = false;
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "Kapat").clicked() {
+                            self.whatsapp_acik = false;
+                        }
+                    });
                 });
                 ui.add_space(4.0);
                 arama_kutusu(ui, &mut self.whatsapp_phone, "+90 532 123 45 67");
@@ -2614,34 +2684,24 @@ impl LeadApp {
                 let dogrula = ikincil_buton(
                     ui,
                     if self.is_whatsapp_connected {
-                        "Numara doğrulandı"
+                        "Numarayı güncelle"
                     } else {
-                        "Numarayı doğrula"
+                        "Numarayı kaydet"
                     },
                     true,
                     Some(egui::vec2(dogrula_genislik, 30.0)),
                 );
                 if dogrula.clicked() {
-                    match whatsapp_numarasi(&self.whatsapp_phone) {
-                        Some(numara) => {
-                            self.is_whatsapp_connected = true;
-                            self.whatsapp_status = format!("Hazır: +{numara}");
-                            self.logs.push(format!(
-                                "[✓] Numara doğrulandı: +{numara}. Mesajlar tek tıkla hazırlanır, göndermeyi siz onaylarsınız."
-                            ));
-                        }
-                        None => {
-                            self.is_whatsapp_connected = false;
-                            self.whatsapp_status = "Geçersiz numara".to_string();
-                            self.logs
-                                .push("[!] Numara geçersiz. Örnek: +90 532 123 45 67".to_string());
-                        }
-                    }
+                    self.numarayi_kaydet();
                 }
 
                 ui.add_space(9.0);
                 ui.horizontal(|ui| {
-                    let renk = if self.is_whatsapp_connected { YESIL } else { DIM };
+                    let renk = if self.is_whatsapp_connected {
+                        YESIL
+                    } else {
+                        DIM
+                    };
                     let (nokta, _) =
                         ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
                     ui.painter().circle_filled(nokta.center(), 3.5, renk);
@@ -2696,6 +2756,9 @@ impl eframe::App for LeadApp {
                             bilinen += 1;
                         }
                         lead.durum = durum;
+                        // "Mesaj hazır" artık defterdeki durumdan türetilir;
+                        // yeniden taramada da kalır.
+                        lead.mesaj_hazir = durum != musteriler::Durum::Yeni;
                         // Mesaj varyantı defterde tutulur; aynı işletmeye hep aynı
                         // varyant gider, böylece A/B ölçümü karışmaz.
                         lead.mesaj_varyanti = Some(self.defter.varyant(&anahtar));
@@ -4202,6 +4265,49 @@ fn kota_karari(
     kota.gunluk += 1;
     kota.aylik += 1;
     KotaKarari::Izin
+}
+
+/// Kalıcı uygulama ayarları: her açılışta sıfırlanmaması gereken değerler.
+const AYAR_DOSYASI: &str = "ayarlar.json";
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+struct UygulamaAyari {
+    /// Demo altbilgisinde ve mesajlarda görünen gönderen WhatsApp numarası.
+    #[serde(default)]
+    whatsapp_phone: String,
+}
+
+fn ayar_oku_yoldan(yol: &str) -> UygulamaAyari {
+    fs::read_to_string(yol)
+        .ok()
+        .and_then(|metin| serde_json::from_str(&metin).ok())
+        .unwrap_or_default()
+}
+
+fn ayar_yaz_yoldan(yol: &str, ayar: &UygulamaAyari) -> std::io::Result<()> {
+    let metin = serde_json::to_string_pretty(ayar)
+        .map_err(|hata| std::io::Error::other(hata.to_string()))?;
+    fs::write(yol, metin)
+}
+
+fn ayar_oku() -> UygulamaAyari {
+    ayar_oku_yoldan(AYAR_DOSYASI)
+}
+
+/// Ayar dosyasındaki numaradan başlangıç durumunu üretir: gösterilecek
+/// numara, durum satırı ve "kayıtlı" bayrağı. Kayıtlı numara yoksa alan boş
+/// kalır; uydurma bir numara demo altbilgisine yazılmaz.
+fn whatsapp_baslangic(ayar: &UygulamaAyari) -> (String, String, bool) {
+    let numara = whatsapp_numarasi(&ayar.whatsapp_phone);
+    let durum = match &numara {
+        Some(numara) => format!("Kayıtlı: +{numara}"),
+        None => "Numara kaydedilmedi".to_string(),
+    };
+    (ayar.whatsapp_phone.clone(), durum, numara.is_some())
+}
+
+fn ayar_yaz(ayar: &UygulamaAyari) {
+    let _ = ayar_yaz_yoldan(AYAR_DOSYASI, ayar);
 }
 
 fn kota_oku() -> GoogleKota {
@@ -10176,6 +10282,71 @@ mod testler {
     #[test]
     fn demo_dosyasi_adi_turkce_karakterleri_sadeler() {
         assert_eq!(dosya_slug("Şişli Çiçekçi & Kahve"), "sisli-cicekci-kahve");
+    }
+
+    #[test]
+    fn onizleme_yanlis_isletmede_gecersiz_olur() {
+        let lead = ornek_isletme();
+        let anahtar = musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum);
+        let onizleme = Onizleme {
+            idx: 0,
+            anahtar: anahtar.clone(),
+            mesaj: "merhaba".to_string(),
+        };
+        assert!(onizleme_gecerli(&onizleme, &lead));
+
+        // Yeniden tarama sonrası aynı sırada başka işletme olabilir:
+        // anahtar tutmuyorsa önizleme geçersiz sayılmalı.
+        // Aynı OSM kaydı yeniden adlandırılırsa kimlik değişmez.
+        let mut yeniden_adlandi = ornek_isletme();
+        yeniden_adlandi.name = "Yeniden Adlandırıldı".to_string();
+        assert!(onizleme_gecerli(&onizleme, &yeniden_adlandi));
+        // Kimlik kaynağa bağlıdır: başka OSM kaydı, başka işletme.
+        let mut baska_kayit = ornek_isletme();
+        baska_kayit.kaynak = "https://www.openstreetmap.org/node/999".to_string();
+        assert!(!onizleme_gecerli(&onizleme, &baska_kayit));
+    }
+
+    #[test]
+    fn kayitli_numara_acilista_yuklenir() {
+        let ayar = UygulamaAyari {
+            whatsapp_phone: "+90 532 123 45 67".to_string(),
+        };
+        let (telefon, durum, bagli) = whatsapp_baslangic(&ayar);
+        assert_eq!(telefon, "+90 532 123 45 67");
+        assert!(bagli, "geçerli numara kayıtlı sayılmalı");
+        assert_eq!(durum, "Kayıtlı: +905321234567");
+
+        // Kayıt yoksa uydurma numara gösterilmez.
+        let (telefon, durum, bagli) = whatsapp_baslangic(&UygulamaAyari::default());
+        assert!(telefon.is_empty());
+        assert!(!bagli);
+        assert_eq!(durum, "Numara kaydedilmedi");
+    }
+
+    #[test]
+    fn ayarlar_diske_yazilip_geri_okunur() {
+        let yol = std::env::temp_dir().join(format!(
+            "nexus-ayar-{}-{}.json",
+            std::process::id(),
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let yol = yol.to_string_lossy().to_string();
+
+        // Dosya yokken varsayılan (boş numara) döner.
+        assert_eq!(ayar_oku_yoldan(&yol).whatsapp_phone, "");
+
+        let ayar = UygulamaAyari {
+            whatsapp_phone: "+90 532 123 45 67".to_string(),
+        };
+        ayar_yaz_yoldan(&yol, &ayar).expect("ayar yazılmalı");
+        let okunan = ayar_oku_yoldan(&yol);
+        assert_eq!(okunan.whatsapp_phone, "+90 532 123 45 67");
+        assert_eq!(
+            whatsapp_numarasi(&okunan.whatsapp_phone).as_deref(),
+            Some("905321234567")
+        );
+        let _ = fs::remove_file(&yol);
     }
 
     #[test]

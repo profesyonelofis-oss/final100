@@ -302,6 +302,8 @@ pub struct Musteri {
 pub struct Ozet {
     pub toplam: usize,
     pub yeni: usize,
+    /// Mesaj hazırlanmış ama henüz gönderilmemiş kayıtlar.
+    pub hazir: usize,
     pub gonderilen: usize,
     pub ilgilenen: usize,
     pub kara_liste: usize,
@@ -637,7 +639,8 @@ impl Defter {
         for musteri in &self.dosya.musteriler {
             match musteri.durum {
                 Durum::Yeni => ozet.yeni += 1,
-                Durum::Gonderildi | Durum::MesajHazir => ozet.gonderilen += 1,
+                Durum::MesajHazir => ozet.hazir += 1,
+                Durum::Gonderildi => ozet.gonderilen += 1,
                 Durum::Ilgilendi => ozet.ilgilenen += 1,
                 Durum::Reddetti => ozet.kara_liste += 1,
             }
@@ -838,6 +841,7 @@ mod testler {
         assert_eq!(ozet.toplam, 3);
         assert_eq!(ozet.yeni, 1);
         assert_eq!(ozet.gonderilen, 1);
+        assert_eq!(ozet.hazir, 0);
         assert_eq!(ozet.kara_liste, 1);
         assert!(defter
             .kayit("osm:node/1")
