@@ -4,6 +4,10 @@
 //! idari bölünme listesi (volkansenturk/turkiye-iller-ilceler).
 //! İstanbul varsayılan il olduğu için listenin başında tutulur.
 
+// Veri tablosu: her il tek satır, ilçeler tek satırda kalsın diye rustfmt
+// atlanır (aksi hâlde 973 ilçe ayrı ayrı satırlara dağılır ve veri
+// güncellemelerinin farkı okunamaz hâle gelir).
+#[rustfmt::skip]
 pub const ILLER: &[(&str, &[&str])] = &[
     ("İstanbul",
      &["Adalar", "Arnavutköy", "Ataşehir", "Avcılar", "Bağcılar", "Bahçelievler", "Bakırköy", "Başakşehir", "Bayrampaşa", "Beşiktaş", "Beykoz", "Beylikdüzü", "Beyoğlu", "Büyükçekmece", "Çatalca", "Çekmeköy", "Esenler", "Esenyurt", "Eyüpsultan", "Fatih", "Gaziosmanpaşa", "Güngören", "Kadıköy", "Kağıthane", "Kartal", "Küçükçekmece", "Maltepe", "Pendik", "Sancaktepe", "Sarıyer", "Silivri", "Sultanbeyli", "Sultangazi", "Şile", "Şişli", "Tuzla", "Ümraniye", "Üsküdar", "Zeytinburnu"] ),

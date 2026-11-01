@@ -2,7 +2,7 @@ name: Testler
 
 # İki iş:
 #  1) duman-testi  : Flask web sürümünün uçtan uca duman testi (ubuntu)
-#  2) masaustu-rust: masaüstü uygulamasının testleri + clippy (windows)
+#  2) masaustu-rust: masaüstü uygulamasının biçim denetimi + testleri + clippy (windows)
 #
 # hizli_test.py kendi geçici veritabanını kurar, sunucuyu ayağa kaldırır,
 # tüm ana akışı test eder ve kapanır. Gerçek data/ klasörüne dokunmaz.
@@ -47,7 +47,7 @@ jobs:
         run: .venv/bin/python hizli_test.py
 
   masaustu-rust:
-    name: Masaustu (cargo test + clippy)
+    name: Masaustu (cargo fmt + test + clippy)
     runs-on: windows-latest
     timeout-minutes: 25
 
@@ -55,12 +55,19 @@ jobs:
       - name: Depoyu al
         uses: actions/checkout@v7
 
-      - name: Rust (stable + clippy)
+      - name: Rust (stable + clippy + rustfmt)
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
           rustup default stable
           rustc --version
           cargo clippy --version
+          cargo fmt --version
+
+      # Bicim denetimi en basta kosar: hizlidir (derleme gerektirmez) ve
+      # basarisizsa pahali test/clippy adimlarina hic girilmez. Duzeltmek
+      # icin yerelde `cargo fmt`, ardindan degisikligi commit edin.
+      - name: Bicim denetimi (cargo fmt --check)
+        run: cargo fmt --all -- --check
 
       # İndirilen crate'ler + derleme çıktıları (target/) birlikte önbelleklenir.
       # Anahtar Cargo.lock'a bağlı; kaynak değiştiğinde bağımlılık derlemeleri

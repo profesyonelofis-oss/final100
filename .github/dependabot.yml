@@ -1,0 +1,53 @@
+# Dependabot: bağımlılık güncellemelerini otomatik PR olarak açar.
+#
+# Her PR normal "Testler" iş akışını tetikler (cargo fmt + test + clippy ve
+# uçtan uca duman testi), yani kırmızı bir güncelleme birleştirilmez.
+# Not: requirements.txt ve Cargo.lock sürümleri sabit tuttuğu için güncelleme
+# PR'ları "elle pinleme" ihtiyacını ortadan kaldırır, yalnızca PR'ı onaylamak
+# yeterlidir.
+version: 2
+
+updates:
+  # Masaüstü uygulaması — Cargo.toml / Cargo.lock
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 5
+    groups:
+      # minor + patch tek PR'da toplanır (PR gürültüsünü azaltır);
+      # major sürüm atlamaları inceleme için ayrı PR olarak gelir.
+      rust-kucuk-guncellemeler:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Web sürümü — requirements.txt
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 5
+    groups:
+      python-kucuk-guncellemeler:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # İş akışlarındaki action sürümleri (checkout, setup-python, cache ...)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 5
+    groups:
+      action-kucuk-guncellemeler:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

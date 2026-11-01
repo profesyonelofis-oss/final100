@@ -12,6 +12,18 @@ __pycache__/
 .env
 # google_kota.json: Google yedek aramasının günlük/aylık istek sayacı
 google_kota.json
+# musteri_kayitlari.json: kalıcı müşteri defteri (iletişim durumu, kara liste)
+musteri_kayitlari.json
+# konum_onbellek.json: ilçe koordinat/poligon önbelleği
+konum_onbellek.json
+# sonuc_onbellek.json: ilçe + sektör arama sonucu önbelleği
+sonuc_onbellek.json
+# cikti/: CSV dışa aktarımları
+cikti/
+# demos/: üretilen demo ve karne sayfaları (yayın .yayin/ çalışma kopyasından yapılır)
+demos/
+# .yayin/: GitHub Pages (gh-pages dalı) için ayrı git worktree
+.yayin/
 *.log
 
 # Arayüz doğrulaması için alınan ekran görüntüleri

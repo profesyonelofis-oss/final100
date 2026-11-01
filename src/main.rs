@@ -2,15 +2,30 @@
 
 use chrono::{Datelike, Timelike};
 use eframe::egui;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod iller;
+mod musteriler;
 
+/// İşletmenin web varlığı. Site yaptırmaya niyet göstergesidir: sosyal medya
+/// hesabı olup sitesi olmayan işletme, çevrimiçi görünmek istediğini zaten
+/// göstermiş ama henüz site yaptırmamış demektir — en sıcak hedef kitle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+enum SiteDurumu {
+    /// Hiçbir web etiketi yok.
+    Yok,
+    /// Yalnızca Instagram/Facebook/Linktree gibi bir sosyal medya adresi var.
+    Sosyal,
+    /// Google business.site, WixSite, Blogspot gibi ücretsiz bir araçla kurulmuş site.
+    Ucretsiz,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct BusinessLead {
     name: String,
     address: String,
@@ -22,13 +37,98 @@ struct BusinessLead {
     calisma_saatleri: String,
     demo_yolu: Option<String>,
     mesaj_hazir: bool,
+    /// Kayıttaki ek bilgi miktarı (0-10): mutfak türü, marka, engelli erişimi
+    /// gibi puanlanmayan etiketler. İşletmenin gerçekten var olan ve birileri
+    /// tarafından takip edilen bir yer olduğunun işareti olarak kullanılır.
+    kayit_dolulugu: u8,
+    /// Web varlığı: site yok / yalnızca sosyal medya / ücretsiz site aracı.
+    site: SiteDurumu,
+    /// Bulunan sosyal medya veya ücretsiz site adresi.
+    site_linki: String,
+    /// OSM kaydının son düzenlenmesinden bu yana geçen gün (tazelik).
+    son_guncelleme_gun: Option<i64>,
+    /// Google'daki inceleme sayısı: gerçek müşteri trafiği ve bütçe göstergesi.
+    inceleme_sayisi: Option<u32>,
+    /// Google'daki ortalama yıldız puanı (0-5). Yalnızca Google kaynağında gelir;
+    /// OpenStreetMap'te yorum/puan verisi yoktur. Karnede "4,2 ★ · 37 yorum"
+    /// olarak gösterilir.
+    #[serde(default)]
+    yildiz_puani: Option<f32>,
+    /// Kalıcı defterdeki iletişim durumu (yeni / gönderildi / kara liste...).
+    durum: musteriler::Durum,
+    /// Demo GitHub Pages'e yayınlandıysa paylaşılabilir adresi.
+    #[serde(default)]
+    yayin_linki: Option<String>,
+    /// Aynı yayındaki dijital karnenin adresi (karne üretilemediyse boş).
+    #[serde(default)]
+    karne_linki: Option<String>,
+    /// Defterden gelen mesaj varyantı (A/B denemesi). Gönderimde bu kullanılır.
+    #[serde(default)]
+    mesaj_varyanti: Option<musteriler::Varyant>,
+}
+
+/// Taramada kullanılacak veri kaynağı.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kaynak {
+    /// OpenStreetMap/Overpass: ücretsiz, verisi saklanabilir, ama Türkiye'de
+    /// telefon/çalışma saati kapsaması zayıf.
+    Osm,
+    /// Google Places Text Search: telefon, çalışma saati ve inceleme sayısı
+    /// gelir; aylık ücretsiz kota vardır.
+    Google,
+    /// OSM birincil, OSM boş dönen ilçede Google yedeği (varsayılan).
+    Hibrit,
+}
+
+impl Kaynak {
+    /// Arayüzdeki seçim sırası.
+    const HEPSI: [Kaynak; 3] = [Kaynak::Hibrit, Kaynak::Google, Kaynak::Osm];
+
+    fn etiket(self) -> &'static str {
+        match self {
+            Kaynak::Osm => "OSM",
+            Kaynak::Google => "Google",
+            Kaynak::Hibrit => "Hibrit",
+        }
+    }
+
+    /// Günlükte gösterilecek uzun açıklama.
+    fn aciklama(self) -> &'static str {
+        match self {
+            Kaynak::Osm => "OpenStreetMap (ücretsiz, iletişim bilgisi seyrek)",
+            Kaynak::Google => "Google Places (telefon + inceleme sayısı, kotalı)",
+            Kaynak::Hibrit => "OSM + boş ilçede Google yedeği",
+        }
+    }
+}
+
+/// Sonuç listesinin süzgeci. "Takip" günlük çalışma listesidir: mesaj
+/// gönderilmiş, üzerinden `TAKIP_GUN` gün geçmiş ve hâlâ yanıt bekleyenler.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListeSuzgeci {
+    Hepsi,
+    Yeni,
+    Takip,
+}
+
+/// Mesaj gönderildikten kaç gün sonra takip listesine düşer.
+const TAKIP_GUN: i64 = 3;
+
+/// İki `YYYY-MM-DD` tarihi arasındaki gün farkı.
+fn gun_farki(eski: &str, yeni: &str) -> Option<i64> {
+    let once = chrono::NaiveDate::parse_from_str(eski, "%Y-%m-%d").ok()?;
+    let sonra = chrono::NaiveDate::parse_from_str(yeni, "%Y-%m-%d").ok()?;
+    Some((sonra - once).num_days())
 }
 
 /// Arka plandaki tarama/gönderim işinin arayüze gönderdiği mesajlar.
 enum Mesaj {
     Log(String),
     /// İl geneli taramasında tamamlanan ilçe sayısı ve toplam ilçe.
-    Ilerleme { tamamlanan: usize, toplam: usize },
+    Ilerleme {
+        tamamlanan: usize,
+        toplam: usize,
+    },
     TaramaBitti(Vec<BusinessLead>),
     TaramaBasarisiz,
 }
@@ -40,14 +140,20 @@ pub struct LeadApp {
     selected_city_idx: usize,
     selected_district_idx: usize,
     selected_sector_idx: usize,
-    
+
     city_search: String,
     district_search: String,
     sector_search: String,
     sonuc_arama: String,
-    
+
     leads: Vec<BusinessLead>,
-    
+    /// Seçili arama kaynağı (OSM / Google / Hibrit).
+    kaynak: Kaynak,
+    /// Sonuç listesinin süzgeci (tümü / yalnızca yeni / takip bekleyenler).
+    liste_suzgeci: ListeSuzgeci,
+    /// Kalıcı müşteri defteri: durumlar, kara liste ve mükerrer engeli.
+    defter: musteriler::Defter,
+
     whatsapp_phone: String,
     whatsapp_status: String,
     is_whatsapp_connected: bool,
@@ -89,17 +195,20 @@ impl Default for LeadApp {
         Self {
             cities,
             sectors,
+            kaynak: Kaynak::Hibrit,
+            liste_suzgeci: ListeSuzgeci::Hepsi,
+            defter: musteriler::Defter::yukle(),
             selected_city_idx: 0, // İstanbul (listenin ilk satırı)
             selected_district_idx: varsayilan_ilce,
             selected_sector_idx: 0,
-            
+
             city_search: "".to_string(),
             district_search: "".to_string(),
             sector_search: "".to_string(),
             sonuc_arama: "".to_string(),
-            
+
             leads: vec![],
-            
+
             whatsapp_phone: "+90 500 000 00 00".to_string(),
             whatsapp_status: "Numara doğrulanmadı".to_string(),
             is_whatsapp_connected: false,
@@ -296,13 +405,14 @@ fn tema_uygula(ctx: &egui::Context) {
     visuals.window_rounding = egui::Rounding::same(YUVARLAK_KART);
     visuals.menu_rounding = egui::Rounding::same(10.0);
 
-    let kenarli = |w: &mut egui::style::WidgetVisuals, dolgu: egui::Color32, kenar: egui::Color32| {
-        w.bg_fill = dolgu;
-        w.weak_bg_fill = dolgu;
-        w.bg_stroke = egui::Stroke::new(1.0_f32, kenar);
-        w.rounding = egui::Rounding::same(YUVARLAK_KUCUK);
-        w.expansion = 0.0;
-    };
+    let kenarli =
+        |w: &mut egui::style::WidgetVisuals, dolgu: egui::Color32, kenar: egui::Color32| {
+            w.bg_fill = dolgu;
+            w.weak_bg_fill = dolgu;
+            w.bg_stroke = egui::Stroke::new(1.0_f32, kenar);
+            w.rounding = egui::Rounding::same(YUVARLAK_KUCUK);
+            w.expansion = 0.0;
+        };
 
     kenarli(&mut visuals.widgets.noninteractive, PANEL, KENAR);
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, METIN);
@@ -329,10 +439,7 @@ fn tema_uygula(ctx: &egui::Context) {
     style.spacing.scroll.foreground_color = false;
 
     style.text_styles = [
-        (
-            egui::TextStyle::Heading,
-            baslik_font(18.0),
-        ),
+        (egui::TextStyle::Heading, baslik_font(18.0)),
         (egui::TextStyle::Body, govde_font(13.0)),
         (egui::TextStyle::Button, govde_font(13.0)),
         (egui::TextStyle::Small, govde_font(11.0)),
@@ -418,12 +525,7 @@ fn birincil_buton(
     etkin: bool,
     boy: Option<egui::Vec2>,
 ) -> egui::Response {
-    let boy = boy.unwrap_or_else(|| {
-        egui::vec2(
-            metin_genisligi(ui, metin, 12.0) + 32.0,
-            30.0,
-        )
-    });
+    let boy = boy.unwrap_or_else(|| egui::vec2(metin_genisligi(ui, metin, 12.0) + 32.0, 30.0));
     let (rect, yanit) = ui.allocate_exact_size(
         boy,
         if etkin {
@@ -453,8 +555,13 @@ fn birincil_buton(
         egui::Rounding::same(YUVARLAK_KUCUK),
         egui::Stroke::new(1.0_f32, kenar),
     );
-    ui.painter()
-        .text(rect.center(), egui::Align2::CENTER_CENTER, metin, baslik_font(12.0), yazi);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        metin,
+        baslik_font(12.0),
+        yazi,
+    );
     yanit
 }
 
@@ -465,12 +572,7 @@ fn ikincil_buton(
     etkin: bool,
     boy: Option<egui::Vec2>,
 ) -> egui::Response {
-    let boy = boy.unwrap_or_else(|| {
-        egui::vec2(
-            metin_genisligi(ui, metin, 11.5) + 28.0,
-            30.0,
-        )
-    });
+    let boy = boy.unwrap_or_else(|| egui::vec2(metin_genisligi(ui, metin, 11.5) + 28.0, 30.0));
     let (rect, yanit) = ui.allocate_exact_size(
         boy,
         if etkin {
@@ -496,8 +598,13 @@ fn ikincil_buton(
         egui::Rounding::same(YUVARLAK_KUCUK),
         egui::Stroke::new(1.0_f32, kenar),
     );
-    ui.painter()
-        .text(rect.center(), egui::Align2::CENTER_CENTER, metin, govde_font(11.5), yazi);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        metin,
+        govde_font(11.5),
+        yazi,
+    );
     yanit
 }
 
@@ -686,8 +793,11 @@ fn sektor_satiri(ui: &mut egui::Ui, ad: &str, alt: &str, secili: bool) -> egui::
         ui.painter()
             .rect_filled(cubuk, egui::Rounding::same(2.0), VURGU);
     } else if t > 0.0 {
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(7.0), KENAR.gamma_multiply(t * 0.8));
+        ui.painter().rect_filled(
+            rect,
+            egui::Rounding::same(7.0),
+            KENAR.gamma_multiply(t * 0.8),
+        );
     }
     ui.painter().text(
         rect.left_center() + egui::vec2(13.0, 0.0),
@@ -772,8 +882,10 @@ fn secim_dairesi(ui: &mut egui::Ui, secili: &mut bool) -> egui::Response {
             merkez + egui::vec2(-0.9, 3.0),
             merkez + egui::vec2(4.0, -3.0),
         ];
-        ui.painter()
-            .add(egui::Shape::line(onay, egui::Stroke::new(1.7_f32, KOYU_YAZI)));
+        ui.painter().add(egui::Shape::line(
+            onay,
+            egui::Stroke::new(1.7_f32, KOYU_YAZI),
+        ));
     } else {
         let renk = if yanit.hovered() { KENAR_GUCLU } else { KENAR };
         ui.painter()
@@ -870,20 +982,33 @@ fn demo_ac(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) {
     if let Some(yol) = lead.demo_yolu.clone() {
         if let Err(hata) = tarayicida_ac(&yol) {
             logs.push(format!("[!] Demo açılamadı: {hata}"));
+        } else {
+            logs.push(format!(
+                "[i] {}: demo ile birlikte dijital karne de hazır → {}/{}",
+                lead.name,
+                DEMO_KLASORU,
+                karne_dosya_adi(lead)
+            ));
         }
     }
 }
 
 /// Hazır mesajla WhatsApp sohbetini açar; göndermeyi kullanıcı yapar.
 fn whatsapp_ac(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) {
+    if lead.durum.kara_listede() {
+        logs.push(format!(
+            "[!] {} mesaj istemedi (kara liste); WhatsApp açılmadı.",
+            lead.name
+        ));
+        return;
+    }
     let Some(numara) = whatsapp_numarasi(&lead.phone) else {
         return;
     };
-    if lead.demo_yolu.is_none() {
-        match demo_uret(lead, gonderen) {
-            Ok(yol) => lead.demo_yolu = Some(yol),
-            Err(hata) => logs.push(format!("[!] {hata}")),
-        }
+    // Mesajda paylaşılabilir link olsun: yayınlanmamışsa önce demo yayınlanır.
+    // Yayın başarısız olursa mesaj link olmadan açılır, gönderim engellenmez.
+    if lead.yayin_linki.is_none() {
+        yayina_gonder_ve_link_al(lead, gonderen, logs);
     }
     let url = format!(
         "https://wa.me/{numara}?text={}",
@@ -986,12 +1111,19 @@ fn kart_ciz(
                             if lead.mesaj_hazir {
                                 pill(ui, "mesaj hazır", VURGU);
                             }
+                            if potansiyel_puani(lead) >= SICAK_ESIK {
+                                pill(ui, "sıcak fırsat", YESIL);
+                            }
+                            match lead.site {
+                                SiteDurumu::Sosyal => pill(ui, "sosyal medya var", MAVI),
+                                SiteDurumu::Ucretsiz => pill(ui, "ücretsiz site", MAVI),
+                                SiteDurumu::Yok => {}
+                            }
+                            if whatsapp_numarasi(&lead.phone).is_none() {
+                                pill(ui, "telefon yok", KIRMIZI);
+                            }
                         });
-                        ui.label(
-                            egui::RichText::new(&lead.address)
-                                .size(11.5)
-                                .color(SOLUK),
-                        );
+                        ui.label(egui::RichText::new(&lead.address).size(11.5).color(SOLUK));
 
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
@@ -1003,8 +1135,7 @@ fn kart_ciz(
                                 if !alt_satir.is_empty() {
                                     alt_satir.push_str("   ·   ");
                                 }
-                                alt_satir
-                                    .push_str(&calisma_saatleri_metni(&lead.calisma_saatleri));
+                                alt_satir.push_str(&calisma_saatleri_metni(&lead.calisma_saatleri));
                             }
                             if !alt_satir.is_empty() {
                                 ui.label(egui::RichText::new(alt_satir).size(11.0).color(DIM));
@@ -1051,7 +1182,8 @@ fn kart_ciz(
     let rect = ic.response.rect;
     let yanit = ui.interact(
         rect,
-        ui.make_persistent_id(("kart", &lead.kaynak, &lead.name)).with("hover"),
+        ui.make_persistent_id(("kart", &lead.kaynak, &lead.name))
+            .with("hover"),
         egui::Sense::hover(),
     );
     let t = ui
@@ -1080,6 +1212,19 @@ impl LeadApp {
         }
 
         let mut kapat = false;
+        let mut yeni_durum: Option<musteriler::Durum> = None;
+        // Defterdeki son temas tarihi panelde gösterilir (iptal öncesi okunur).
+        let anahtar = musteriler::anahtar_uret(
+            &self.leads[idx].kaynak,
+            &self.leads[idx].name,
+            self.leads[idx].konum,
+        );
+        let son_temas = self
+            .defter
+            .kayit(&anahtar)
+            .and_then(|kayit| kayit.son_temas.clone());
+        // A/B sayaçları panelde tek satırda gösterilir.
+        let varyant_ozeti = self.defter.varyant_ozeti();
         egui::SidePanel::right("detay_paneli")
             .resizable(false)
             .exact_width(348.0)
@@ -1108,7 +1253,8 @@ impl LeadApp {
                 );
                 ui.add_space(10.0);
 
-                let aksiyon_yuksekligi = 148.0;
+                // WhatsApp + demo + karne + yayın düğmeleri ve kaynak bağlantısı.
+                let aksiyon_yuksekligi = 242.0;
                 let kaydirma = (ui.available_height() - aksiyon_yuksekligi).max(140.0);
                 egui::ScrollArea::vertical()
                     .max_height(kaydirma)
@@ -1130,6 +1276,17 @@ impl LeadApp {
                                     pill(ui, &lead.category, renk);
                                     if lead.mesaj_hazir {
                                         pill(ui, "mesaj hazır", VURGU);
+                                    }
+                                    if potansiyel_puani(lead) >= SICAK_ESIK {
+                                        pill(ui, "sıcak fırsat", YESIL);
+                                    }
+                                    match lead.site {
+                                        SiteDurumu::Sosyal => pill(ui, "sosyal medya var", MAVI),
+                                        SiteDurumu::Ucretsiz => pill(ui, "ücretsiz site", MAVI),
+                                        SiteDurumu::Yok => {}
+                                    }
+                                    if whatsapp_numarasi(&lead.phone).is_none() {
+                                        pill(ui, "telefon yok", KIRMIZI);
                                     }
                                 });
                             });
@@ -1173,6 +1330,88 @@ impl LeadApp {
                             ui.add_space(14.0);
                         }
 
+                        detay_satiri(ui, "SATIN ALMA POTANSİYELİ", &potansiyel_gerekcesi(lead));
+                        detay_satiri(ui, "MÜŞTERİ DURUMU", lead.durum.etiket());
+                        // A/B: hangi varyant gitti ve yanıt durumu ne âlemde.
+                        let varyant = lead.mesaj_varyanti.unwrap_or_default();
+                        let yanit = match lead.durum {
+                            musteriler::Durum::Yeni | musteriler::Durum::MesajHazir => {
+                                "henüz gönderilmedi"
+                            }
+                            musteriler::Durum::Gonderildi => "yanıt bekleniyor",
+                            musteriler::Durum::Ilgilendi => "olumlu yanıt",
+                            musteriler::Durum::Reddetti => "olumsuz yanıt",
+                        };
+                        detay_satiri(
+                            ui,
+                            "MESAJ VARYANTI",
+                            &format!("{} · {yanit}", varyant.etiket()),
+                        );
+                        ui.horizontal(|ui| {
+                            let dugme = |ui: &mut egui::Ui, metin: &str| {
+                                ikincil_buton(ui, metin, true, Some(egui::vec2(94.0, 28.0))).clicked()
+                            };
+                            if dugme(ui, "Gönderdim") {
+                                yeni_durum = Some(musteriler::Durum::Gonderildi);
+                            }
+                            if dugme(ui, "İlgileniyor") {
+                                yeni_durum = Some(musteriler::Durum::Ilgilendi);
+                            }
+                            if dugme(ui, "Reddetti") {
+                                yeni_durum = Some(musteriler::Durum::Reddetti);
+                            }
+                        });
+                        if lead.durum.kara_listede() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Kara listede: bu işletmeye bir daha mesaj hazırlanmaz.",
+                                )
+                                .size(11.0)
+                                .color(KIRMIZI),
+                            );
+                        } else if let Some(temas) = &son_temas {
+                            ui.label(
+                                egui::RichText::new(format!("İlk temas: {temas}"))
+                                    .size(10.5)
+                                    .color(DIM),
+                            );
+                        }
+                        if varyant_ozeti.iter().any(|ozet| ozet.gonderim > 0) {
+                            let satirlar: Vec<String> = musteriler::Varyant::HEPSI
+                                .iter()
+                                .map(|varyant| varyant_ozeti[varyant.sira()].satir())
+                                .collect();
+                            ui.add_space(3.0);
+                            ui.label(
+                                egui::RichText::new(format!("A/B: {}", satirlar.join("  ·  ")))
+                                    .size(10.5)
+                                    .color(DIM),
+                            );
+                        }
+                        ui.add_space(12.0);
+                        if !lead.site_linki.is_empty() {
+                            let baslik = match lead.site {
+                                SiteDurumu::Sosyal => "SOSYAL MEDYA",
+                                SiteDurumu::Ucretsiz => "ÜCRETSİZ SİTE",
+                                SiteDurumu::Yok => "WEB ADRESİ",
+                            };
+                            ui.label(
+                                egui::RichText::new(baslik)
+                                    .font(baslik_font(9.5))
+                                    .color(DIM),
+                            );
+                            ui.add_space(3.0);
+                            let gosterim = if lead.site_linki.chars().count() > 44 {
+                                format!("{}…", lead.site_linki.chars().take(44).collect::<String>())
+                            } else {
+                                lead.site_linki.clone()
+                            };
+                            ui.hyperlink_to(
+                                egui::RichText::new(gosterim).size(12.0).color(MAVI),
+                                &lead.site_linki,
+                            );
+                            ui.add_space(12.0);
+                        }
                         detay_satiri(ui, "ADRES", &lead.address);
                         detay_satiri(
                             ui,
@@ -1272,6 +1511,40 @@ impl LeadApp {
                 {
                     demo_ac(lead, gonderen, &mut self.logs);
                 }
+
+                ui.add_space(8.0);
+                if ikincil_buton(ui, "Dijital karne", true, Some(egui::vec2(IC_GENISLIK, 38.0)))
+                    .on_hover_text("Eksikleri ve puanı tek sayfada gösterir; demo ile birlikte üretilir")
+                    .clicked()
+                {
+                    karne_ac(lead, gonderen, &mut self.logs);
+                }
+
+                ui.add_space(8.0);
+                if ikincil_buton(
+                    ui,
+                    if lead.yayin_linki.is_some() {
+                        "Yayın linkini yenile"
+                    } else {
+                        "Demo linki oluştur"
+                    },
+                    true,
+                    Some(egui::vec2(IC_GENISLIK, 38.0)),
+                )
+                .on_hover_text("Demoyu GitHub Pages'e yayınlar; linki müşteriye gönderebilirsiniz")
+                .clicked()
+                {
+                    demo_yayinla(lead, gonderen, &mut self.logs);
+                }
+                if let Some(link) = lead.yayin_linki.clone() {
+                    ui.add_space(2.0);
+                    ui.hyperlink_to(
+                        egui::RichText::new("Yayındaki demo linki")
+                            .size(10.5)
+                            .color(MAVI),
+                        link,
+                    );
+                }
                 ui.add_space(2.0);
                 ui.hyperlink_to(
                     egui::RichText::new(kaynak_etiketi(&lead.kaynak))
@@ -1281,12 +1554,40 @@ impl LeadApp {
                 );
             });
 
+        if let Some(durum) = yeni_durum {
+            let lead = &self.leads[idx];
+            let anahtar = musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum);
+            self.defter.durum_ayarla(&anahtar, durum, &bugun_anahtari());
+            self.defter.kaydet();
+            self.leads[idx].durum = durum;
+            self.logs
+                .push(format!("[i] {} → {}", self.leads[idx].name, durum.etiket()));
+        }
         if kapat {
             self.detay_idx = None;
         }
     }
 
     /// Seçili il, ilçe (ya da il geneli) ve sektörle yeni bir tarama başlatır.
+    /// Takip zamanı gelmiş işletmelerin defter anahtarları: mesaj gönderileli
+    /// `TAKIP_GUN` günden fazla olmuş, hâlâ yanıt bekleyenler.
+    fn takip_bekleyenler(&self, bugun: &str) -> HashSet<String> {
+        self.defter
+            .kayitlar()
+            .iter()
+            .filter(|kayit| kayit.durum == musteriler::Durum::Gonderildi)
+            .filter(|kayit| {
+                kayit
+                    .son_temas
+                    .as_deref()
+                    .and_then(|temas| gun_farki(temas, bugun))
+                    .map(|gun| gun >= TAKIP_GUN)
+                    .unwrap_or(false)
+            })
+            .map(|kayit| kayit.anahtar.clone())
+            .collect()
+    }
+
     fn tarama_baslat(&mut self) {
         if self.is_running {
             return;
@@ -1304,7 +1605,8 @@ impl LeadApp {
             Some(self.cities[self.selected_city_idx].1[self.selected_district_idx].to_string())
         };
         let sektor = self.sectors[self.selected_sector_idx].to_string();
-        thread::spawn(move || tarama_calistir(tx, il, ilce, sektor));
+        let kaynak = self.kaynak;
+        thread::spawn(move || tarama_calistir(tx, il, ilce, sektor, kaynak));
     }
 
     /// İki sütunlu sektör seçim paneli: solda tüm gruplar, sağda seçili grubun
@@ -1417,8 +1719,13 @@ impl LeadApp {
                                         .iter()
                                         .filter(|tanim| tanim.grup == *grup)
                                         .count();
-                                    if grup_satiri(&mut kolonlar[idx % 2], grup, sayi, *grup == aktif)
-                                        .clicked()
+                                    if grup_satiri(
+                                        &mut kolonlar[idx % 2],
+                                        grup,
+                                        sayi,
+                                        *grup == aktif,
+                                    )
+                                    .clicked()
                                     {
                                         secilen_grup = Some(idx);
                                     }
@@ -1435,101 +1742,120 @@ impl LeadApp {
                 egui::vec2(sag_genislik, govde),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-            egui::Frame::none()
-                .fill(GIRINTI)
-                .stroke(egui::Stroke::new(1.0_f32, KENAR))
-                .rounding(egui::Rounding::same(10.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 8.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(govde - 2.0);
-                    let sorgu = arama_anahtari(&self.sector_search);
-                    let mut secilen_sektor: Option<usize> = None;
+                    egui::Frame::none()
+                        .fill(GIRINTI)
+                        .stroke(egui::Stroke::new(1.0_f32, KENAR))
+                        .rounding(egui::Rounding::same(10.0))
+                        .inner_margin(egui::Margin::symmetric(6.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_height(govde - 2.0);
+                            let sorgu = arama_anahtari(&self.sector_search);
+                            let mut secilen_sektor: Option<usize> = None;
 
-                    if sorgu.is_empty() {
-                        let grup = gruplar[self.sektor_panel_grup];
-                        let sektorler = grup_sektorleri(grup);
-                        ui.horizontal(|ui| {
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(grup)
-                                    .font(baslik_font(12.5))
-                                    .color(METIN),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{} sektör", sektorler.len()))
-                                            .size(10.0)
-                                            .color(DIM),
-                                    );
-                                },
-                            );
-                        });
-                        ui.add_space(8.0);
-                        ui.spacing_mut().item_spacing.y = 1.0;
-                        for ad in sektorler {
-                            let secili = self.sectors[self.selected_sector_idx] == ad;
-                            if sektor_satiri(ui, ad, "", secili).clicked() {
-                                secilen_sektor = Some(sektor_sirasi(ad));
-                            }
-                        }
-                    } else {
-                        let bulunanlar: Vec<&'static str> = SEKTORLER
-                            .iter()
-                            .filter(|tanim| arama_anahtari(tanim.ad).contains(&sorgu))
-                            .map(|tanim| tanim.ad)
-                            .collect();
-                        ui.horizontal(|ui| {
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new("Arama")
-                                    .font(baslik_font(12.5))
-                                    .color(METIN),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{} sonuç", bulunanlar.len()))
-                                            .size(10.0)
-                                            .color(DIM),
-                                    );
-                                },
-                            );
-                        });
-                        ui.add_space(8.0);
-                        egui::ScrollArea::vertical()
-                            .id_source("panel_arama")
-                            .max_height(govde - 56.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for ad in &bulunanlar {
-                                    let secili = self.sectors[self.selected_sector_idx] == *ad;
-                                    if sektor_satiri(ui, ad, sektor_grubu(ad), secili).clicked() {
-                                        secilen_sektor = Some(sektor_sirasi(ad));
-                                    }
-                                }
-                                if bulunanlar.is_empty() {
+                            if sorgu.is_empty() {
+                                let grup = gruplar[self.sektor_panel_grup];
+                                let sektorler = grup_sektorleri(grup);
+                                ui.horizontal(|ui| {
                                     ui.add_space(4.0);
                                     ui.label(
-                                        egui::RichText::new("Eşleşen sektör yok")
-                                            .size(11.0)
-                                            .color(DIM),
+                                        egui::RichText::new(grup)
+                                            .font(baslik_font(12.5))
+                                            .color(METIN),
                                     );
-                                }
-                            });
-                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} sektör",
+                                                    sektorler.len()
+                                                ))
+                                                .size(10.0)
+                                                .color(DIM),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.add_space(8.0);
+                                // Grup genişledikçe liste panelin dışına taşabilir:
+                                // sektör listesi kaydırılabilir olmalı.
+                                egui::ScrollArea::vertical()
+                                    .id_source("panel_grup_sektorler")
+                                    .max_height(govde - 56.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        for ad in sektorler {
+                                            let secili =
+                                                self.sectors[self.selected_sector_idx] == ad;
+                                            if sektor_satiri(ui, ad, "", secili).clicked() {
+                                                secilen_sektor = Some(sektor_sirasi(ad));
+                                            }
+                                        }
+                                    });
+                            } else {
+                                let bulunanlar: Vec<&'static str> = SEKTORLER
+                                    .iter()
+                                    .filter(|tanim| arama_anahtari(tanim.ad).contains(&sorgu))
+                                    .map(|tanim| tanim.ad)
+                                    .collect();
+                                ui.horizontal(|ui| {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new("Arama")
+                                            .font(baslik_font(12.5))
+                                            .color(METIN),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} sonuç",
+                                                    bulunanlar.len()
+                                                ))
+                                                .size(10.0)
+                                                .color(DIM),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.add_space(8.0);
+                                egui::ScrollArea::vertical()
+                                    .id_source("panel_arama")
+                                    .max_height(govde - 56.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        for ad in &bulunanlar {
+                                            let secili =
+                                                self.sectors[self.selected_sector_idx] == *ad;
+                                            if sektor_satiri(ui, ad, sektor_grubu(ad), secili)
+                                                .clicked()
+                                            {
+                                                secilen_sektor = Some(sektor_sirasi(ad));
+                                            }
+                                        }
+                                        if bulunanlar.is_empty() {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                egui::RichText::new("Eşleşen sektör yok")
+                                                    .size(11.0)
+                                                    .color(DIM),
+                                            );
+                                        }
+                                    });
+                            }
 
-                    if let Some(idx) = secilen_sektor {
-                        self.selected_sector_idx = idx;
-                        self.bos_ilce_uyari = None;
-                        *kapat = true;
-                    }
-                });
+                            if let Some(idx) = secilen_sektor {
+                                self.selected_sector_idx = idx;
+                                self.bos_ilce_uyari = None;
+                                *kapat = true;
+                            }
+                        });
                 },
             );
         });
@@ -1557,8 +1883,11 @@ impl LeadApp {
                     ui.horizontal(|ui| {
                         let (nokta, _) =
                             ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
-                        ui.painter()
-                            .circle_filled(nokta.center(), 3.5, if bagli { YESIL } else { DIM });
+                        ui.painter().circle_filled(
+                            nokta.center(),
+                            3.5,
+                            if bagli { YESIL } else { DIM },
+                        );
                         ui.add_space(3.0);
                         let gorunen_numara = if numara.is_some() {
                             self.whatsapp_phone.trim().to_string()
@@ -1570,14 +1899,11 @@ impl LeadApp {
                                 .size(11.5)
                                 .color(if bagli { METIN } else { SOLUK }),
                         );
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if hayalet_buton(ui, "Düzenle").clicked() {
-                                    self.whatsapp_acik = true;
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if hayalet_buton(ui, "Düzenle").clicked() {
+                                self.whatsapp_acik = true;
+                            }
+                        });
                     });
                 });
             return;
@@ -1667,11 +1993,51 @@ impl eframe::App for LeadApp {
                 Mesaj::Ilerleme { tamamlanan, toplam } => {
                     self.ilerleme = Some((tamamlanan, toplam));
                 }
-                Mesaj::TaramaBitti(bulunanlar) => {
+                Mesaj::TaramaBitti(mut bulunanlar) => {
                     self.is_running = false;
                     self.ilerleme = None;
                     self.detay_idx = None;
                     let adet = bulunanlar.len();
+                    // Kalıcı deftere işle: mükerrer kayıt açılmaz, daha önce
+                    // temas edilmiş veya kara listedeki işletmenin durumu gelir.
+                    let bugun = bugun_anahtari();
+                    let mut bilinen = 0usize;
+                    for lead in bulunanlar.iter_mut() {
+                        let anahtar =
+                            musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum);
+                        let durum = self.defter.isle(
+                            &anahtar,
+                            &lead.name,
+                            &lead.phone,
+                            &lead.address,
+                            &lead.category,
+                            &lead.kaynak,
+                            site_kodu(lead.site),
+                            &lead.site_linki,
+                            potansiyel_puani(lead),
+                            &bugun,
+                        );
+                        if durum != musteriler::Durum::Yeni {
+                            bilinen += 1;
+                        }
+                        lead.durum = durum;
+                        // Mesaj varyantı defterde tutulur; aynı işletmeye hep aynı
+                        // varyant gider, böylece A/B ölçümü karışmaz.
+                        lead.mesaj_varyanti = Some(self.defter.varyant(&anahtar));
+                    }
+                    self.defter.kaydet();
+                    if self.kaynak == Kaynak::Google {
+                        incelemeye_gore_sirala(&mut bulunanlar);
+                    } else {
+                        leads_sirala(&mut bulunanlar);
+                    }
+                    let ozet = self.defter.ozet();
+                    self.logs.push(format!(
+                        "[i] Müşteri defteri: {} yeni kayıt, {bilinen} bilinen işletme · toplam {} kayıt ({} kara listede).",
+                        adet.saturating_sub(bilinen),
+                        ozet.toplam,
+                        ozet.kara_liste
+                    ));
                     self.leads = bulunanlar;
                     let il = self.cities[self.selected_city_idx].0;
                     if il_geneline_gecilir(adet, self.il_geneli) {
@@ -1694,7 +2060,8 @@ impl eframe::App for LeadApp {
                         self.bos_ilce_uyari = Some(format!("{il} geneli"));
                     } else {
                         self.bos_ilce_uyari = None;
-                        self.logs.push(format!("[✓] {adet} işletme listeye eklendi."));
+                        self.logs
+                            .push(format!("[✓] {adet} işletme listeye eklendi."));
                     }
                 }
                 Mesaj::TaramaBasarisiz => {
@@ -1711,7 +2078,11 @@ impl eframe::App for LeadApp {
         }
 
         let secili = self.leads.iter().filter(|lead| lead.selected).count();
-        let demo_hazir = self.leads.iter().filter(|lead| lead.demo_yolu.is_some()).count();
+        let demo_hazir = self
+            .leads
+            .iter()
+            .filter(|lead| lead.demo_yolu.is_some())
+            .count();
         let gonderen = whatsapp_numarasi(&self.whatsapp_phone)
             .map(|numara| format!("+{numara}"))
             .unwrap_or_default();
@@ -1757,7 +2128,8 @@ impl eframe::App for LeadApp {
                     });
 
                     ui.add_space(20.0);
-                    let (cizgi, _) = ui.allocate_exact_size(egui::vec2(1.0, 30.0), egui::Sense::hover());
+                    let (cizgi, _) =
+                        ui.allocate_exact_size(egui::vec2(1.0, 30.0), egui::Sense::hover());
                     ui.painter().rect_filled(cizgi, 0.0, KENAR);
 
                     ui.add_space(20.0);
@@ -1772,38 +2144,33 @@ impl eframe::App for LeadApp {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(sektor).size(11.0).color(DIM));
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            durum_pill(ui, self.is_running);
-                            ui.add_space(10.0);
-                            if secili > 0 {
-                                ui.label(
-                                    egui::RichText::new(format!("{secili} seçili"))
-                                        .size(11.5)
-                                        .color(VURGU),
-                                );
-                                ui.add_space(8.0);
-                            }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        durum_pill(ui, self.is_running);
+                        ui.add_space(10.0);
+                        if secili > 0 {
                             ui.label(
-                                egui::RichText::new(format!("{} sonuç", self.leads.len()))
+                                egui::RichText::new(format!("{secili} seçili"))
                                     .size(11.5)
-                                    .color(SOLUK),
+                                    .color(VURGU),
                             );
-                            ui.add_space(10.0);
-                            ui.label(
-                                egui::RichText::new("canlı OSM verisi")
-                                    .size(10.5)
-                                    .color(DIM),
-                            );
-                            ui.add_space(6.0);
-                            let (nokta, _) = ui.allocate_exact_size(
-                                egui::vec2(7.0, 7.0),
-                                egui::Sense::hover(),
-                            );
-                            ui.painter().circle_filled(nokta.center(), 3.0, YESIL);
-                        },
-                    );
+                            ui.add_space(8.0);
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("{} sonuç", self.leads.len()))
+                                .size(11.5)
+                                .color(SOLUK),
+                        );
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("canlı OSM verisi")
+                                .size(10.5)
+                                .color(DIM),
+                        );
+                        ui.add_space(6.0);
+                        let (nokta, _) =
+                            ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
+                        ui.painter().circle_filled(nokta.center(), 3.0, YESIL);
+                    });
                 });
 
                 let alt = ui.max_rect().bottom() - 0.5;
@@ -1826,20 +2193,17 @@ impl eframe::App for LeadApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     bolum_etiketi(ui, "FİLTRELER");
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if hayalet_buton(ui, "Sıfırla").clicked() {
-                                self.selected_sector_idx = 0;
-                                self.selected_district_idx = 0;
-                                self.il_geneli = false;
-                                self.bos_ilce_uyari = None;
-                                self.city_search.clear();
-                                self.district_search.clear();
-                                self.sector_search.clear();
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "Sıfırla").clicked() {
+                            self.selected_sector_idx = 0;
+                            self.selected_district_idx = 0;
+                            self.il_geneli = false;
+                            self.bos_ilce_uyari = None;
+                            self.city_search.clear();
+                            self.district_search.clear();
+                            self.sector_search.clear();
+                        }
+                    });
                 });
                 ui.label(
                     egui::RichText::new(format!(
@@ -1854,8 +2218,7 @@ impl eframe::App for LeadApp {
                 ui.add_space(10.0);
 
                 let wa_yuksekligi = if self.whatsapp_acik { 200.0 } else { 72.0 };
-                let kaydirma_yuksekligi =
-                    (ui.available_height() - wa_yuksekligi - 78.0).max(160.0);
+                let kaydirma_yuksekligi = (ui.available_height() - wa_yuksekligi - 78.0).max(160.0);
                 egui::ScrollArea::vertical()
                     .max_height(kaydirma_yuksekligi)
                     .auto_shrink([false, false])
@@ -1871,9 +2234,7 @@ impl eframe::App for LeadApp {
                             let secili_idx = &mut self.selected_city_idx;
                             secim_listesi(ui, "il_listesi", 104.0, None, |ui| {
                                 for (idx, (ad, _)) in cities.iter().enumerate() {
-                                    if !sorgu.is_empty()
-                                        && !arama_anahtari(ad).contains(&sorgu)
-                                    {
+                                    if !sorgu.is_empty() && !arama_anahtari(ad).contains(&sorgu) {
                                         continue;
                                     }
                                     if liste_satiri(ui, *secili_idx == idx, ad).clicked() {
@@ -1891,10 +2252,12 @@ impl eframe::App for LeadApp {
                         ui.add_space(12.0);
 
                         // İlçe
-                        if self.selected_district_idx >= self.cities[self.selected_city_idx].1.len() {
+                        if self.selected_district_idx >= self.cities[self.selected_city_idx].1.len()
+                        {
                             self.selected_district_idx = 0;
                         }
-                        let ilce = self.cities[self.selected_city_idx].1[self.selected_district_idx];
+                        let ilce =
+                            self.cities[self.selected_city_idx].1[self.selected_district_idx];
                         if filtre_basligi_ilce(ui, "İlçe", ilce, self.il_geneli) {
                             self.il_geneli = !self.il_geneli;
                             self.bos_ilce_uyari = None;
@@ -1916,7 +2279,9 @@ impl eframe::App for LeadApp {
                                     if !sorgu.is_empty() && !arama_anahtari(ad).contains(&sorgu) {
                                         continue;
                                     }
-                                    if liste_satiri(ui, !il_geneli && secili_idx == idx, ad).clicked() {
+                                    if liste_satiri(ui, !il_geneli && secili_idx == idx, ad)
+                                        .clicked()
+                                    {
                                         secili_idx = idx;
                                     }
                                 }
@@ -1942,6 +2307,18 @@ impl eframe::App for LeadApp {
                                 .unwrap_or(0);
                         }
 
+                        // Kaynak: OSM / Google / Hibrit.
+                        ui.add_space(12.0);
+                        filtre_basligi(ui, "Kaynak", self.kaynak.etiket());
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            for kaynak in Kaynak::HEPSI {
+                                if filtre_cipi(ui, kaynak.etiket(), self.kaynak == kaynak).clicked()
+                                {
+                                    self.kaynak = kaynak;
+                                }
+                            }
+                        });
                     });
 
                 ui.add_space(10.0);
@@ -1979,7 +2356,8 @@ impl eframe::App for LeadApp {
 
         // --- Alt panel: işlem günlüğü ---------------------------------------
         egui::TopBottomPanel::bottom("gunluk_paneli")
-            .resizable(true)                .default_height(100.0)
+            .resizable(true)
+            .default_height(100.0)
             .min_height(84.0)
             .max_height(280.0)
             .frame(
@@ -1998,14 +2376,11 @@ impl eframe::App for LeadApp {
                             .size(10.0)
                             .color(DIM),
                     );
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if hayalet_buton(ui, "Temizle").clicked() {
-                                self.logs.clear();
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hayalet_buton(ui, "Temizle").clicked() {
+                            self.logs.clear();
+                        }
+                    });
                 });
                 ui.add_space(4.0);
                 let gunluk_yuksekligi = (ui.available_height() - 18.0).max(40.0);
@@ -2073,6 +2448,13 @@ impl eframe::App for LeadApp {
                 ui.add_space(14.0);
 
                 // Araç çubuğu: sonuç araması solda, işlemler sağda.
+                let bugun = bugun_anahtari();
+                let takip = self.takip_bekleyenler(&bugun);
+                let yeni_sayisi = self
+                    .leads
+                    .iter()
+                    .filter(|lead| lead.durum == musteriler::Durum::Yeni)
+                    .count();
                 ui.horizontal(|ui| {
                     let arama_alani = 250.0_f32.min(ui.available_width() * 0.4);
                     ui.allocate_ui_with_layout(
@@ -2083,59 +2465,91 @@ impl eframe::App for LeadApp {
                         },
                     );
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            let demo_metin = if secili > 0 {
-                                format!("Seçilenlere demo üret ({secili})")
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let demo_metin = if secili > 0 {
+                            format!("Seçilenlere demo üret ({secili})")
+                        } else {
+                            "Seçilenlere demo üret".to_string()
+                        };
+                        let demo_butonu = ikincil_buton(
+                            ui,
+                            &demo_metin,
+                            secili > 0,
+                            Some(egui::vec2(200.0, 32.0)),
+                        );
+                        if demo_butonu.clicked() {
+                            let mut uretilen = 0usize;
+                            let mut hatali = 0usize;
+                            for lead in self.leads.iter_mut() {
+                                if !lead.selected || lead.demo_yolu.is_some() {
+                                    continue;
+                                }
+                                match demo_uret(lead, &gonderen) {
+                                    Ok(yol) => {
+                                        lead.demo_yolu = Some(yol);
+                                        uretilen += 1;
+                                    }
+                                    Err(_) => hatali += 1,
+                                }
+                            }
+                            self.logs.push(if hatali == 0 {
+                                format!("[✓] {uretilen} demo hazırlandı.")
                             } else {
-                                "Seçilenlere demo üret".to_string()
-                            };
-                            let demo_butonu =
-                                ikincil_buton(ui, &demo_metin, secili > 0, Some(egui::vec2(200.0, 32.0)));
-                            if demo_butonu.clicked() {
-                                let mut uretilen = 0usize;
-                                let mut hatali = 0usize;
-                                for lead in self.leads.iter_mut() {
-                                    if !lead.selected || lead.demo_yolu.is_some() {
-                                        continue;
-                                    }
-                                    match demo_uret(lead, &gonderen) {
-                                        Ok(yol) => {
-                                            lead.demo_yolu = Some(yol);
-                                            uretilen += 1;
-                                        }
-                                        Err(_) => hatali += 1,
-                                    }
-                                }
-                                self.logs.push(if hatali == 0 {
-                                    format!("[✓] {uretilen} demo hazırlandı.")
-                                } else {
-                                    format!("[✓] {uretilen} demo hazırlandı, {hatali} kayıt üretilemedi.")
-                                });
-                            }
-                            ui.add_space(6.0);
-                            if hayalet_buton(ui, "Tümünü seç").clicked() {
-                                for lead in self.leads.iter_mut() {
-                                    lead.selected = true;
+                                format!(
+                                    "[✓] {uretilen} demo hazırlandı, {hatali} kayıt üretilemedi."
+                                )
+                            });
+                        }
+                        ui.add_space(6.0);
+                        if hayalet_buton(ui, "CSV indir").clicked() {
+                            match self.defter.csv_kaydet() {
+                                Ok(yol) => self.logs.push(format!(
+                                    "[✓] {} müşteri {yol} dosyasına aktarıldı.",
+                                    self.defter.ozet().toplam
+                                )),
+                                Err(hata) => {
+                                    self.logs.push(format!("[!] CSV yazılamadı: {hata}"));
                                 }
                             }
-                            ui.add_space(6.0);
-                            if hayalet_buton(ui, "Seçimi temizle").clicked() {
-                                for lead in self.leads.iter_mut() {
-                                    lead.selected = false;
-                                }
+                        }
+                        ui.add_space(6.0);
+                        if hayalet_buton(ui, "Tümünü seç").clicked() {
+                            for lead in self.leads.iter_mut() {
+                                lead.selected = true;
                             }
-                            ui.add_space(6.0);
-                            if hayalet_buton(ui, "Demos klasörünü aç").clicked() {
-                                let _ = fs::create_dir_all(DEMO_KLASORU);
-                                if let Err(hata) = klasoru_ac(DEMO_KLASORU) {
-                                    self.logs
-                                        .push(format!("[!] Demos klasörü açılamadı: {hata}"));
-                                }
+                        }
+                        ui.add_space(6.0);
+                        if hayalet_buton(ui, "Seçimi temizle").clicked() {
+                            for lead in self.leads.iter_mut() {
+                                lead.selected = false;
                             }
-                        },
-                    );
+                        }
+                        ui.add_space(6.0);
+                        if hayalet_buton(ui, "Demos klasörünü aç").clicked() {
+                            let _ = fs::create_dir_all(DEMO_KLASORU);
+                            if let Err(hata) = klasoru_ac(DEMO_KLASORU) {
+                                self.logs
+                                    .push(format!("[!] Demos klasörü açılamadı: {hata}"));
+                            }
+                        }
+                    });
+                });
+
+                // Günlük çalışma listesi: tümü / yalnızca yeni / takip bekleyen.
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(egui::RichText::new("LİSTE").size(9.5).color(DIM));
+                    ui.add_space(2.0);
+                    for (suzgec, etiket) in [
+                        (ListeSuzgeci::Hepsi, format!("Tümü ({})", self.leads.len())),
+                        (ListeSuzgeci::Yeni, format!("Yeni ({yeni_sayisi})")),
+                        (ListeSuzgeci::Takip, format!("Takip ({})", takip.len())),
+                    ] {
+                        if filtre_cipi(ui, &etiket, self.liste_suzgeci == suzgec).clicked() {
+                            self.liste_suzgeci = suzgec;
+                        }
+                    }
                 });
                 ui.add_space(10.0);
 
@@ -2153,6 +2567,7 @@ impl eframe::App for LeadApp {
                 let mut yeni_detay = self.detay_idx;
                 {
                     let arama = arama_anahtari(&self.sonuc_arama);
+                    let suzgec = self.liste_suzgeci;
                     let acik_detay = self.detay_idx;
                     let leads = &mut self.leads;
                     let logs = &mut self.logs;
@@ -2163,8 +2578,7 @@ impl eframe::App for LeadApp {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             if leads.is_empty() {
-                                let uyari =
-                                    bos_ilce.as_deref().map(|ilce| (ilce, sektor));
+                                let uyari = bos_ilce.as_deref().map(|ilce| (ilce, sektor));
                                 bos_durum(
                                     ui,
                                     taranıyor,
@@ -2177,13 +2591,26 @@ impl eframe::App for LeadApp {
                             let mut gosterilen = 0usize;
                             for (idx, lead) in leads.iter_mut().enumerate() {
                                 if !arama.is_empty() {
-                                    let metin = format!(
-                                        "{} {} {}",
-                                        lead.name, lead.address, lead.category
-                                    );
+                                    let metin =
+                                        format!("{} {} {}", lead.name, lead.address, lead.category);
                                     if !arama_anahtari(&metin).contains(&arama) {
                                         continue;
                                     }
+                                }
+                                let suzuldu = match suzgec {
+                                    ListeSuzgeci::Hepsi => false,
+                                    ListeSuzgeci::Yeni => lead.durum != musteriler::Durum::Yeni,
+                                    ListeSuzgeci::Takip => {
+                                        let anahtar = musteriler::anahtar_uret(
+                                            &lead.kaynak,
+                                            &lead.name,
+                                            lead.konum,
+                                        );
+                                        !takip.contains(&anahtar)
+                                    }
+                                };
+                                if suzuldu {
+                                    continue;
                                 }
                                 gosterilen += 1;
                                 if kart_ciz(ui, lead, &gonderen, logs, acik_detay == Some(idx)) {
@@ -2213,9 +2640,6 @@ impl eframe::App for LeadApp {
                     self.tarama_baslat();
                 }
             });
-
-
-
     }
 }
 
@@ -2270,8 +2694,8 @@ fn ilerleme_cubugu(ui: &mut egui::Ui, tamamlanan: usize, toplam: usize) {
                 "İl geneli tarama · {tamamlanan}/{} ilçe",
                 toplam.max(1)
             ))
-                .size(11.0)
-                .color(SOLUK),
+            .size(11.0)
+            .color(SOLUK),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
@@ -2544,7 +2968,27 @@ fn secim_listesi(
 // ---------------------------------------------------------------------------
 
 const NOMINATIM_URL: &str = "https://nominatim.openstreetmap.org/search";
-const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
+
+/// Overpass sunucuları sırayla denenir. Üçü de dünya çapında veri sunar.
+/// Bölgesel aynalar (ör. overpass.osm.ch yalnızca İsviçre verisi tutar)
+/// bilerek listelenmez: kapsam dışı bölgede hata değil **boş** dönerler, bu da
+/// "bu ilçede kayıt yok" gibi yanlış bir sonuç üretir.
+const OVERPASS_SUNUCULARI: [(&str, &str); 3] = [
+    ("https://overpass-api.de/api/interpreter", "overpass-api.de"),
+    (
+        "https://z.overpass-api.de/api/interpreter",
+        "z.overpass-api.de",
+    ),
+    (
+        "https://overpass.private.coffee/api/interpreter",
+        "private.coffee",
+    ),
+];
+
+/// Bir ilçenin Overpass istekleri için toplam süre bütçesi. Aşılırsa kalan
+/// sunucular denenmeden hata dönülür; böylece yoğun saatte il geneli tarama
+/// tek bir ilçede kilitlenmez.
+const OVERPASS_BUTCE: Duration = Duration::from_secs(150);
 
 /// Bir işletmenin gerçekten web sitesi olup olmadığını gösteren OSM etiketleri.
 const WEB_SITESI_ETIKETLERI: [&str; 4] = ["website", "contact:website", "url", "contact:url"];
@@ -2558,6 +3002,250 @@ struct Konum {
     alan_id: Option<u64>,
 }
 
+/// Önbellekte saklanan konum kaydı.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct KonumKaydi {
+    enlem: f64,
+    boylam: f64,
+    yaricap_m: u32,
+    alan_id: Option<u64>,
+    /// Önbelleğe alındığı tarih (YYYY-MM-DD).
+    tarih: String,
+}
+
+const KONUM_ONBELLEK_DOSYASI: &str = "konum_onbellek.json";
+/// Konumun kaç gün geçerli sayılacağı; ilçe sınırları yıllarca değişmez.
+const KONUM_TTL_GUN: i64 = 180;
+
+/// İlçe → konum önbelleği. İl geneli taramada aynı ilçeler tekrar tekrar
+/// çözümlenmesin diye `konum_onbellek.json` dosyasında tutulur.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct KonumOnbellek {
+    #[serde(default)]
+    kayitlar: HashMap<String, KonumKaydi>,
+}
+
+impl KonumOnbellek {
+    fn yukle() -> Self {
+        fs::read_to_string(KONUM_ONBELLEK_DOSYASI)
+            .ok()
+            .and_then(|metin| serde_json::from_str(&metin).ok())
+            .unwrap_or_default()
+    }
+
+    fn kaydet(&self) {
+        if let Ok(metin) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(KONUM_ONBELLEK_DOSYASI, metin);
+        }
+    }
+
+    fn anahtar(il: &str, ilce: &str) -> String {
+        format!("{}|{}", arama_anahtari(il), arama_anahtari(ilce))
+    }
+
+    /// Önbellekteki konum; `KONUM_TTL_GUN` günden eskiyse yok sayılır.
+    fn al(&self, il: &str, ilce: &str) -> Option<Konum> {
+        let kayit = self.kayitlar.get(&Self::anahtar(il, ilce))?;
+        let gun = gun_farki(&kayit.tarih, &bugun_anahtari())?;
+        if gun > KONUM_TTL_GUN {
+            return None;
+        }
+        Some(Konum {
+            enlem: kayit.enlem,
+            boylam: kayit.boylam,
+            yaricap_m: kayit.yaricap_m,
+            alan_id: kayit.alan_id,
+        })
+    }
+
+    fn ekle(&mut self, il: &str, ilce: &str, konum: &Konum) {
+        self.kayitlar.insert(
+            Self::anahtar(il, ilce),
+            KonumKaydi {
+                enlem: konum.enlem,
+                boylam: konum.boylam,
+                yaricap_m: konum.yaricap_m,
+                alan_id: konum.alan_id,
+                tarih: bugun_anahtari(),
+            },
+        );
+    }
+}
+
+const SONUC_ONBELLEK_DOSYASI: &str = "sonuc_onbellek.json";
+
+/// Sonuç önbelleğinin varsayılan geçerlilik süresi (gün). `SONUC_TTL_GUN=0`
+/// önbelleği tamamen kapatır, böylece her tarama canlı veri getirir.
+const SONUC_TTL_GUN: i64 = 7;
+
+fn sonuc_ttl_gun() -> i64 {
+    std::env::var("SONUC_TTL_GUN")
+        .ok()
+        .and_then(|deger| deger.trim().parse::<i64>().ok())
+        .unwrap_or(SONUC_TTL_GUN)
+        .max(0)
+}
+
+/// Bir ilçe + sektör için saklanan arama sonucu.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SonucKaydi {
+    tarih: String,
+    siteli: usize,
+    leads: Vec<BusinessLead>,
+    /// Sonucu veren Overpass sunucusu (bilgi amaçlı).
+    #[serde(default)]
+    sunucu: String,
+}
+
+/// Önbellekten dönen kayıt. `gun` = kaç gün önce çekildiği.
+struct SonucOnbellekKaydi {
+    leads: Vec<BusinessLead>,
+    siteli: usize,
+    gun: i64,
+}
+
+/// İlçe + sektör başına Overpass sonuçları. Aynı ilçe kısa süre içinde tekrar
+/// tarandığında Overpass'a hiç gidilmez; il geneli taramada en büyük zaman
+/// kaybı ilçe başına atılan ağır sorgulardır.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct SonucOnbellek {
+    #[serde(default)]
+    kayitlar: HashMap<String, SonucKaydi>,
+}
+
+impl SonucOnbellek {
+    fn yukle() -> Self {
+        fs::read_to_string(SONUC_ONBELLEK_DOSYASI)
+            .ok()
+            .and_then(|metin| serde_json::from_str(&metin).ok())
+            .unwrap_or_default()
+    }
+
+    fn kaydet(&self) {
+        if let Ok(metin) = serde_json::to_string(self) {
+            let _ = fs::write(SONUC_ONBELLEK_DOSYASI, metin);
+        }
+    }
+
+    fn anahtar(il: &str, ilce: &str, sektor: &str) -> String {
+        format!(
+            "{}|{}|{}",
+            arama_anahtari(il),
+            arama_anahtari(ilce),
+            arama_anahtari(sektor)
+        )
+    }
+
+    /// TTL içindeki kayıt; yoksa veya eskimişse `None`.
+    fn al(&self, il: &str, ilce: &str, sektor: &str) -> Option<SonucOnbellekKaydi> {
+        let ttl = sonuc_ttl_gun();
+        if ttl == 0 {
+            return None;
+        }
+        let kayit = self.kayitlar.get(&Self::anahtar(il, ilce, sektor))?;
+        let gun = gun_farki(&kayit.tarih, &bugun_anahtari())?;
+        if gun < 0 || gun > ttl {
+            return None;
+        }
+        Some(SonucOnbellekKaydi {
+            leads: kayit.leads.clone(),
+            siteli: kayit.siteli,
+            gun,
+        })
+    }
+
+    fn ekle(
+        &mut self,
+        il: &str,
+        ilce: &str,
+        sektor: &str,
+        leads: &[BusinessLead],
+        siteli: usize,
+        sunucu: &str,
+    ) {
+        self.kayitlar.insert(
+            Self::anahtar(il, ilce, sektor),
+            SonucKaydi {
+                tarih: bugun_anahtari(),
+                siteli,
+                leads: leads.to_vec(),
+                sunucu: sunucu.to_string(),
+            },
+        );
+    }
+}
+
+/// İlçe taramasının sonucu: önbellekten mi, ağdan mı geldiği günlükte
+/// birbirinden ayrılır.
+enum IlceTaramasi {
+    Onbellek(SonucOnbellekKaydi),
+    Ag {
+        leads: Vec<BusinessLead>,
+        siteli: usize,
+        sunucu: &'static str,
+    },
+    Hata(String),
+}
+
+/// `IlceTaramasi::parcala` sonucu: liste, sitesi olan kayıt sayısı, yanıtı
+/// veren sunucu ve önbellek günü.
+type TaramaParcasi = (Vec<BusinessLead>, usize, &'static str, Option<i64>);
+
+impl IlceTaramasi {
+    fn hata(&self) -> Option<&str> {
+        match self {
+            IlceTaramasi::Hata(hata) => Some(hata),
+            _ => None,
+        }
+    }
+
+    /// `(liste, siteli, sunucu, önbellek_gunu)`; önbellek günü `None` ise sonuç
+    /// canlı ağdan geldi.
+    fn parcala(self) -> Result<TaramaParcasi, String> {
+        match self {
+            IlceTaramasi::Onbellek(kayit) => Ok((
+                kayit.leads,
+                kayit.siteli,
+                OVERPASS_SUNUCULARI[0].1,
+                Some(kayit.gun),
+            )),
+            IlceTaramasi::Ag {
+                leads,
+                siteli,
+                sunucu,
+            } => Ok((leads, siteli, sunucu, None)),
+            IlceTaramasi::Hata(hata) => Err(hata),
+        }
+    }
+}
+
+/// Bir ilçeyi tarar: önce sonuç önbelleğine bakar, yoksa Overpass'a gider ve
+/// gelen sonucu önbelleğe yazar.
+fn ilce_taramasi(
+    ajan: &ureq::Agent,
+    onbellek: &mut SonucOnbellek,
+    il: &str,
+    ilce: &str,
+    sektor: &str,
+    konum: &Konum,
+) -> IlceTaramasi {
+    if let Some(kayit) = onbellek.al(il, ilce, sektor) {
+        return IlceTaramasi::Onbellek(kayit);
+    }
+    match sitesiz_isletmeler(ajan, il, ilce, sektor, konum) {
+        Ok((leads, siteli, sunucu)) => {
+            onbellek.ekle(il, ilce, sektor, &leads, siteli, sunucu);
+            onbellek.kaydet();
+            IlceTaramasi::Ag {
+                leads,
+                siteli,
+                sunucu,
+            }
+        }
+        Err(hata) => IlceTaramasi::Hata(hata),
+    }
+}
+
 fn http_ajani() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .user_agent("NexusEnterprise/0.1 (Windows masaustu isletme kesif uygulamasi)")
@@ -2566,14 +3254,99 @@ fn http_ajani() -> ureq::Agent {
         .build()
 }
 
+/// İstek başına en fazla deneme sayısı (Google, Nominatim).
+const ISTEK_DENEMESI: usize = 3;
+
+/// Overpass'ta sunucu başına deneme sayısı. Sunucu zinciri zaten yedek
+/// sağladığı için burada daha az denenir; böylece tek ilçede saatler değil
+/// saniyeler harcanır.
+const OVERPASS_DENEMESI: usize = 2;
+
+/// Geçici sayılan hatalar: sunucu yoğunluğu (429), sunucu hatası (5xx), ağ
+/// kesintisi ve zaman aşımı. Bunlarda istek tekrar denenir; kalıcı hatalarda
+/// (404, 400...) hemen dönülür.
+fn gecici_hata(mesaj: &str) -> bool {
+    mesaj.contains("HTTP 429")
+        || mesaj.contains("HTTP 5")
+        || mesaj.contains("bağlantı kurulamadı")
+        || mesaj.contains("bağlantı kesildi")
+        || mesaj.contains("zaman aşımı")
+        || mesaj.contains("timed out")
+}
+
+/// Sunucunun `Retry-After` başlığıyla bildirdiği bekleme süresi, 1-15 sn
+/// aralığına kırpılarak. Overpass 429'da "ne kadar bekleyin" bilgisini bu
+/// başlıkla verir; körlemesine beklemekten daha isabetlidir.
+fn retry_after_sn(mesaj: &str) -> Option<u64> {
+    let kalan = mesaj.split("Retry-After:").nth(1)?;
+    kalan
+        .split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()
+        .map(|saniye| saniye.clamp(1, 15))
+}
+
+/// İsteği varsayılan deneme sayısıyla tekrar dener.
+fn tekrar_dene<T>(islem: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    tekrar_dene_n(ISTEK_DENEMESI, islem)
+}
+
+/// İsteği artan bekleme süresiyle (0,8 → 1,6 → 3,2 sn) en fazla
+/// `deneme_sayisi` kez dener. Sunucu 429 ile `Retry-After` bildirdiyse o süre
+/// kadar beklenir.
+fn tekrar_dene_n<T>(
+    deneme_sayisi: usize,
+    mut islem: impl FnMut() -> Result<T, String>,
+) -> Result<T, String> {
+    let deneme_sayisi = deneme_sayisi.max(1);
+    let mut bekleme = Duration::from_millis(800);
+    let mut son_hata = String::new();
+    for deneme in 1..=deneme_sayisi {
+        match islem() {
+            Ok(deger) => return Ok(deger),
+            Err(hata) => {
+                let tekrar = gecici_hata(&hata) && deneme < deneme_sayisi;
+                if let Some(saniye) = retry_after_sn(&hata) {
+                    bekleme = Duration::from_secs(saniye);
+                }
+                son_hata = hata;
+                if !tekrar {
+                    break;
+                }
+                thread::sleep(bekleme);
+                bekleme *= 2;
+            }
+        }
+    }
+    Err(son_hata)
+}
+
 fn http_hata(hata: ureq::Error) -> String {
     match hata {
         ureq::Error::Status(kod, cevap) => {
+            // Başlık gövde okunmadan alınmalı.
+            let bekle = cevap
+                .header("Retry-After")
+                .and_then(|deger| deger.parse::<u64>().ok());
             let govde = cevap.into_string().unwrap_or_default();
             let ozet: String = govde.chars().take(160).collect();
-            format!("sunucu HTTP {kod} döndü: {ozet}")
+            match bekle {
+                Some(saniye) => {
+                    format!("sunucu HTTP {kod} döndü (Retry-After: {saniye} sn): {ozet}")
+                }
+                None => format!("sunucu HTTP {kod} döndü: {ozet}"),
+            }
         }
-        ureq::Error::Transport(tasima) => format!("bağlantı kurulamadı: {tasima}"),
+        ureq::Error::Transport(tasima) => {
+            let metin = tasima.to_string();
+            let kucuk = metin.to_lowercase();
+            if kucuk.contains("timed out") || kucuk.contains("timeout") {
+                format!("zaman aşımı: {metin}")
+            } else {
+                format!("bağlantı kurulamadı: {metin}")
+            }
+        }
     }
 }
 
@@ -2589,7 +3362,6 @@ fn url_encode(metin: &str) -> String {
     }
     cikti
 }
-
 
 // ---------------------------------------------------------------------------
 // Google Places yedeği (hibrit arama)
@@ -2614,6 +3386,8 @@ struct GoogleAyar {
     anahtar: String,
     gunluk_limit: usize,
     aylik_limit: usize,
+    /// Tarama başına en fazla kaç sayfa okunacak (1-3 · sayfa başına 20 kayıt).
+    sayfa_siniri: usize,
 }
 
 impl GoogleAyar {
@@ -2627,10 +3401,16 @@ impl GoogleAyar {
         let aylik_limit = ayar_degeri("GOOGLE_AYLIK_LIMIT")
             .and_then(|deger| deger.parse().ok())
             .unwrap_or(200);
+        // Her sayfa ayrı faturalanır; varsayılan 2 sayfa (40 kayıt) yeterli.
+        let sayfa_siniri = ayar_degeri("GOOGLE_SAYFA")
+            .and_then(|deger| deger.parse::<usize>().ok())
+            .unwrap_or(2)
+            .clamp(1, 3);
         Self {
             anahtar,
             gunluk_limit,
             aylik_limit,
+            sayfa_siniri,
         }
     }
 
@@ -2832,8 +3612,8 @@ fn google_saat(metin: &str) -> Option<String> {
 /// kayıtlar elenir (bu ekranın amacı sitesiz işletmeler), place ID'den
 /// kalıcı saklanabilen tek alan olarak yararlanılır.
 fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), String> {
-    let deger: serde_json::Value = serde_json::from_str(ham)
-        .map_err(|hata| format!("Google yanıtı çözümlenemedi: {hata}"))?;
+    let deger: serde_json::Value =
+        serde_json::from_str(ham).map_err(|hata| format!("Google yanıtı çözümlenemedi: {hata}"))?;
     let mut isletmeler = Vec::new();
     let mut siteli = 0usize;
 
@@ -2847,16 +3627,28 @@ fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), St
             if ad.is_empty() {
                 continue;
             }
-            if !yer
+            // Kalıcı olarak kapanmış işletmeye teklif götürmenin anlamı yok.
+            if yer.get("businessStatus").and_then(|v| v.as_str()) == Some("CLOSED_PERMANENTLY") {
+                continue;
+            }
+            // Google'da da aynı ayrım: gerçek alan adı olan elenir, sosyal
+            // medya / ücretsiz site adresi olan sıcak fırsat olarak tutulur.
+            let site_uri = yer
                 .get("websiteUri")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                siteli += 1;
-                continue;
-            }
+                .trim();
+            let site = if site_uri.is_empty() {
+                SiteDurumu::Yok
+            } else {
+                match site_durumu_bul(site_uri) {
+                    Some(durum) => durum,
+                    None => {
+                        siteli += 1;
+                        continue;
+                    }
+                }
+            };
             let konum = match (
                 yer.pointer("/location/latitude").and_then(|v| v.as_f64()),
                 yer.pointer("/location/longitude").and_then(|v| v.as_f64()),
@@ -2897,48 +3689,102 @@ fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), St
                 },
                 konum,
                 calisma_saatleri: saatler,
+                // Google kaydı zaten doğrulanmış işletme: +10 kaynak bonusu var.
+                kayit_dolulugu: 0,
+                site,
+                site_linki: site_uri.to_string(),
+                son_guncelleme_gun: None,
+                inceleme_sayisi: yer
+                    .get("userRatingCount")
+                    .and_then(|v| v.as_u64())
+                    .map(|sayi| sayi.min(u32::MAX as u64) as u32),
+                yildiz_puani: yer
+                    .get("rating")
+                    .and_then(|v| v.as_f64())
+                    .map(|puan| puan as f32),
+                durum: musteriler::Durum::Yeni,
                 demo_yolu: None,
                 mesaj_hazir: false,
+                yayin_linki: None,
+                karne_linki: None,
+                mesaj_varyanti: None,
             });
         }
     }
 
-    isletmeler.sort_by_key(|a| a.name.to_lowercase());
+    leads_sirala(&mut isletmeler);
+    // İki küme ayrı kotalarla çekildiği için toplam sınır burada uygulanır:
+    // en yüksek potansiyelli SONUC_SINIRI kayıt kalır.
+    isletmeler.truncate(SONUC_SINIRI);
     Ok((isletmeler, siteli))
 }
 
 /// Google Places Text Search isteği; alan maskesi Enterprise kademesine düşer
 /// (websiteUri + çalışma saatleri), bu yüzden yalnızca bütçe varsa çağrılır.
+/// Text Search istek gövdesi. `pageSize` 1-20 arasıdır ve kullanımdan
+/// kaldırılan `maxResultCount` yerine kullanılır; `pageToken` bir sonraki
+/// sayfayı ister (Google en fazla 60 sonuç/3 sayfa döndürür).
+fn google_govdesi(
+    il: &str,
+    ilce: &str,
+    sektor: &str,
+    sayfa_jetonu: Option<&str>,
+) -> serde_json::Value {
+    let mut govde = serde_json::json!({
+        "textQuery": format!("{sektor} {ilce} {il}"),
+        "languageCode": "tr",
+        "regionCode": "TR",
+        "pageSize": SONUC_SINIRI,
+    });
+    if let Some(jeton) = sayfa_jetonu {
+        govde["pageToken"] = serde_json::Value::String(jeton.to_string());
+    }
+    govde
+}
+
 fn google_arama(
     ajan: &ureq::Agent,
     anahtar: &str,
     il: &str,
     ilce: &str,
     sektor: &str,
-) -> Result<(Vec<BusinessLead>, usize), String> {
-    let govde = serde_json::json!({
-        "textQuery": format!("{sektor} {ilce} {il}"),
-        "languageCode": "tr",
-        "regionCode": "TR",
-        "maxResultCount": SONUC_SINIRI,
-    });
-    let cevap = ajan
-        .post(GOOGLE_TEXT_SEARCH)
-        .set("Content-Type", "application/json")
-        .set("X-Goog-Api-Key", anahtar)
+    sayfa_jetonu: Option<&str>,
+) -> Result<(Vec<BusinessLead>, usize, Option<String>), String> {
+    let govde = google_govdesi(il, ilce, sektor, sayfa_jetonu);
+    let gonder = || {
+        ajan.post(GOOGLE_TEXT_SEARCH)
+            .set("Content-Type", "application/json")
+            .set("X-Goog-Api-Key", anahtar)
         .set(
             "X-Goog-FieldMask",
-            "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.regularOpeningHours.weekdayDescriptions",
-        )
-        .send_string(&govde.to_string())
-        .map_err(http_hata)?
-        .into_string()
-        .map_err(|hata| format!("Google yanıtı okunamadı: {hata}"))?;
-    google_isle(&cevap, sektor)
+            // userRatingCount ve rating Enterprise kademesindedir: mevcut
+            // alanlarla aynı ücret kademesi, yani ek maliyet getirmez. Yorum
+            // sayısı ve yıldız puanı "gerçek müşteri trafiği var" sinyali
+            // olarak puanlamada ve dijital karnede kullanılır.
+                "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.regularOpeningHours.weekdayDescriptions,places.userRatingCount,places.rating,places.businessStatus",
+            )
+            .send_string(&govde.to_string())
+            .map_err(http_hata)?
+            .into_string()
+            .map_err(|hata| format!("Google yanıtı okunamadı: {hata}"))
+    };
+    // Aynı sayfa isteği geçici hatalarda tekrar denenir; kotadan tek pay gider.
+    let cevap = tekrar_dene(gonder)?;
+    let sonraki_jeton = serde_json::from_str::<serde_json::Value>(&cevap)
+        .ok()
+        .and_then(|deger| {
+            deger
+                .get("nextPageToken")
+                .and_then(|jeton| jeton.as_str())
+                .map(str::to_string)
+        });
+    let (liste, siteli) = google_isle(&cevap, sektor)?;
+    Ok((liste, siteli, sonraki_jeton))
 }
 
-/// OSM boş döndüğünde Google yedeğini dener. Anahtar yoksa veya günlük/aylık
-/// bütçe dolduysa `None` döner ve günlüğe neden atlandığı yazılır.
+/// Google Places sorgusu. `sebep` günlüğe yazılır ("OSM'de kayıt yok" veya
+/// "Google kaynağı seçili"). Anahtar yoksa ya da günlük/aylık bütçe dolduysa
+/// `None` döner ve günlüğe neden atlandığı yazılır.
 #[allow(clippy::too_many_arguments)]
 fn google_yedek(
     tx: &Sender<Mesaj>,
@@ -2948,57 +3794,93 @@ fn google_yedek(
     il: &str,
     ilce: &str,
     sektor: &str,
+    sebep: &str,
 ) -> Option<Vec<BusinessLead>> {
     if !ayar.acik() {
         return None;
     }
-    match kota_karari(
-        kota,
-        &bugun_anahtari(),
-        &ay_anahtari(),
-        ayar.gunluk_limit,
-        ayar.aylik_limit,
-    ) {
-        KotaKarari::Izin => {}
-        KotaKarari::GunlukDolu => {
+    let (bugun, bu_ay) = (bugun_anahtari(), ay_anahtari());
+    let mut toplam: Vec<BusinessLead> = Vec::new();
+    let mut gorulen: HashSet<String> = HashSet::new();
+    let mut siteli = 0usize;
+    let mut jeton: Option<String> = None;
+    let mut sayfa = 0usize;
+    let mut kota_engeli = false;
+
+    // Her sayfa ayrı istek ve ayrı faturalanır; bu yüzden sayfa başına kotadan
+    // pay ayrılır, 20 işletme dolunca veya jeton bitince erken çıkılır.
+    while sayfa < ayar.sayfa_siniri && toplam.len() < SONUC_SINIRI {
+        match kota_karari(kota, &bugun, &bu_ay, ayar.gunluk_limit, ayar.aylik_limit) {
+            KotaKarari::Izin => {}
+            KotaKarari::GunlukDolu => {
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[!] Google bütçesi doldu: günlük istek sınırı ({}/{}).",
+                    kota.gunluk, ayar.gunluk_limit
+                )));
+                kota_engeli = true;
+                break;
+            }
+            KotaKarari::AylikDolu => {
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[!] Google bütçesi doldu: aylık istek sınırı ({}/{}).",
+                    kota.aylik, ayar.aylik_limit
+                )));
+                kota_engeli = true;
+                break;
+            }
+        }
+        kota_yaz(kota);
+        if sayfa == 0 {
             let _ = tx.send(Mesaj::Log(format!(
-                "[!] Google yedeği atlandı: günlük istek bütçesi dolu ({}/{}).",
+                "[>] {ilce} / {il}: {sebep}, Google Places sorgusu (bugün {}/{}).",
                 kota.gunluk, ayar.gunluk_limit
             )));
-            return None;
         }
-        KotaKarari::AylikDolu => {
-            let _ = tx.send(Mesaj::Log(format!(
-                "[!] Google yedeği atlandı: aylık istek bütçesi dolu ({}/{}).",
-                kota.aylik, ayar.aylik_limit
-            )));
-            return None;
+        match google_arama(ajan, &ayar.anahtar, il, ilce, sektor, jeton.as_deref()) {
+            Ok((liste, sayfa_siteli, sonraki)) => {
+                siteli += sayfa_siteli;
+                for lead in liste {
+                    if gorulen.insert(lead.kaynak.clone()) {
+                        toplam.push(lead);
+                    }
+                }
+                jeton = sonraki;
+                sayfa += 1;
+                if jeton.is_none() {
+                    break;
+                }
+            }
+            Err(hata) => {
+                if sayfa == 0 {
+                    let _ = tx.send(Mesaj::Log(format!("[!] Google sorgusu başarısız: {hata}")));
+                    return None;
+                }
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[!] Google {}. sayfada durdu: {hata}",
+                    sayfa + 1
+                )));
+                break;
+            }
         }
     }
-    kota_yaz(kota);
-    let _ = tx.send(Mesaj::Log(format!(
-        "[>] {ilce} / {il}: OSM'de kayıt yok, Google Places yedeği deneniyor (bugün {}/{}).",
-        kota.gunluk, ayar.gunluk_limit
-    )));
 
-    match google_arama(ajan, &ayar.anahtar, il, ilce, sektor) {
-        Ok((liste, siteli)) => {
-            let _ = tx.send(Mesaj::Log(if liste.is_empty() {
-                format!("[i] Google yedeği de boş döndü ({siteli} web siteli kayıt ayıklandı).")
-            } else {
-                format!(
-                    "[✓] Google yedeği: {} kayıt eklendi ({} web siteli kayıt ayıklandı).",
-                    liste.len(),
-                    siteli
-                )
-            }));
-            Some(liste)
+    if toplam.is_empty() {
+        if kota_engeli {
+            return None;
         }
-        Err(hata) => {
-            let _ = tx.send(Mesaj::Log(format!("[!] Google yedeği başarısız: {hata}")));
-            None
-        }
+        let _ = tx.send(Mesaj::Log(format!(
+            "[i] Google da boş döndü ({siteli} sitesi olan kayıt ayıklandı, {sayfa} sayfa okundu)."
+        )));
+        return Some(Vec::new());
     }
+    incelemeye_gore_sirala(&mut toplam);
+    toplam.truncate(SONUC_SINIRI);
+    let _ = tx.send(Mesaj::Log(format!(
+        "[✓] Google: {} kayıt eklendi ({} sitesi olan kayıt ayıklandı, {sayfa} sayfa okundu).",
+        toplam.len(),
+        siteli
+    )));
+    Some(toplam)
 }
 
 /// Kayıt Google'dan mı OSM'den mi geldi; bağlantı metni buna göre yazılır.
@@ -3024,12 +3906,13 @@ fn konum_bul(ajan: &ureq::Agent, il: &str, ilce: &str) -> Result<Konum, String> 
         "{NOMINATIM_URL}?q={}&format=json&limit=1&addressdetails=0",
         url_encode(&sorgu)
     );
-    let govde = ajan
-        .get(&url)
-        .call()
-        .map_err(http_hata)?
-        .into_string()
-        .map_err(|hata| format!("konum yanıtı okunamadı: {hata}"))?;
+    let govde = tekrar_dene(|| {
+        ajan.get(&url)
+            .call()
+            .map_err(http_hata)?
+            .into_string()
+            .map_err(|hata| format!("konum yanıtı okunamadı: {hata}"))
+    })?;
     let liste: Vec<serde_json::Value> = serde_json::from_str(&govde)
         .map_err(|hata| format!("konum yanıtı çözümlenemedi: {hata}"))?;
     let ilk = liste
@@ -3112,256 +3995,1990 @@ struct Sektor {
     demo: Demo,
 }
 
-/// Türkiye'deki işletme sektörleri (NACE Rev.2.1 faaliyet kolları ve esnaf
-/// meslek kolları sadeleştirilerek) — her satır tek bir sektördür, bileşik ad
-/// yoktur. Aynı sıra arayüzdeki listeye yansır.
+/// Türkiye'deki işletme sektörleri: NACE Rev.2.1 faaliyet kolları, esnaf
+/// meslek kolları ve Google Business Profile kategorileri (berber, tırnak
+/// salonu, oto kaporta, oto muayene, diş laboratuvarı, yoga stüdyosu,
+/// tercüme bürosu, ortak çalışma ofisi...) sadeleştirilerek. Her satır tek bir
+/// sektördür, bileşik ad yoktur; aynı sıra arayüzdeki listeye yansır.
+///
+/// `osm` eşlemesi yalnızca gerçekten kullanılan etiketleri içerir (taginfo'da
+/// karşılığı doğrulandı); OSM'de ayrı etiketi olmayan yemek türleri (döner,
+/// pide, çiğ köfte) bilinçli olarak eklenmedi, çünkü aynı restoran kümesini
+/// ikinci kez listelerdi.
 const SEKTORLER: &[Sektor] = &[
-    // --- Yiyecek & İçecek ---
-    Sektor { ad: "Restoran", grup: "Yiyecek & İçecek", demo: Demo::Menu, osm: &[("amenity", "^restaurant$")] },
-    Sektor { ad: "Kafe", grup: "Yiyecek & İçecek", demo: Demo::Kafe, osm: &[("amenity", "^cafe$")] },
-    Sektor { ad: "Fast Food", grup: "Yiyecek & İçecek", demo: Demo::Menu, osm: &[("amenity", "^fast_food$")] },
-    Sektor { ad: "Fırın", grup: "Yiyecek & İçecek", demo: Demo::Unlu, osm: &[("shop", "^bakery$")] },
-    Sektor { ad: "Pastane", grup: "Yiyecek & İçecek", demo: Demo::Unlu, osm: &[("shop", "^pastry$")] },
-    Sektor { ad: "Tatlıcı", grup: "Yiyecek & İçecek", demo: Demo::Unlu, osm: &[("shop", "^confectionery$")] },
-    Sektor { ad: "Dondurmacı", grup: "Yiyecek & İçecek", demo: Demo::Unlu, osm: &[("amenity", "^ice_cream$"), ("shop", "^ice_cream$")] },
-    Sektor { ad: "Bar", grup: "Yiyecek & İçecek", demo: Demo::Menu, osm: &[("amenity", "^bar$")] },
-    Sektor { ad: "Meyhane", grup: "Yiyecek & İçecek", demo: Demo::Menu, osm: &[("amenity", "^pub$")] },
-    Sektor { ad: "Büfe", grup: "Yiyecek & İçecek", demo: Demo::Menu, osm: &[("shop", "^kiosk$")] },
-    Sektor { ad: "Şarap Evi", grup: "Yiyecek & İçecek", demo: Demo::Urun, osm: &[("shop", "^wine$")] },
-    // --- Gıda & Perakende ---
-    Sektor { ad: "Market", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^supermarket$")] },
-    Sektor { ad: "Bakkal", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^convenience$")] },
-    Sektor { ad: "Kasap", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^butcher$")] },
-    Sektor { ad: "Manav", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^greengrocer$")] },
-    Sektor { ad: "Şarküteri", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^(deli|cheese|dairy)$")] },
-    Sektor { ad: "Balıkçı", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^seafood$")] },
-    Sektor { ad: "Peynirci", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^cheese$")] },
-    Sektor { ad: "Aktar", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^herbalist$")] },
-    Sektor { ad: "Toptancı", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^wholesale$")] },
-    Sektor { ad: "Çay Dükkânı", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^tea$")] },
-    Sektor { ad: "Çikolata", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^chocolate$")] },
-    Sektor { ad: "Dondurulmuş Gıda", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^frozen_food$")] },
-    Sektor { ad: "Takviye Gıda", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^nutrition_supplements$")] },
-    Sektor { ad: "Kuruyemişçi", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^nuts$")] },
-    Sektor { ad: "Su Bayii", grup: "Gıda & Perakende", demo: Demo::Urun, osm: &[("shop", "^water$")] },
+    // --- Lokanta & Kebap ---
+    Sektor {
+        ad: "Restoran",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Kebapçı",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Pideci",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Köfteci",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Mantıcı",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Ev Yemekleri",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$")],
+    },
+    Sektor {
+        ad: "Balık Restoranı",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$"), ("shop", "^seafood$")],
+    },
+    Sektor {
+        ad: "Pilavcı",
+        grup: "Lokanta & Kebap",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    // --- Fast Food & Büfe ---
+    Sektor {
+        ad: "Fast Food",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Dönerci",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Lahmacuncu",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Çiğ Köfteci",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Hamburgerci",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Pizza Salonu",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^restaurant$"), ("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Tavukçu",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^fast_food$")],
+    },
+    Sektor {
+        ad: "Büfe",
+        grup: "Fast Food & Büfe",
+        demo: Demo::Menu,
+        osm: &[("shop", "^kiosk$")],
+    },
+    // --- Kafe & Çay ---
+    Sektor {
+        ad: "Kafe",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^cafe$")],
+    },
+    Sektor {
+        ad: "Kahvaltı Salonu",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^cafe$")],
+    },
+    Sektor {
+        ad: "Çay Bahçesi",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^cafe$")],
+    },
+    Sektor {
+        ad: "Kıraathane",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^cafe$")],
+    },
+    Sektor {
+        ad: "Kahveci",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^cafe$")],
+    },
+    Sektor {
+        ad: "Nargile Kafe",
+        grup: "Kafe & Çay",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^hookah_lounge$")],
+    },
+    // --- Fırın & Tatlı ---
+    Sektor {
+        ad: "Fırın",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^bakery$")],
+    },
+    Sektor {
+        ad: "Simitçi",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^bakery$")],
+    },
+    Sektor {
+        ad: "Börekçi",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^bakery$"), ("shop", "^pastry$")],
+    },
+    Sektor {
+        ad: "Baklavacı",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^confectionery$"), ("shop", "^pastry$")],
+    },
+    Sektor {
+        ad: "Pastane",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^pastry$")],
+    },
+    Sektor {
+        ad: "Tatlıcı",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("shop", "^confectionery$")],
+    },
+    Sektor {
+        ad: "Dondurmacı",
+        grup: "Fırın & Tatlı",
+        demo: Demo::Unlu,
+        osm: &[("amenity", "^ice_cream$"), ("shop", "^ice_cream$")],
+    },
+    // --- Bar & Meyhane ---
+    Sektor {
+        ad: "Bar",
+        grup: "Bar & Meyhane",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^bar$")],
+    },
+    Sektor {
+        ad: "Meyhane",
+        grup: "Bar & Meyhane",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^pub$")],
+    },
+    Sektor {
+        ad: "Şarap Evi",
+        grup: "Bar & Meyhane",
+        demo: Demo::Urun,
+        osm: &[("shop", "^wine$")],
+    },
+    Sektor {
+        ad: "Kokteyl Bar",
+        grup: "Bar & Meyhane",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^bar$")],
+    },
+    Sektor {
+        ad: "Birahane",
+        grup: "Bar & Meyhane",
+        demo: Demo::Menu,
+        osm: &[("amenity", "^pub$"), ("amenity", "^biergarten$")],
+    },
+    // --- Yemek Servisi ---
+    Sektor {
+        ad: "Yemek Servisi",
+        grup: "Yemek Servisi",
+        demo: Demo::Menu,
+        osm: &[("craft", "^catering$")],
+    },
+    // --- Gıda Perakende ---
+    Sektor {
+        ad: "Market",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^supermarket$")],
+    },
+    Sektor {
+        ad: "Bakkal",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^convenience$")],
+    },
+    Sektor {
+        ad: "Kasap",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^butcher$")],
+    },
+    Sektor {
+        ad: "Manav",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^greengrocer$")],
+    },
+    Sektor {
+        ad: "Şarküteri",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^(deli|cheese|dairy)$")],
+    },
+    Sektor {
+        ad: "Balıkçı",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^seafood$")],
+    },
+    Sektor {
+        ad: "Peynirci",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^cheese$")],
+    },
+    Sektor {
+        ad: "Çay Dükkânı",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^tea$")],
+    },
+    Sektor {
+        ad: "Çikolata",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^chocolate$")],
+    },
+    Sektor {
+        ad: "Kuruyemişçi",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^nuts$")],
+    },
+    Sektor {
+        ad: "Baharatçı",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^spices$")],
+    },
+    Sektor {
+        ad: "Süt Ürünleri",
+        grup: "Gıda Perakende",
+        demo: Demo::Urun,
+        osm: &[("shop", "^dairy$")],
+    },
+    // --- Yardımcı Gıda ---
+    Sektor {
+        ad: "Aktar",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^herbalist$")],
+    },
+    Sektor {
+        ad: "Toptancı",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^wholesale$")],
+    },
+    Sektor {
+        ad: "Dondurulmuş Gıda",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^frozen_food$")],
+    },
+    Sektor {
+        ad: "Takviye Gıda",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^nutrition_supplements$")],
+    },
+    Sektor {
+        ad: "Su Bayii",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^water$")],
+    },
+    Sektor {
+        ad: "Sağlıklı Gıda",
+        grup: "Yardımcı Gıda",
+        demo: Demo::Urun,
+        osm: &[("shop", "^health_food$")],
+    },
     // --- Giyim & Aksesuar ---
-    Sektor { ad: "Giyim", grup: "Giyim & Aksesuar", demo: Demo::Urun, osm: &[("shop", "^(clothes|boutique)$")] },
-    Sektor { ad: "Ayakkabı", grup: "Giyim & Aksesuar", demo: Demo::Urun, osm: &[("shop", "^shoes$")] },
-    Sektor { ad: "Çanta", grup: "Giyim & Aksesuar", demo: Demo::Urun, osm: &[("shop", "^bags$")] },
-    Sektor { ad: "Deri", grup: "Giyim & Aksesuar", demo: Demo::Urun, osm: &[("shop", "^leather$")] },
+    Sektor {
+        ad: "Giyim",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^(clothes|boutique)$")],
+    },
+    Sektor {
+        ad: "Ayakkabı",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^shoes$")],
+    },
+    Sektor {
+        ad: "Çanta",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^bags$")],
+    },
+    Sektor {
+        ad: "Deri",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^leather$")],
+    },
+    Sektor {
+        ad: "Bijuteri",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^accessories$"), ("shop", "^jewelry$")],
+    },
+    Sektor {
+        ad: "Gelinlik",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^clothes$"), ("shop", "^boutique$")],
+    },
+    Sektor {
+        ad: "İç Giyim",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^clothes$")],
+    },
+    Sektor {
+        ad: "Spor Giyim",
+        grup: "Giyim & Aksesuar",
+        demo: Demo::Urun,
+        osm: &[("shop", "^sports$")],
+    },
     // --- Kuyum & Saat ---
-    Sektor { ad: "Kuyumcu", grup: "Kuyum & Saat", demo: Demo::Urun, osm: &[("shop", "^jewelry$")] },
-    Sektor { ad: "Saatçi", grup: "Kuyum & Saat", demo: Demo::Urun, osm: &[("shop", "^watches$")] },
+    Sektor {
+        ad: "Kuyumcu",
+        grup: "Kuyum & Saat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^jewelry$")],
+    },
+    Sektor {
+        ad: "Saatçi",
+        grup: "Kuyum & Saat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^watches$")],
+    },
+    Sektor {
+        ad: "Saat Tamiri",
+        grup: "Kuyum & Saat",
+        demo: Demo::Servis,
+        osm: &[("craft", "^watchmaker$")],
+    },
+    Sektor {
+        ad: "Gümüş",
+        grup: "Kuyum & Saat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^jewelry$")],
+    },
     // --- Tekstil & Ev Tekstili ---
-    Sektor { ad: "Tekstil", grup: "Tekstil & Ev Tekstili", demo: Demo::Urun, osm: &[("shop", "^fabric$")] },
-    Sektor { ad: "Tuhafiye", grup: "Tekstil & Ev Tekstili", demo: Demo::Urun, osm: &[("shop", "^haberdashery$")] },
-    Sektor { ad: "Perdeci", grup: "Tekstil & Ev Tekstili", demo: Demo::Urun, osm: &[("shop", "^curtain$")] },
-    Sektor { ad: "Halı", grup: "Tekstil & Ev Tekstili", demo: Demo::Urun, osm: &[("shop", "^carpet$")] },
+    Sektor {
+        ad: "Tekstil",
+        grup: "Tekstil & Ev Tekstili",
+        demo: Demo::Urun,
+        osm: &[("shop", "^fabric$")],
+    },
+    Sektor {
+        ad: "Tuhafiye",
+        grup: "Tekstil & Ev Tekstili",
+        demo: Demo::Urun,
+        osm: &[("shop", "^haberdashery$")],
+    },
+    Sektor {
+        ad: "Perdeci",
+        grup: "Tekstil & Ev Tekstili",
+        demo: Demo::Urun,
+        osm: &[("shop", "^curtain$")],
+    },
+    Sektor {
+        ad: "Halı",
+        grup: "Tekstil & Ev Tekstili",
+        demo: Demo::Urun,
+        osm: &[("shop", "^carpet$")],
+    },
     // --- Dikiş & Bakım ---
-    Sektor { ad: "Terzi", grup: "Dikiş & Bakım", demo: Demo::Servis, osm: &[("craft", "^tailor$"), ("shop", "^tailor$")] },
-    Sektor { ad: "Kuru Temizleme", grup: "Dikiş & Bakım", demo: Demo::Servis, osm: &[("shop", "^(dry_cleaning|laundry)$")] },
-    Sektor { ad: "Ayakkabı Tamiri", grup: "Dikiş & Bakım", demo: Demo::Servis, osm: &[("craft", "^shoemaker$")] },
-    // --- Ev & Yaşam ---
-    Sektor { ad: "Mobilya", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^furniture$")] },
-    Sektor { ad: "Mutfak Mağazası", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^kitchen$")] },
-    Sektor { ad: "Banyo", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^bathroom_furnishing$")] },
-    Sektor { ad: "Yatak", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^bed$")] },
-    Sektor { ad: "Aydınlatma", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^lighting$")] },
-    Sektor { ad: "Boya Bayii", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^paint$")] },
-    Sektor { ad: "Nalbur", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^(hardware|doityourself)$")] },
-    Sektor { ad: "Züccaciye", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^houseware$")] },
-    Sektor { ad: "Bahçe Merkezi", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^garden_centre$")] },
-    Sektor { ad: "Çiçekçi", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^florist$")] },
-    Sektor { ad: "İç Dekorasyon", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^interior_decoration$")] },
-    Sektor { ad: "Çerçeve", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^frame$")] },
-    Sektor { ad: "Seramik", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^tiles$")] },
-    Sektor { ad: "Süpürge Mağazası", grup: "Ev & Yaşam", demo: Demo::Urun, osm: &[("shop", "^vacuum_cleaner$")] },
+    Sektor {
+        ad: "Terzi",
+        grup: "Dikiş & Bakım",
+        demo: Demo::Servis,
+        osm: &[("craft", "^tailor$"), ("shop", "^tailor$")],
+    },
+    Sektor {
+        ad: "Kuru Temizleme",
+        grup: "Dikiş & Bakım",
+        demo: Demo::Servis,
+        osm: &[("shop", "^(dry_cleaning|laundry)$")],
+    },
+    Sektor {
+        ad: "Ayakkabı Tamiri",
+        grup: "Dikiş & Bakım",
+        demo: Demo::Servis,
+        osm: &[("craft", "^shoemaker$")],
+    },
+    // --- Temizlik & Bakım ---
+    Sektor {
+        ad: "Halı Yıkama",
+        grup: "Temizlik & Bakım",
+        demo: Demo::Servis,
+        osm: &[("shop", "^laundry$")],
+    },
+    Sektor {
+        ad: "Temizlik Şirketi",
+        grup: "Temizlik & Bakım",
+        demo: Demo::Servis,
+        osm: &[("shop", "^cleaning$"), ("office", "^cleaning$")],
+    },
+    // --- Mobilya & Dekorasyon ---
+    Sektor {
+        ad: "Mobilya",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^furniture$")],
+    },
+    Sektor {
+        ad: "Mutfak Mağazası",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^kitchen$")],
+    },
+    Sektor {
+        ad: "Banyo",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^bathroom_furnishing$")],
+    },
+    Sektor {
+        ad: "Yatak",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^bed$")],
+    },
+    Sektor {
+        ad: "Aydınlatma",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^lighting$")],
+    },
+    Sektor {
+        ad: "Züccaciye",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^houseware$")],
+    },
+    Sektor {
+        ad: "İç Dekorasyon",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^interior_decoration$")],
+    },
+    Sektor {
+        ad: "Çerçeve",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^frame$")],
+    },
+    Sektor {
+        ad: "Süpürge Mağazası",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^vacuum_cleaner$")],
+    },
+    Sektor {
+        ad: "Perde & Stor",
+        grup: "Mobilya & Dekorasyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^window_blind$")],
+    },
+    // --- Yapı & Hırdavat ---
+    Sektor {
+        ad: "Boya Bayii",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^paint$")],
+    },
+    Sektor {
+        ad: "Nalbur",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^(hardware|doityourself)$")],
+    },
+    Sektor {
+        ad: "Seramik",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^tiles$")],
+    },
+    Sektor {
+        ad: "Parke",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^flooring$")],
+    },
+    Sektor {
+        ad: "Şömine",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^fireplace$")],
+    },
+    Sektor {
+        ad: "Elektrik Malzemeleri",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^electrical$")],
+    },
+    Sektor {
+        ad: "İnşaat Malzemeleri",
+        grup: "Yapı & Hırdavat",
+        demo: Demo::Urun,
+        osm: &[("shop", "^doityourself$")],
+    },
+    // --- Bahçe & Çiçek ---
+    Sektor {
+        ad: "Bahçe Merkezi",
+        grup: "Bahçe & Çiçek",
+        demo: Demo::Urun,
+        osm: &[("shop", "^garden_centre$")],
+    },
+    Sektor {
+        ad: "Çiçekçi",
+        grup: "Bahçe & Çiçek",
+        demo: Demo::Urun,
+        osm: &[("shop", "^florist$")],
+    },
     // --- Elektronik & Teknoloji ---
-    Sektor { ad: "Elektronik", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^electronics$")] },
-    Sektor { ad: "Telefon", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^mobile_phone$")] },
-    Sektor { ad: "Bilgisayar", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^computer$")] },
-    Sektor { ad: "Beyaz Eşya", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^appliance$")] },
-    Sektor { ad: "Kamera Mağazası", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^camera$")] },
-    Sektor { ad: "Ses Sistemleri", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^hifi$")] },
-    Sektor { ad: "Oyun Konsolu", grup: "Elektronik & Teknoloji", demo: Demo::Urun, osm: &[("shop", "^video_games$")] },
-    // --- Hobi & Kültür ---
-    Sektor { ad: "Kitapçı", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^books$")] },
-    Sektor { ad: "Kırtasiye", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^stationery$")] },
-    Sektor { ad: "Fotokopi", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^copyshop$")] },
-    Sektor { ad: "Oyuncakçı", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^toys$")] },
-    Sektor { ad: "Müzik Aletleri", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^musical_instrument$")] },
-    Sektor { ad: "Spor Mağazası", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^sports$")] },
-    Sektor { ad: "Bisikletçi", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^bicycle$")] },
-    Sektor { ad: "Avcılık", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^hunting$")] },
-    Sektor { ad: "Balık Malzemeleri", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^fishing$")] },
-    Sektor { ad: "Antikacı", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^antiques$")] },
-    Sektor { ad: "İkinci El", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^second_hand$")] },
-    Sektor { ad: "Kamp Malzemeleri", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^outdoor$")] },
-    Sektor { ad: "Plak & CD", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^music$")] },
-    Sektor { ad: "Sanat Malzemeleri", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^art$")] },
-    Sektor { ad: "Parti Malzemeleri", grup: "Hobi & Kültür", demo: Demo::Urun, osm: &[("shop", "^party$")] },
+    Sektor {
+        ad: "Elektronik",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^electronics$")],
+    },
+    Sektor {
+        ad: "Telefon",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^mobile_phone$")],
+    },
+    Sektor {
+        ad: "Bilgisayar",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^computer$")],
+    },
+    Sektor {
+        ad: "Beyaz Eşya",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^appliance$")],
+    },
+    Sektor {
+        ad: "Kamera Mağazası",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^camera$")],
+    },
+    Sektor {
+        ad: "Ses Sistemleri",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^hifi$")],
+    },
+    Sektor {
+        ad: "Oyun Konsolu",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^video_games$")],
+    },
+    Sektor {
+        ad: "Elektronik Tamiri",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Servis,
+        osm: &[("craft", "^electronics_repair$")],
+    },
+    Sektor {
+        ad: "Güvenlik Kamerası",
+        grup: "Elektronik & Teknoloji",
+        demo: Demo::Urun,
+        osm: &[("shop", "^security$")],
+    },
+    // --- Kitap & Kırtasiye ---
+    Sektor {
+        ad: "Kitapçı",
+        grup: "Kitap & Kırtasiye",
+        demo: Demo::Urun,
+        osm: &[("shop", "^books$")],
+    },
+    Sektor {
+        ad: "Kırtasiye",
+        grup: "Kitap & Kırtasiye",
+        demo: Demo::Urun,
+        osm: &[("shop", "^stationery$")],
+    },
+    Sektor {
+        ad: "Fotokopi",
+        grup: "Kitap & Kırtasiye",
+        demo: Demo::Urun,
+        osm: &[("shop", "^copyshop$")],
+    },
+    Sektor {
+        ad: "Oyuncakçı",
+        grup: "Kitap & Kırtasiye",
+        demo: Demo::Urun,
+        osm: &[("shop", "^toys$")],
+    },
+    Sektor {
+        ad: "Sanat Malzemeleri",
+        grup: "Kitap & Kırtasiye",
+        demo: Demo::Urun,
+        osm: &[("shop", "^art$")],
+    },
+    // --- Hobi & Koleksiyon ---
+    Sektor {
+        ad: "Antikacı",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^antiques$")],
+    },
+    Sektor {
+        ad: "İkinci El",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^second_hand$")],
+    },
+    Sektor {
+        ad: "Kamp Malzemeleri",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^outdoor$")],
+    },
+    Sektor {
+        ad: "Plak & CD",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^music$")],
+    },
+    Sektor {
+        ad: "Parti Malzemeleri",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^party$")],
+    },
+    Sektor {
+        ad: "Avcılık",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^hunting$")],
+    },
+    Sektor {
+        ad: "Balık Malzemeleri",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^fishing$")],
+    },
+    Sektor {
+        ad: "Hobi Mağazası",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^hobby$")],
+    },
+    Sektor {
+        ad: "Dalış Malzemeleri",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^scuba_diving$")],
+    },
+    Sektor {
+        ad: "Model & Maket",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^model$")],
+    },
+    Sektor {
+        ad: "Koleksiyon",
+        grup: "Hobi & Koleksiyon",
+        demo: Demo::Urun,
+        osm: &[("shop", "^collector$")],
+    },
+    // --- Spor & Müzik ---
+    Sektor {
+        ad: "Spor Mağazası",
+        grup: "Spor & Müzik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^sports$")],
+    },
+    Sektor {
+        ad: "Bisikletçi",
+        grup: "Spor & Müzik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^bicycle$")],
+    },
+    Sektor {
+        ad: "Müzik Aletleri",
+        grup: "Spor & Müzik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^musical_instrument$")],
+    },
     // --- Otomotiv ---
-    Sektor { ad: "Oto Galeri", grup: "Otomotiv", demo: Demo::Urun, osm: &[("shop", "^car$")] },
-    Sektor { ad: "Oto Yedek Parça", grup: "Otomotiv", demo: Demo::Urun, osm: &[("shop", "^car_parts$")] },
-    Sektor { ad: "Motosiklet", grup: "Otomotiv", demo: Demo::Urun, osm: &[("shop", "^motorcycle$")] },
+    Sektor {
+        ad: "Oto Galeri",
+        grup: "Otomotiv",
+        demo: Demo::Urun,
+        osm: &[("shop", "^car$")],
+    },
+    Sektor {
+        ad: "Oto Yedek Parça",
+        grup: "Otomotiv",
+        demo: Demo::Urun,
+        osm: &[("shop", "^car_parts$")],
+    },
+    Sektor {
+        ad: "Motosiklet",
+        grup: "Otomotiv",
+        demo: Demo::Urun,
+        osm: &[("shop", "^motorcycle$")],
+    },
+    Sektor {
+        ad: "Karavan",
+        grup: "Otomotiv",
+        demo: Demo::Urun,
+        osm: &[("shop", "^caravan$")],
+    },
+    Sektor {
+        ad: "Kamyon & Ticari Araç",
+        grup: "Otomotiv",
+        demo: Demo::Urun,
+        osm: &[("shop", "^truck$")],
+    },
     // --- Medikal & Optik ---
-    Sektor { ad: "Optik", grup: "Medikal & Optik", demo: Demo::Urun, osm: &[("shop", "^optician$")] },
-    Sektor { ad: "Medikal", grup: "Medikal & Optik", demo: Demo::Urun, osm: &[("shop", "^medical_supply$")] },
-    Sektor { ad: "İşitme Cihazı", grup: "Medikal & Optik", demo: Demo::Urun, osm: &[("shop", "^hearing_aids$")] },
-    Sektor { ad: "Odyoloji", grup: "Medikal & Optik", demo: Demo::Klinik, osm: &[("healthcare", "^audiologist$")] },
+    Sektor {
+        ad: "Optik",
+        grup: "Medikal & Optik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^optician$")],
+    },
+    Sektor {
+        ad: "Medikal",
+        grup: "Medikal & Optik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^medical_supply$")],
+    },
+    Sektor {
+        ad: "İşitme Cihazı",
+        grup: "Medikal & Optik",
+        demo: Demo::Urun,
+        osm: &[("shop", "^hearing_aids$")],
+    },
+    Sektor {
+        ad: "Odyoloji",
+        grup: "Medikal & Optik",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^audiologist$")],
+    },
     // --- Evcil Hayvan ---
-    Sektor { ad: "Pet Shop", grup: "Evcil Hayvan", demo: Demo::Urun, osm: &[("shop", "^pet$")] },
-    Sektor { ad: "Pet Kuaför", grup: "Evcil Hayvan", demo: Demo::Servis, osm: &[("shop", "^pet_grooming$")] },
+    Sektor {
+        ad: "Pet Shop",
+        grup: "Evcil Hayvan",
+        demo: Demo::Urun,
+        osm: &[("shop", "^pet$")],
+    },
+    Sektor {
+        ad: "Pet Kuaför",
+        grup: "Evcil Hayvan",
+        demo: Demo::Servis,
+        osm: &[("shop", "^pet_grooming$")],
+    },
+    Sektor {
+        ad: "Pet Otel",
+        grup: "Evcil Hayvan",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^animal_boarding$")],
+    },
+    Sektor {
+        ad: "Pet Eğitimi",
+        grup: "Evcil Hayvan",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^animal_training$")],
+    },
+    Sektor {
+        ad: "Akvaryumcu",
+        grup: "Evcil Hayvan",
+        demo: Demo::Urun,
+        osm: &[("shop", "^aquarium$"), ("shop", "^pet$")],
+    },
     // --- Yaşam & Diğer ---
-    Sektor { ad: "Tütüncü", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^tobacco$")] },
-    Sektor { ad: "İçkici", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^alcohol$")] },
-    Sektor { ad: "Depolama", grup: "Yaşam & Diğer", demo: Demo::Servis, osm: &[("shop", "^storage_rental$")] },
-    Sektor { ad: "Bebek Mağazası", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^baby_goods$")] },
-    Sektor { ad: "Gazete Bayii", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^newsagent$")] },
-    Sektor { ad: "Şans Oyunları", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^lottery$")] },
-    Sektor { ad: "Video Kiralama", grup: "Yaşam & Diğer", demo: Demo::Urun, osm: &[("shop", "^video$")] },
-    // --- Sağlık ---
-    Sektor { ad: "Eczane", grup: "Sağlık", demo: Demo::Urun, osm: &[("amenity", "^pharmacy$")] },
-    Sektor { ad: "Diş Kliniği", grup: "Sağlık", demo: Demo::Klinik, osm: &[("amenity", "^dentist$"), ("healthcare", "^dentist$")] },
-    Sektor { ad: "Klinik", grup: "Sağlık", demo: Demo::Klinik, osm: &[("amenity", "^(clinic|doctors)$"), ("healthcare", "^clinic$")] },
-    Sektor { ad: "Hastane", grup: "Sağlık", demo: Demo::Klinik, osm: &[("amenity", "^hospital$")] },
-    Sektor { ad: "Veteriner", grup: "Sağlık", demo: Demo::Klinik, osm: &[("amenity", "^veterinary$")] },
-    Sektor { ad: "Fizyoterapi", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^physiotherapist$")] },
-    Sektor { ad: "Psikolog", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^psychotherapist$")] },
-    Sektor { ad: "Laboratuvar", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^laboratory$")] },
-    Sektor { ad: "Diyaliz Merkezi", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^dialysis$")] },
-    Sektor { ad: "Rehabilitasyon", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^rehabilitation$")] },
-    Sektor { ad: "Podolog", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^podiatrist$")] },
-    Sektor { ad: "Konuşma Terapisi", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^speech_therapist$")] },
-    Sektor { ad: "Alternatif Tıp", grup: "Sağlık", demo: Demo::Klinik, osm: &[("healthcare", "^alternative$")] },
+    Sektor {
+        ad: "Tütüncü",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^tobacco$")],
+    },
+    Sektor {
+        ad: "İçkici",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^alcohol$")],
+    },
+    Sektor {
+        ad: "Depolama",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Servis,
+        osm: &[("shop", "^storage_rental$")],
+    },
+    Sektor {
+        ad: "Bebek Mağazası",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^baby_goods$")],
+    },
+    Sektor {
+        ad: "Gazete Bayii",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^newsagent$")],
+    },
+    Sektor {
+        ad: "Şans Oyunları",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^lottery$")],
+    },
+    Sektor {
+        ad: "Video Kiralama",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^video$")],
+    },
+    Sektor {
+        ad: "Hediyelik Eşya",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^gift$")],
+    },
+    Sektor {
+        ad: "Elektronik Sigara",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Urun,
+        osm: &[("shop", "^e-cigarette$")],
+    },
+    Sektor {
+        ad: "Cenaze Hizmeti",
+        grup: "Yaşam & Diğer",
+        demo: Demo::Servis,
+        osm: &[("shop", "^funeral_directors$")],
+    },
+    // --- Sağlık Kuruluşları ---
+    Sektor {
+        ad: "Eczane",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Urun,
+        osm: &[("amenity", "^pharmacy$")],
+    },
+    Sektor {
+        ad: "Diş Kliniği",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("amenity", "^dentist$"), ("healthcare", "^dentist$")],
+    },
+    Sektor {
+        ad: "Klinik",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[
+            ("amenity", "^(clinic|doctors)$"),
+            ("healthcare", "^clinic$"),
+        ],
+    },
+    Sektor {
+        ad: "Hastane",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("amenity", "^hospital$")],
+    },
+    Sektor {
+        ad: "Veteriner",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("amenity", "^veterinary$")],
+    },
+    Sektor {
+        ad: "Laboratuvar",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^laboratory$")],
+    },
+    Sektor {
+        ad: "Diyaliz Merkezi",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^dialysis$")],
+    },
+    Sektor {
+        ad: "Göz Kliniği",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^optometrist$")],
+    },
+    Sektor {
+        ad: "Kan Merkezi",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^blood_donation$")],
+    },
+    Sektor {
+        ad: "Diş Laboratuvarı",
+        grup: "Sağlık Kuruluşları",
+        demo: Demo::Klinik,
+        osm: &[("craft", "^dental_technician$")],
+    },
+    // --- Terapi & Rehabilitasyon ---
+    Sektor {
+        ad: "Fizyoterapi",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^physiotherapist$")],
+    },
+    Sektor {
+        ad: "Psikolog",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^psychotherapist$")],
+    },
+    Sektor {
+        ad: "Rehabilitasyon",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^rehabilitation$")],
+    },
+    Sektor {
+        ad: "Podolog",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^podiatrist$")],
+    },
+    Sektor {
+        ad: "Konuşma Terapisi",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^speech_therapist$")],
+    },
+    Sektor {
+        ad: "Alternatif Tıp",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^alternative$")],
+    },
+    Sektor {
+        ad: "Ergoterapi",
+        grup: "Terapi & Rehabilitasyon",
+        demo: Demo::Klinik,
+        osm: &[("healthcare", "^occupational_therapist$")],
+    },
     // --- Güzellik & Bakım ---
-    Sektor { ad: "Kuaför", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("shop", "^hairdresser$")] },
-    Sektor { ad: "Güzellik Salonu", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("shop", "^beauty$"), ("leisure", "^spa$")] },
-    Sektor { ad: "Masaj", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("shop", "^massage$")] },
-    Sektor { ad: "Dövme", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("shop", "^tattoo$")] },
-    Sektor { ad: "Hamam", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("amenity", "^public_bath$")] },
-    Sektor { ad: "Fotoğrafçı", grup: "Güzellik & Bakım", demo: Demo::Galeri, osm: &[("craft", "^photographer$"), ("shop", "^photo$")] },
-    Sektor { ad: "Kozmetik", grup: "Güzellik & Bakım", demo: Demo::Urun, osm: &[("shop", "^cosmetics$")] },
-    Sektor { ad: "Parfümeri", grup: "Güzellik & Bakım", demo: Demo::Urun, osm: &[("shop", "^perfumery$")] },
+    Sektor {
+        ad: "Kuaför",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^hairdresser$")],
+    },
+    Sektor {
+        ad: "Güzellik Salonu",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^beauty$"), ("leisure", "^spa$")],
+    },
+    Sektor {
+        ad: "Masaj",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^massage$")],
+    },
+    Sektor {
+        ad: "Dövme",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^tattoo$")],
+    },
+    Sektor {
+        ad: "Hamam",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("amenity", "^public_bath$")],
+    },
+    Sektor {
+        ad: "Fotoğrafçı",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("craft", "^photographer$"), ("shop", "^photo$")],
+    },
+    Sektor {
+        ad: "Kozmetik",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Urun,
+        osm: &[("shop", "^cosmetics$")],
+    },
+    Sektor {
+        ad: "Parfümeri",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Urun,
+        osm: &[("shop", "^perfumery$")],
+    },
+    Sektor {
+        ad: "Berber",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^hairdresser$")],
+    },
+    Sektor {
+        ad: "Tırnak Stüdyosu",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^nails$"), ("shop", "^beauty$")],
+    },
+    Sektor {
+        ad: "Solaryum",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("leisure", "^tanning_salon$")],
+    },
+    Sektor {
+        ad: "Makyaj Stüdyosu",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^beauty$")],
+    },
+    Sektor {
+        ad: "Epilasyon",
+        grup: "Güzellik & Bakım",
+        demo: Demo::Galeri,
+        osm: &[("shop", "^beauty$")],
+    },
     // --- Konaklama ---
-    Sektor { ad: "Otel", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^hotel$")] },
-    Sektor { ad: "Pansiyon", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^guest_house$")] },
-    Sektor { ad: "Hostel", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^hostel$")] },
-    Sektor { ad: "Kamp Alanı", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^(camp_site|caravan_site)$")] },
-    Sektor { ad: "Apart Otel", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^apartment$")] },
-    Sektor { ad: "Bungalov", grup: "Konaklama", demo: Demo::Otel, osm: &[("tourism", "^chalet$")] },
-    Sektor { ad: "Plaj Tesisi", grup: "Konaklama", demo: Demo::Otel, osm: &[("leisure", "^beach_resort$")] },
+    Sektor {
+        ad: "Otel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^hotel$")],
+    },
+    Sektor {
+        ad: "Pansiyon",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^guest_house$")],
+    },
+    Sektor {
+        ad: "Hostel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^hostel$")],
+    },
+    Sektor {
+        ad: "Kamp Alanı",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^(camp_site|caravan_site)$")],
+    },
+    Sektor {
+        ad: "Apart Otel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^apartment$")],
+    },
+    Sektor {
+        ad: "Bungalov",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^chalet$")],
+    },
+    Sektor {
+        ad: "Plaj Tesisi",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("leisure", "^beach_resort$")],
+    },
+    Sektor {
+        ad: "Motel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^motel$")],
+    },
+    Sektor {
+        ad: "Butik Otel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^hotel$")],
+    },
+    Sektor {
+        ad: "Termal Otel",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^hotel$")],
+    },
+    Sektor {
+        ad: "Karavan Parkı",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^caravan_site$")],
+    },
+    Sektor {
+        ad: "Dağ Evi",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^alpine_hut$"), ("tourism", "^chalet$")],
+    },
+    Sektor {
+        ad: "Tatil Köyü",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("tourism", "^resort$")],
+    },
+    Sektor {
+        ad: "Öğrenci Yurdu",
+        grup: "Konaklama",
+        demo: Demo::Otel,
+        osm: &[("amenity", "^dormitory$")],
+    },
     // --- Eğitim ---
-    Sektor { ad: "Kurs", grup: "Eğitim", demo: Demo::Egitim, osm: &[("office", "^educational_institution$")] },
-    Sektor { ad: "Sürücü Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^driving_school$")] },
-    Sektor { ad: "Dil Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^language_school$")] },
-    Sektor { ad: "Müzik Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^music_school$")] },
-    Sektor { ad: "Kreş", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^(kindergarten|childcare)$")] },
-    Sektor { ad: "Etüt Merkezi", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^prep_school$")] },
-    Sektor { ad: "Okul", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^school$")] },
-    Sektor { ad: "Kolej", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^college$")] },
-    Sektor { ad: "Üniversite", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^university$")] },
-    Sektor { ad: "Dans Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("leisure", "^dance$")] },
-    Sektor { ad: "Yüzme Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("leisure", "^swimming_pool$")] },
-    Sektor { ad: "Sanat Kursu", grup: "Eğitim", demo: Demo::Egitim, osm: &[("amenity", "^arts_centre$")] },
+    Sektor {
+        ad: "Kurs",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("office", "^educational_institution$")],
+    },
+    Sektor {
+        ad: "Sürücü Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^driving_school$")],
+    },
+    Sektor {
+        ad: "Dil Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^language_school$")],
+    },
+    Sektor {
+        ad: "Müzik Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^music_school$")],
+    },
+    Sektor {
+        ad: "Kreş",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^(kindergarten|childcare)$")],
+    },
+    Sektor {
+        ad: "Etüt Merkezi",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^prep_school$")],
+    },
+    Sektor {
+        ad: "Okul",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^school$")],
+    },
+    Sektor {
+        ad: "Kolej",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^college$")],
+    },
+    Sektor {
+        ad: "Üniversite",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^university$")],
+    },
+    Sektor {
+        ad: "Dans Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("leisure", "^dance$")],
+    },
+    Sektor {
+        ad: "Yüzme Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("leisure", "^swimming_pool$")],
+    },
+    Sektor {
+        ad: "Sanat Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^arts_centre$")],
+    },
+    Sektor {
+        ad: "Anaokulu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^kindergarten$")],
+    },
+    Sektor {
+        ad: "Meslek Kursu",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^training$")],
+    },
+    Sektor {
+        ad: "Dershane",
+        grup: "Eğitim",
+        demo: Demo::Egitim,
+        osm: &[("amenity", "^prep_school$")],
+    },
     // --- Yapı & Emlak ---
-    Sektor { ad: "Mimarlık", grup: "Yapı & Emlak", demo: Demo::Ofis, osm: &[("office", "^architect$")] },
-    Sektor { ad: "Mühendislik", grup: "Yapı & Emlak", demo: Demo::Ofis, osm: &[("office", "^engineer$")] },
-    Sektor { ad: "İnşaat", grup: "Yapı & Emlak", demo: Demo::Ofis, osm: &[("office", "^(construction_company|company)$"), ("craft", "^(builder|scaffolder)$")] },
-    Sektor { ad: "Emlak", grup: "Yapı & Emlak", demo: Demo::Ofis, osm: &[("office", "^estate_agent$")] },
-    Sektor { ad: "Harita Mühendisi", grup: "Yapı & Emlak", demo: Demo::Ofis, osm: &[("office", "^surveyor$")] },
+    Sektor {
+        ad: "Mimarlık",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[("office", "^architect$")],
+    },
+    Sektor {
+        ad: "Mühendislik",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[("office", "^engineer$")],
+    },
+    Sektor {
+        ad: "İnşaat",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[
+            ("office", "^(construction_company|company)$"),
+            ("craft", "^(builder|scaffolder)$"),
+        ],
+    },
+    Sektor {
+        ad: "Emlak",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[("office", "^estate_agent$")],
+    },
+    Sektor {
+        ad: "Harita Mühendisi",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[("office", "^surveyor$")],
+    },
+    Sektor {
+        ad: "Bina Yönetimi",
+        grup: "Yapı & Emlak",
+        demo: Demo::Ofis,
+        osm: &[("office", "^property_management$")],
+    },
     // --- Hukuk & Mali ---
-    Sektor { ad: "Muhasebe", grup: "Hukuk & Mali", demo: Demo::Ofis, osm: &[("office", "^accountant$")] },
-    Sektor { ad: "Avukat", grup: "Hukuk & Mali", demo: Demo::Ofis, osm: &[("office", "^lawyer$")] },
-    Sektor { ad: "Noter", grup: "Hukuk & Mali", demo: Demo::Ofis, osm: &[("office", "^notary$")] },
-    Sektor { ad: "Vergi Danışmanı", grup: "Hukuk & Mali", demo: Demo::Ofis, osm: &[("office", "^tax_advisor$")] },
+    Sektor {
+        ad: "Muhasebe",
+        grup: "Hukuk & Mali",
+        demo: Demo::Ofis,
+        osm: &[("office", "^accountant$")],
+    },
+    Sektor {
+        ad: "Avukat",
+        grup: "Hukuk & Mali",
+        demo: Demo::Ofis,
+        osm: &[("office", "^lawyer$")],
+    },
+    Sektor {
+        ad: "Noter",
+        grup: "Hukuk & Mali",
+        demo: Demo::Ofis,
+        osm: &[("office", "^notary$")],
+    },
+    Sektor {
+        ad: "Vergi Danışmanı",
+        grup: "Hukuk & Mali",
+        demo: Demo::Ofis,
+        osm: &[("office", "^tax_advisor$")],
+    },
+    Sektor {
+        ad: "Tercüme Bürosu",
+        grup: "Hukuk & Mali",
+        demo: Demo::Ofis,
+        osm: &[("office", "^translator$")],
+    },
     // --- Finans & Resmi İşlemler ---
-    Sektor { ad: "Banka", grup: "Finans & Resmi İşlemler", demo: Demo::Ofis, osm: &[("amenity", "^bank$")] },
-    Sektor { ad: "Döviz Bürosu", grup: "Finans & Resmi İşlemler", demo: Demo::Ofis, osm: &[("amenity", "^bureau_de_change$")] },
-    Sektor { ad: "Sigorta", grup: "Finans & Resmi İşlemler", demo: Demo::Ofis, osm: &[("office", "^insurance$")] },
-    Sektor { ad: "Postane", grup: "Finans & Resmi İşlemler", demo: Demo::Ofis, osm: &[("amenity", "^post_office$")] },
-    Sektor { ad: "Finans Danışmanı", grup: "Finans & Resmi İşlemler", demo: Demo::Ofis, osm: &[("office", "^financial$")] },
+    Sektor {
+        ad: "Banka",
+        grup: "Finans & Resmi İşlemler",
+        demo: Demo::Ofis,
+        osm: &[("amenity", "^bank$")],
+    },
+    Sektor {
+        ad: "Döviz Bürosu",
+        grup: "Finans & Resmi İşlemler",
+        demo: Demo::Ofis,
+        osm: &[("amenity", "^bureau_de_change$")],
+    },
+    Sektor {
+        ad: "Sigorta",
+        grup: "Finans & Resmi İşlemler",
+        demo: Demo::Ofis,
+        osm: &[("office", "^insurance$")],
+    },
+    Sektor {
+        ad: "Postane",
+        grup: "Finans & Resmi İşlemler",
+        demo: Demo::Ofis,
+        osm: &[("amenity", "^post_office$")],
+    },
+    Sektor {
+        ad: "Finans Danışmanı",
+        grup: "Finans & Resmi İşlemler",
+        demo: Demo::Ofis,
+        osm: &[("office", "^financial$")],
+    },
+    // --- Kurum & Topluluk ---
+    Sektor {
+        ad: "Dernek",
+        grup: "Kurum & Topluluk",
+        demo: Demo::Ofis,
+        osm: &[("office", "^association$")],
+    },
+    Sektor {
+        ad: "Vakıf",
+        grup: "Kurum & Topluluk",
+        demo: Demo::Ofis,
+        osm: &[("office", "^ngo$")],
+    },
     // --- Bilişim & Kurumsal Destek ---
-    Sektor { ad: "Yazılım", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^it$")] },
-    Sektor { ad: "Reklam", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^advertising_agency$")] },
-    Sektor { ad: "Matbaa", grup: "Bilişim & Kurumsal Destek", demo: Demo::Servis, osm: &[("craft", "^printer$"), ("shop", "^copyshop$")] },
-    Sektor { ad: "İnsan Kaynakları", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^employment_agency$")] },
-    Sektor { ad: "Danışmanlık", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^consulting$")] },
-    Sektor { ad: "Telekomünikasyon", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^telecommunication$")] },
-    Sektor { ad: "Yayınevi", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^publisher$")] },
-    Sektor { ad: "Gazete", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^newspaper$")] },
-    Sektor { ad: "Güvenlik", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^security$")] },
-    Sektor { ad: "Araştırma", grup: "Bilişim & Kurumsal Destek", demo: Demo::Ofis, osm: &[("office", "^research$")] },
+    Sektor {
+        ad: "Yazılım",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^it$")],
+    },
+    Sektor {
+        ad: "Reklam",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^advertising_agency$")],
+    },
+    Sektor {
+        ad: "Matbaa",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Servis,
+        osm: &[("craft", "^printer$"), ("shop", "^copyshop$")],
+    },
+    Sektor {
+        ad: "İnsan Kaynakları",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^employment_agency$")],
+    },
+    Sektor {
+        ad: "Danışmanlık",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^consulting$")],
+    },
+    Sektor {
+        ad: "Telekomünikasyon",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^telecommunication$")],
+    },
+    Sektor {
+        ad: "Yayınevi",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^publisher$")],
+    },
+    Sektor {
+        ad: "Gazete",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^newspaper$")],
+    },
+    Sektor {
+        ad: "Güvenlik",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^security$")],
+    },
+    Sektor {
+        ad: "Araştırma",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^research$")],
+    },
+    Sektor {
+        ad: "Grafik Tasarım",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^graphic_design$")],
+    },
+    Sektor {
+        ad: "Ortak Çalışma Ofisi",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^coworking$")],
+    },
+    Sektor {
+        ad: "Web Tasarım",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^it$")],
+    },
+    Sektor {
+        ad: "Sosyal Medya",
+        grup: "Bilişim & Kurumsal Destek",
+        demo: Demo::Ofis,
+        osm: &[("office", "^advertising_agency$")],
+    },
     // --- Lojistik & Seyahat ---
-    Sektor { ad: "Nakliyat", grup: "Lojistik & Seyahat", demo: Demo::Ofis, osm: &[("office", "^(logistics|moving_company)$")] },
-    Sektor { ad: "Turizm Acentası", grup: "Lojistik & Seyahat", demo: Demo::Ofis, osm: &[("shop", "^travel_agency$"), ("office", "^travel_agent$")] },
+    Sektor {
+        ad: "Nakliyat",
+        grup: "Lojistik & Seyahat",
+        demo: Demo::Ofis,
+        osm: &[("office", "^(logistics|moving_company)$")],
+    },
+    Sektor {
+        ad: "Turizm Acentası",
+        grup: "Lojistik & Seyahat",
+        demo: Demo::Ofis,
+        osm: &[("shop", "^travel_agency$"), ("office", "^travel_agent$")],
+    },
+    Sektor {
+        ad: "Kurye",
+        grup: "Lojistik & Seyahat",
+        demo: Demo::Servis,
+        osm: &[("shop", "^courier$"), ("office", "^logistics$")],
+    },
     // --- Oto Servis ---
-    Sektor { ad: "Oto Tamir", grup: "Oto Servis", demo: Demo::Servis, osm: &[("shop", "^car_repair$")] },
-    Sektor { ad: "Lastikçi", grup: "Oto Servis", demo: Demo::Servis, osm: &[("shop", "^tyres$")] },
-    Sektor { ad: "Oto Yıkama", grup: "Oto Servis", demo: Demo::Servis, osm: &[("amenity", "^car_wash$")] },
-    Sektor { ad: "Oto Kiralama", grup: "Oto Servis", demo: Demo::Servis, osm: &[("amenity", "^car_rental$")] },
-    Sektor { ad: "Akaryakıt", grup: "Oto Servis", demo: Demo::Servis, osm: &[("amenity", "^fuel$")] },
-    Sektor { ad: "Motosiklet Tamiri", grup: "Oto Servis", demo: Demo::Servis, osm: &[("shop", "^motorcycle_repair$")] },
-    Sektor { ad: "Şarj İstasyonu", grup: "Oto Servis", demo: Demo::Servis, osm: &[("amenity", "^charging_station$")] },
+    Sektor {
+        ad: "Oto Tamir",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^car_repair$")],
+    },
+    Sektor {
+        ad: "Lastikçi",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^tyres$")],
+    },
+    Sektor {
+        ad: "Oto Yıkama",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^car_wash$")],
+    },
+    Sektor {
+        ad: "Oto Kiralama",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^car_rental$")],
+    },
+    Sektor {
+        ad: "Akaryakıt",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^fuel$")],
+    },
+    Sektor {
+        ad: "Motosiklet Tamiri",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^motorcycle_repair$")],
+    },
+    Sektor {
+        ad: "Şarj İstasyonu",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^charging_station$")],
+    },
+    Sektor {
+        ad: "Otopark",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^parking$")],
+    },
+    Sektor {
+        ad: "Oto Kaporta",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^car_repair$")],
+    },
+    Sektor {
+        ad: "Oto Döşeme",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("craft", "^upholsterer$")],
+    },
+    Sektor {
+        ad: "Oto Muayene",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("amenity", "^vehicle_inspection$")],
+    },
+    Sektor {
+        ad: "Oto Elektrik",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^car_parts$"), ("shop", "^car_repair$")],
+    },
+    Sektor {
+        ad: "Çekici",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^car_repair$")],
+    },
+    Sektor {
+        ad: "Egzoz",
+        grup: "Oto Servis",
+        demo: Demo::Servis,
+        osm: &[("shop", "^car_repair$")],
+    },
     // --- Tesisat & Güvenlik ---
-    Sektor { ad: "Tesisatçı", grup: "Tesisat & Güvenlik", demo: Demo::Servis, osm: &[("craft", "^plumber$")] },
-    Sektor { ad: "Elektrikçi", grup: "Tesisat & Güvenlik", demo: Demo::Servis, osm: &[("craft", "^electrician$")] },
-    Sektor { ad: "Klima", grup: "Tesisat & Güvenlik", demo: Demo::Servis, osm: &[("craft", "^hvac$")] },
-    Sektor { ad: "Çilingir", grup: "Tesisat & Güvenlik", demo: Demo::Servis, osm: &[("craft", "^(key_cutting|locksmith)$")] },
+    Sektor {
+        ad: "Tesisatçı",
+        grup: "Tesisat & Güvenlik",
+        demo: Demo::Servis,
+        osm: &[("craft", "^plumber$")],
+    },
+    Sektor {
+        ad: "Elektrikçi",
+        grup: "Tesisat & Güvenlik",
+        demo: Demo::Servis,
+        osm: &[("craft", "^electrician$")],
+    },
+    Sektor {
+        ad: "Klima",
+        grup: "Tesisat & Güvenlik",
+        demo: Demo::Servis,
+        osm: &[("craft", "^hvac$")],
+    },
+    Sektor {
+        ad: "Çilingir",
+        grup: "Tesisat & Güvenlik",
+        demo: Demo::Servis,
+        osm: &[("craft", "^(key_cutting|locksmith)$")],
+    },
     // --- İnşaat Ustaları ---
-    Sektor { ad: "Boyacı", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^painter$")] },
-    Sektor { ad: "Marangoz", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^(carpenter|joiner)$")] },
-    Sektor { ad: "Camcı", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^glaziery$")] },
-    Sektor { ad: "Fayansçı", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^tiler$")] },
-    Sektor { ad: "Sıvacı", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^plasterer$")] },
-    Sektor { ad: "Çatıcı", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^roofer$")] },
-    Sektor { ad: "Zemin Döşeme", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^floorer$")] },
-    Sektor { ad: "Taş Ustası", grup: "İnşaat Ustaları", demo: Demo::Servis, osm: &[("craft", "^stonemason$")] },
+    Sektor {
+        ad: "Boyacı",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^painter$")],
+    },
+    Sektor {
+        ad: "Marangoz",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^(carpenter|joiner)$")],
+    },
+    Sektor {
+        ad: "Camcı",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^glaziery$")],
+    },
+    Sektor {
+        ad: "Fayansçı",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^tiler$")],
+    },
+    Sektor {
+        ad: "Sıvacı",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^plasterer$")],
+    },
+    Sektor {
+        ad: "Çatıcı",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^roofer$")],
+    },
+    Sektor {
+        ad: "Zemin Döşeme",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^floorer$")],
+    },
+    Sektor {
+        ad: "Taş Ustası",
+        grup: "İnşaat Ustaları",
+        demo: Demo::Servis,
+        osm: &[("craft", "^stonemason$")],
+    },
     // --- Metal & Doğrama ---
-    Sektor { ad: "Demirci", grup: "Metal & Doğrama", demo: Demo::Servis, osm: &[("craft", "^blacksmith$")] },
-    Sektor { ad: "Kaynakçı", grup: "Metal & Doğrama", demo: Demo::Servis, osm: &[("craft", "^welder$")] },
-    Sektor { ad: "PVC Doğrama", grup: "Metal & Doğrama", demo: Demo::Servis, osm: &[("craft", "^window_construction$")] },
-    Sektor { ad: "Metal İşleri", grup: "Metal & Doğrama", demo: Demo::Servis, osm: &[("craft", "^metal_construction$")] },
+    Sektor {
+        ad: "Demirci",
+        grup: "Metal & Doğrama",
+        demo: Demo::Servis,
+        osm: &[("craft", "^blacksmith$")],
+    },
+    Sektor {
+        ad: "Kaynakçı",
+        grup: "Metal & Doğrama",
+        demo: Demo::Servis,
+        osm: &[("craft", "^welder$")],
+    },
+    Sektor {
+        ad: "PVC Doğrama",
+        grup: "Metal & Doğrama",
+        demo: Demo::Servis,
+        osm: &[("craft", "^window_construction$")],
+    },
+    Sektor {
+        ad: "Metal İşleri",
+        grup: "Metal & Doğrama",
+        demo: Demo::Servis,
+        osm: &[("craft", "^metal_construction$")],
+    },
     // --- Çevre & Bakım ---
-    Sektor { ad: "Peyzaj", grup: "Çevre & Bakım", demo: Demo::Servis, osm: &[("craft", "^gardener$")] },
-    Sektor { ad: "İlaçlama", grup: "Çevre & Bakım", demo: Demo::Servis, osm: &[("craft", "^pest_control$")] },
+    Sektor {
+        ad: "Peyzaj",
+        grup: "Çevre & Bakım",
+        demo: Demo::Servis,
+        osm: &[("craft", "^gardener$")],
+    },
+    Sektor {
+        ad: "İlaçlama",
+        grup: "Çevre & Bakım",
+        demo: Demo::Servis,
+        osm: &[("craft", "^pest_control$")],
+    },
     // --- Spor & Fitness ---
-    Sektor { ad: "Spor Salonu", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^(fitness_centre|sports_centre)$")] },
-    Sektor { ad: "Sauna", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^sauna$")] },
-    Sektor { ad: "Binicilik", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^horse_riding$")] },
-    Sektor { ad: "Golf", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^golf_course$")] },
-    Sektor { ad: "Buz Pisti", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^ice_rink$")] },
-    Sektor { ad: "Su Parkı", grup: "Spor & Fitness", demo: Demo::Eglence, osm: &[("leisure", "^water_park$")] },
+    Sektor {
+        ad: "Spor Salonu",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^(fitness_centre|sports_centre)$")],
+    },
+    Sektor {
+        ad: "Sauna",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^sauna$")],
+    },
+    Sektor {
+        ad: "Binicilik",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^horse_riding$")],
+    },
+    Sektor {
+        ad: "Golf",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^golf_course$")],
+    },
+    Sektor {
+        ad: "Buz Pisti",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^ice_rink$")],
+    },
+    Sektor {
+        ad: "Su Parkı",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^water_park$")],
+    },
+    Sektor {
+        ad: "Yoga Stüdyosu",
+        grup: "Spor & Fitness",
+        demo: Demo::Egitim,
+        osm: &[("sport", "^yoga$")],
+    },
+    Sektor {
+        ad: "Pilates Stüdyosu",
+        grup: "Spor & Fitness",
+        demo: Demo::Egitim,
+        osm: &[("sport", "^pilates$")],
+    },
+    Sektor {
+        ad: "Dövüş Sporları",
+        grup: "Spor & Fitness",
+        demo: Demo::Egitim,
+        osm: &[("sport", "^martial_arts$")],
+    },
+    Sektor {
+        ad: "Trambolin Parkı",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^trampoline_park$")],
+    },
+    Sektor {
+        ad: "Halı Saha",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^pitch$")],
+    },
+    Sektor {
+        ad: "Yüzme Havuzu",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^swimming_pool$")],
+    },
+    Sektor {
+        ad: "Atış Poligonu",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("sport", "^shooting$")],
+    },
+    Sektor {
+        ad: "Tenis Kortu",
+        grup: "Spor & Fitness",
+        demo: Demo::Eglence,
+        osm: &[("sport", "^tennis$")],
+    },
     // --- Mekân & Etkinlik ---
-    Sektor { ad: "Düğün Salonu", grup: "Mekân & Etkinlik", demo: Demo::Eglence, osm: &[("amenity", "^(events_venue|community_centre)$")] },
-    Sektor { ad: "Gece Kulübü", grup: "Mekân & Etkinlik", demo: Demo::Eglence, osm: &[("amenity", "^nightclub$")] },
-    Sektor { ad: "Konser Salonu", grup: "Mekân & Etkinlik", demo: Demo::Eglence, osm: &[("amenity", "^music_venue$")] },
-    Sektor { ad: "Konferans Merkezi", grup: "Mekân & Etkinlik", demo: Demo::Eglence, osm: &[("amenity", "^conference_centre$")] },
+    Sektor {
+        ad: "Düğün Salonu",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^(events_venue|community_centre)$")],
+    },
+    Sektor {
+        ad: "Gece Kulübü",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^nightclub$")],
+    },
+    Sektor {
+        ad: "Konser Salonu",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^music_venue$")],
+    },
+    Sektor {
+        ad: "Konferans Merkezi",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^conference_centre$")],
+    },
+    Sektor {
+        ad: "Organizasyon",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Ofis,
+        osm: &[("office", "^event_management$")],
+    },
+    Sektor {
+        ad: "Fuar Merkezi",
+        grup: "Mekân & Etkinlik",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^exhibition_centre$")],
+    },
     // --- Sinema & Sahne ---
-    Sektor { ad: "Sinema", grup: "Sinema & Sahne", demo: Demo::Eglence, osm: &[("amenity", "^cinema$")] },
-    Sektor { ad: "Tiyatro", grup: "Sinema & Sahne", demo: Demo::Eglence, osm: &[("amenity", "^theatre$")] },
+    Sektor {
+        ad: "Sinema",
+        grup: "Sinema & Sahne",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^cinema$")],
+    },
+    Sektor {
+        ad: "Tiyatro",
+        grup: "Sinema & Sahne",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^theatre$")],
+    },
     // --- Oyun & Eğlence ---
-    Sektor { ad: "Oyun Salonu", grup: "Oyun & Eğlence", demo: Demo::Eglence, osm: &[("leisure", "^amusement_arcade$")] },
-    Sektor { ad: "Bowling", grup: "Oyun & Eğlence", demo: Demo::Eglence, osm: &[("leisure", "^bowling_alley$")] },
-    Sektor { ad: "Lunapark", grup: "Oyun & Eğlence", demo: Demo::Eglence, osm: &[("tourism", "^theme_park$")] },
-    Sektor { ad: "Oyun Parkı", grup: "Oyun & Eğlence", demo: Demo::Eglence, osm: &[("leisure", "^playground$")] },
-    Sektor { ad: "Escape Oyunu", grup: "Oyun & Eğlence", demo: Demo::Eglence, osm: &[("leisure", "^escape_game$")] },
-    Sektor { ad: "İnternet Kafe", grup: "Oyun & Eğlence", demo: Demo::Kafe, osm: &[("amenity", "^internet_cafe$")] },
+    Sektor {
+        ad: "Oyun Salonu",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^amusement_arcade$")],
+    },
+    Sektor {
+        ad: "Bowling",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^bowling_alley$")],
+    },
+    Sektor {
+        ad: "Lunapark",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("tourism", "^theme_park$")],
+    },
+    Sektor {
+        ad: "Oyun Parkı",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^playground$")],
+    },
+    Sektor {
+        ad: "Escape Oyunu",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^escape_game$")],
+    },
+    Sektor {
+        ad: "İnternet Kafe",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Kafe,
+        osm: &[("amenity", "^internet_cafe$")],
+    },
+    Sektor {
+        ad: "Karaoke",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^karaoke_box$")],
+    },
+    Sektor {
+        ad: "Go-Kart",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^track$")],
+    },
+    Sektor {
+        ad: "Mini Golf",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^miniature_golf$")],
+    },
+    Sektor {
+        ad: "Kapalı Oyun Alanı",
+        grup: "Oyun & Eğlence",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^indoor_play$")],
+    },
     // --- Kültür & Gezi ---
-    Sektor { ad: "Müze", grup: "Kültür & Gezi", demo: Demo::Eglence, osm: &[("tourism", "^museum$")] },
-    Sektor { ad: "Sanat Galerisi", grup: "Kültür & Gezi", demo: Demo::Eglence, osm: &[("tourism", "^gallery$")] },
-    Sektor { ad: "Hayvanat Bahçesi", grup: "Kültür & Gezi", demo: Demo::Eglence, osm: &[("tourism", "^zoo$")] },
-    Sektor { ad: "Akvaryum", grup: "Kültür & Gezi", demo: Demo::Eglence, osm: &[("tourism", "^aquarium$")] },
+    Sektor {
+        ad: "Müze",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("tourism", "^museum$")],
+    },
+    Sektor {
+        ad: "Sanat Galerisi",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("tourism", "^gallery$")],
+    },
+    Sektor {
+        ad: "Hayvanat Bahçesi",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("tourism", "^zoo$")],
+    },
+    Sektor {
+        ad: "Akvaryum",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("tourism", "^aquarium$")],
+    },
+    Sektor {
+        ad: "Planetaryum",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("amenity", "^planetarium$")],
+    },
+    Sektor {
+        ad: "Marina",
+        grup: "Kültür & Gezi",
+        demo: Demo::Eglence,
+        osm: &[("leisure", "^marina$")],
+    },
     // --- Sanayi & Üretim ---
-    Sektor { ad: "Fabrika", grup: "Sanayi & Üretim", demo: Demo::Urun, osm: &[("man_made", "^works$")] },
-    Sektor { ad: "Şarap Üretimi", grup: "Sanayi & Üretim", demo: Demo::Urun, osm: &[("craft", "^winery$")] },
-    Sektor { ad: "Bira Fabrikası", grup: "Sanayi & Üretim", demo: Demo::Urun, osm: &[("craft", "^brewery$")] },
-    Sektor { ad: "Zeytinyağı", grup: "Sanayi & Üretim", demo: Demo::Urun, osm: &[("craft", "^oil_mill$")] },
+    Sektor {
+        ad: "Fabrika",
+        grup: "Sanayi & Üretim",
+        demo: Demo::Urun,
+        osm: &[("man_made", "^works$")],
+    },
+    Sektor {
+        ad: "Şarap Üretimi",
+        grup: "Sanayi & Üretim",
+        demo: Demo::Urun,
+        osm: &[("craft", "^winery$")],
+    },
+    Sektor {
+        ad: "Bira Fabrikası",
+        grup: "Sanayi & Üretim",
+        demo: Demo::Urun,
+        osm: &[("craft", "^brewery$")],
+    },
+    Sektor {
+        ad: "Zeytinyağı",
+        grup: "Sanayi & Üretim",
+        demo: Demo::Urun,
+        osm: &[("craft", "^oil_mill$")],
+    },
+    Sektor {
+        ad: "Ambalaj",
+        grup: "Sanayi & Üretim",
+        demo: Demo::Urun,
+        osm: &[("shop", "^packaging$")],
+    },
     // --- Tarım & Hayvancılık ---
-    Sektor { ad: "Tarım Makineleri", grup: "Tarım & Hayvancılık", demo: Demo::Urun, osm: &[("shop", "^agrarian$")] },
-    Sektor { ad: "Arıcılık", grup: "Tarım & Hayvancılık", demo: Demo::Urun, osm: &[("craft", "^beekeeper$")] },
-    Sektor { ad: "Çiftlik", grup: "Tarım & Hayvancılık", demo: Demo::Urun, osm: &[("landuse", "^farmyard$")] },
-    Sektor { ad: "Sera", grup: "Tarım & Hayvancılık", demo: Demo::Urun, osm: &[("landuse", "^greenhouse_horticulture$")] },
+    Sektor {
+        ad: "Tarım Makineleri",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("shop", "^agrarian$")],
+    },
+    Sektor {
+        ad: "Arıcılık",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("craft", "^beekeeper$")],
+    },
+    Sektor {
+        ad: "Çiftlik",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("landuse", "^farmyard$")],
+    },
+    Sektor {
+        ad: "Sera",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("landuse", "^greenhouse_horticulture$")],
+    },
+    Sektor {
+        ad: "Traktör",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("shop", "^tractor$")],
+    },
+    Sektor {
+        ad: "Zirai İlaç",
+        grup: "Tarım & Hayvancılık",
+        demo: Demo::Urun,
+        osm: &[("shop", "^agrarian$")],
+    },
 ];
 
 /// Uygulamadaki sektör adını OSM anahtar/değer kurallarına çevirir.
@@ -3414,6 +6031,106 @@ fn adres_metni(tags: &serde_json::Value, ilce: &str, il: &str) -> String {
     }
 }
 
+/// URL'nin alan adını döndürür: "https://www.instagram.com/kafe" →
+/// "instagram.com". Şema, yol ve sorgu atılır; `www.` kırpılır.
+fn url_alan_adi(url: &str) -> String {
+    let temiz = url.trim();
+    let govde = temiz
+        .split_once("://")
+        .map(|(_, kalan)| kalan)
+        .unwrap_or(temiz);
+    let alan = govde.split(['/', '?', '#']).next().unwrap_or("");
+    alan.trim_start_matches("www.")
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+/// Defterde ve CSV'de kullanılan kısa web varlığı kodu.
+fn site_kodu(site: SiteDurumu) -> &'static str {
+    match site {
+        SiteDurumu::Yok => "yok",
+        SiteDurumu::Sosyal => "sosyal",
+        SiteDurumu::Ucretsiz => "ucretsiz",
+    }
+}
+
+/// Bir adresin ne tür bir web varlığı olduğunu söyler. `None` = gerçek alan
+/// adı (yani işletmenin kendi sitesi) veya boş adres.
+fn site_durumu_bul(url: &str) -> Option<SiteDurumu> {
+    const SOSYAL: [&str; 8] = [
+        "instagram.com",
+        "facebook.com",
+        "fb.com",
+        "linktr.ee",
+        "tiktok.com",
+        "wa.me",
+        "twitter.com",
+        "x.com",
+    ];
+    const UCRETSIZ: [&str; 6] = [
+        "business.site",
+        "wixsite.com",
+        "blogspot.com",
+        "wordpress.com",
+        "weebly.com",
+        "webnode.com",
+    ];
+    let alan = url_alan_adi(url);
+    if alan.is_empty() {
+        return None;
+    }
+    let eslesir = |liste: &[&str]| {
+        liste
+            .iter()
+            .any(|hedef| alan == *hedef || alan.ends_with(&format!(".{hedef}")))
+    };
+    if eslesir(&SOSYAL) {
+        return Some(SiteDurumu::Sosyal);
+    }
+    if eslesir(&UCRETSIZ) {
+        return Some(SiteDurumu::Ucretsiz);
+    }
+    None
+}
+
+/// Kaydın ek bilgi doluluğu (0-10): puanlamada kullanılan alanlar (isim,
+/// telefon, saat, adres) ve kaynak/tür etiketleri hariç tutulur; kalan her iki
+/// etiket 2 puan eder. `cuisine`, `brand`, `wheelchair`, `payment:*` gibi
+/// etiketler işletmenin gerçekten işletildiğinin ve kaydının takip
+/// edildiğinin işaretidir.
+fn kayit_dolulugu(tags: &serde_json::Value) -> u8 {
+    const SAYILMAYAN: [&str; 14] = [
+        "name",
+        "amenity",
+        "shop",
+        "office",
+        "tourism",
+        "leisure",
+        "healthcare",
+        "craft",
+        "club",
+        "building",
+        "phone",
+        "contact:phone",
+        "opening_hours",
+        "website",
+    ];
+    let Some(harita) = tags.as_object() else {
+        return 0;
+    };
+    let ek = harita
+        .keys()
+        .filter(|anahtar| {
+            !SAYILMAYAN.contains(&anahtar.as_str())
+                && !anahtar.starts_with("addr:")
+                && !anahtar.starts_with("contact:")
+                && !anahtar.starts_with("source")
+                && !anahtar.starts_with("ref")
+        })
+        .count();
+    (ek.min(5) as u8) * 2
+}
+
 /// Overpass yanıtını işletme listesine çevirir; (sitesiz işletmeler, sitesi olan sayısı).
 fn overpass_isle(
     govde: &str,
@@ -3439,13 +6156,46 @@ fn overpass_isle(
         let Some(ad) = etiket(tags, "name") else {
             continue;
         };
-        if WEB_SITESI_ETIKETLERI
-            .iter()
-            .any(|anahtar| etiket(tags, anahtar).is_some())
-        {
+        // Web varlığını üçe ayır: gerçek sitesi olanı ele, sosyal medya veya
+        // ücretsiz site kullananı en yüksek niyet sinyali olarak tut.
+        let mut site = SiteDurumu::Yok;
+        let mut site_linki = String::new();
+        let mut gercek_site = false;
+        for anahtar in WEB_SITESI_ETIKETLERI {
+            let Some(deger) = etiket(tags, anahtar) else {
+                continue;
+            };
+            match site_durumu_bul(deger) {
+                Some(durum) => {
+                    if site_linki.is_empty() {
+                        site = durum;
+                        site_linki = deger.to_string();
+                    }
+                }
+                None => gercek_site = true,
+            }
+        }
+        if gercek_site {
             siteli += 1;
             continue;
         }
+        if site == SiteDurumu::Yok {
+            // Sosyal medya bazen yalnızca ayrı etiketlerde bulunur.
+            if let Some(link) = etiket(tags, "contact:instagram")
+                .or_else(|| etiket(tags, "contact:facebook"))
+                .or_else(|| etiket(tags, "instagram"))
+                .or_else(|| etiket(tags, "facebook"))
+            {
+                site = SiteDurumu::Sosyal;
+                site_linki = link.to_string();
+            }
+        }
+        // Kaydın son düzenleme zamanı: eski kayıt = kapanmış olabilir.
+        let son_guncelleme_gun = eleman
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(|metin| chrono::DateTime::parse_from_rfc3339(metin).ok())
+            .map(|tarih| (chrono::Local::now() - tarih.with_timezone(&chrono::Local)).num_days());
 
         let nokta = eleman.get("center").unwrap_or(eleman);
         let koordinat = match (
@@ -3460,7 +6210,10 @@ fn overpass_isle(
             continue;
         }
 
-        let tur = eleman.get("type").and_then(|v| v.as_str()).unwrap_or("node");
+        let tur = eleman
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("node");
         let kimlik = eleman.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
         let telefon = etiket(tags, "phone")
             .or_else(|| etiket(tags, "contact:phone"))
@@ -3475,12 +6228,25 @@ fn overpass_isle(
             kaynak: format!("https://www.openstreetmap.org/{tur}/{kimlik}"),
             konum: koordinat,
             calisma_saatleri: etiket(tags, "opening_hours").unwrap_or("").to_string(),
+            kayit_dolulugu: kayit_dolulugu(tags),
+            site,
+            site_linki,
+            son_guncelleme_gun,
+            inceleme_sayisi: None,
+            yildiz_puani: None,
+            durum: musteriler::Durum::Yeni,
             demo_yolu: None,
             mesaj_hazir: false,
+            yayin_linki: None,
+            karne_linki: None,
+            mesaj_varyanti: None,
         });
     }
 
-    isletmeler.sort_by_key(|a| a.name.to_lowercase());
+    leads_sirala(&mut isletmeler);
+    // İki küme ayrı kotalarla çekildiği için toplam sınır burada uygulanır:
+    // en yüksek potansiyelli SONUC_SINIRI kayıt kalır.
+    isletmeler.truncate(SONUC_SINIRI);
     Ok((isletmeler, siteli))
 }
 
@@ -3492,14 +6258,85 @@ fn overpass_sorgusu(kurallar: &[(&str, &str)], hedef: &str, alan_id: Option<u64>
     if let Some(alan_id) = alan_id {
         govde.push_str(&format!("area({alan_id})->.a;\n"));
     }
+    // İki ayrı küme istenir:
+    //  .sitesiz  : hiç web etiketi olmayanlar (klasik hedef kitle)
+    //  .niyetli  : yalnızca sosyal medya veya ücretsiz site aracı kullananlar
+    // Gerçek alan adı olan işletmeler sunucu tarafında istenmez. İki küme ayrı
+    // `out` bloklarıyla ve kendi kotalarıyla çıkar; aksi hâlde niyetli grup,
+    // dolu bir ilçede 20'lik genel sınıra takılıp sessizce kesilirdi.
+    const SOSYAL_DESEN: &str = "instagram|facebook|fb\\.com|linktr|tiktok|wa\\.me|twitter|x\\.com";
+    const UCRETSIZ_DESEN: &str = "business\\.site|wixsite|blogspot|wordpress\\.com|weebly|webnode";
     govde.push_str("(\n");
     for (anahtar, desen) in kurallar {
         govde.push_str(&format!(
             "  nwr[\"{anahtar}\"~\"{desen}\"][!\"website\"][!\"contact:website\"][!\"url\"][!\"contact:url\"]{hedef};\n"
         ));
     }
-    govde.push_str(&format!(");\nout center tags {SONUC_SINIRI};"));
+    govde.push_str(")->.sitesiz;\n(\n");
+    for (anahtar, desen) in kurallar {
+        for etiket in ["website", "contact:website"] {
+            govde.push_str(&format!(
+                "  nwr[\"{anahtar}\"~\"{desen}\"][\"{etiket}\"~\"{SOSYAL_DESEN}\",i]{hedef};\n"
+            ));
+            govde.push_str(&format!(
+                "  nwr[\"{anahtar}\"~\"{desen}\"][\"{etiket}\"~\"{UCRETSIZ_DESEN}\",i]{hedef};\n"
+            ));
+        }
+    }
+    // meta: kaydın son düzenleme tarihi (tazelik) için gerekir.
+    govde.push_str(&format!(
+        ")->.niyetli;\n.sitesiz out center meta {SONUC_SINIRI};\n.niyetli out center meta {NIYETLI_KOTA};"
+    ));
     format!("[out:json][timeout:60];\n{govde}")
+}
+
+/// Overpass sorgusu. Sunucular sırayla denenir: birincil sunucu 429/502/504
+/// verdiğinde veya yanıt vermediğinde sıradaki sunucuya geçilir; böylece yoğun
+/// saatte ilçe kaybolmaz. Dönen ikinci değer yanıtı veren sunucunun adıdır
+/// (yedek kullanıldıysa günlüğe yazılır).
+fn overpass_istek(ajan: &ureq::Agent, sorgu: &str) -> Result<(String, &'static str), String> {
+    let mut gonder = |adres: &str| -> Result<String, String> {
+        ajan
+            // Sorgu ham gövde olarak gönderilir: `data=` biçimini bazı uç
+            // noktalar (ör. z.overpass-api.de) reddediyor, ham gövde hepsinde
+            // çalışıyor.
+            .post(adres)
+            .set("Content-Type", "text/plain; charset=utf-8")
+            .send_string(sorgu)
+            .map_err(http_hata)?
+            .into_string()
+            .map_err(|hata| format!("tarama yanıtı okunamadı: {hata}"))
+    };
+    overpass_istek_zincir(&mut gonder, &OVERPASS_SUNUCULARI, OVERPASS_BUTCE)
+}
+
+/// `overpass_istek`in sunucu zinciri mantığı: sunucular sırayla denenir, her
+/// biri kendi deneme sayısıyla. Gönderim bir closure olarak alındığı için
+/// zincir ağ olmadan da test edilebilir.
+fn overpass_istek_zincir(
+    gonder: &mut dyn FnMut(&str) -> Result<String, String>,
+    sunucular: &[(&'static str, &'static str)],
+    butce: Duration,
+) -> Result<(String, &'static str), String> {
+    let baslangic = Instant::now();
+    let mut hatalar: Vec<String> = Vec::new();
+    for &(adres, ad) in sunucular {
+        if baslangic.elapsed() >= butce {
+            hatalar.push(format!(
+                "{} sn süre bütçesi doldu, kalan sunucular denenmedi",
+                butce.as_secs()
+            ));
+            break;
+        }
+        match tekrar_dene_n(OVERPASS_DENEMESI, || gonder(adres)) {
+            Ok(govde) => return Ok((govde, ad)),
+            Err(hata) => hatalar.push(format!("{ad}: {hata}")),
+        }
+    }
+    Err(format!(
+        "Overpass sunucularının hiçbiri yanıt vermedi ({}).",
+        hatalar.join(" · ")
+    ))
 }
 
 fn sitesiz_isletmeler(
@@ -3508,27 +6345,21 @@ fn sitesiz_isletmeler(
     ilce: &str,
     sektor: &str,
     konum: &Konum,
-) -> Result<(Vec<BusinessLead>, usize), String> {
+) -> Result<(Vec<BusinessLead>, usize, &'static str), String> {
     let kurallar = osm_kurallari(sektor);
     if kurallar.is_empty() {
-        return Err(format!("'{sektor}' sektörü için OSM eşlemesi tanımlı değil"));
+        return Err(format!(
+            "'{sektor}' sektörü için OSM eşlemesi tanımlı değil"
+        ));
     }
-
-    let istek = |sorgu: &str| -> Result<String, String> {
-        ajan.post(OVERPASS_URL)
-            .set("Content-Type", "application/x-www-form-urlencoded")
-            .send_string(&format!("data={}", url_encode(sorgu)))
-            .map_err(http_hata)?
-            .into_string()
-            .map_err(|hata| format!("tarama yanıtı okunamadı: {hata}"))
-    };
 
     // 1) İlçenin gerçek idari sınır poligonu: komşu mahallelere taşmaz.
     if let Some(alan_id) = konum.alan_id {
         let sorgu = overpass_sorgusu(&kurallar, "(area.a)", Some(alan_id));
-        let sonuc = overpass_isle(&istek(&sorgu)?, il, ilce, sektor)?;
-        if !sonuc.0.is_empty() {
-            return Ok(sonuc);
+        let (govde, sunucu) = overpass_istek(ajan, &sorgu)?;
+        let (liste, siteli) = overpass_isle(&govde, il, ilce, sektor)?;
+        if !liste.is_empty() {
+            return Ok((liste, siteli, sunucu));
         }
     }
 
@@ -3538,7 +6369,22 @@ fn sitesiz_isletmeler(
         konum.yaricap_m, konum.enlem, konum.boylam
     );
     let sorgu = overpass_sorgusu(&kurallar, &hedef, None);
-    overpass_isle(&istek(&sorgu)?, il, ilce, sektor)
+    let (govde, sunucu) = overpass_istek(ajan, &sorgu)?;
+    let (liste, siteli) = overpass_isle(&govde, il, ilce, sektor)?;
+    Ok((liste, siteli, sunucu))
+}
+
+/// Yanıt birincil sunucudan gelmediyse günlüğe yazar; aynı bilgi tekrar
+/// edilmesin diye `bildirildi` bayrağı kullanılır.
+fn yedek_sunucu_bildir(tx: &Sender<Mesaj>, ilce: &str, sunucu: &str, bildirildi: &mut bool) {
+    let birincil = OVERPASS_SUNUCULARI[0].1;
+    if sunucu == birincil || *bildirildi {
+        return;
+    }
+    *bildirildi = true;
+    let _ = tx.send(Mesaj::Log(format!(
+        "[i] {ilce}: birincil Overpass sunucusu yanıt vermedi, yedek sunucu kullanıldı ({sunucu})."
+    )));
 }
 
 /// İl geneli taramada sıradaki ilçeden alınacak kayıt sayısı: kalan kayıt
@@ -3559,22 +6405,30 @@ fn il_geneline_gecilir(adet: usize, il_geneli: bool) -> bool {
 }
 
 /// `ilce = None` ise ilin tüm ilçeleri sırayla taranır.
-fn tarama_calistir(tx: Sender<Mesaj>, il: String, ilce: Option<String>, sektor: String) {
+fn tarama_calistir(
+    tx: Sender<Mesaj>,
+    il: String,
+    ilce: Option<String>,
+    sektor: String,
+    kaynak: Kaynak,
+) {
     match ilce {
-        Some(ilce) => tarama_tek_ilce(&tx, &il, &ilce, &sektor),
-        None => tarama_il_geneli(&tx, &il, &sektor),
+        Some(ilce) => tarama_tek_ilce(&tx, &il, &ilce, &sektor, kaynak),
+        None => tarama_il_geneli(&tx, &il, &sektor, kaynak),
     }
 }
 
 /// İlin tüm ilçelerini sırayla tarar; sonuçlar `SONUC_SINIRI` ile sınırlıdır.
-fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
+fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str, kaynak: Kaynak) {
     let ilceler: Vec<&str> = iller::ILLER
         .iter()
         .find(|(ad, _)| *ad == il)
         .map(|(_, ilceler)| ilceler.to_vec())
         .unwrap_or_default();
     if ilceler.is_empty() {
-        let _ = tx.send(Mesaj::Log(format!("[!] {il} için ilçe listesi bulunamadı.")));
+        let _ = tx.send(Mesaj::Log(format!(
+            "[!] {il} için ilçe listesi bulunamadı."
+        )));
         let _ = tx.send(Mesaj::TaramaBasarisiz);
         return;
     }
@@ -3583,9 +6437,18 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
     let ayar = GoogleAyar::oku();
     let mut google_kota = kota_oku();
     let mut google_denemesi = 0usize;
+    if kaynak == Kaynak::Google && !ayar.acik() {
+        let _ = tx.send(Mesaj::Log(
+            "[!] Google kaynağı seçili ama GOOGLE_PLACES_API_KEY tanımlı değil; .env dosyasına anahtar ekleyin veya OSM/Hibrit seçin."
+                .to_string(),
+        ));
+        let _ = tx.send(Mesaj::TaramaBasarisiz);
+        return;
+    }
     let _ = tx.send(Mesaj::Log(format!(
-        "[>] {il} il geneli: {} ilçe sırayla taranacak ({sektor}).",
-        ilceler.len()
+        "[>] {il} il geneli: {} ilçe sırayla taranacak ({sektor}) · kaynak: {}.",
+        ilceler.len(),
+        kaynak.aciklama()
     )));
 
     let mut bulunanlar: Vec<BusinessLead> = Vec::new();
@@ -3593,6 +6456,19 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
     let mut siteli = 0usize;
     let mut atlanan = 0usize;
     let mut taranan = 0usize;
+    // İlçe konumları yerel önbellekten gelirse Nominatim'e hiç gidilmez.
+    let mut onbellek = KonumOnbellek::yukle();
+    let mut onbellek_hazir = 0usize;
+    let mut onbellek_yeni = 0usize;
+    // İki turda da alınamayan ilçeler sonda tek satırda bildirilir; sessizce
+    // kaybolmazlar.
+    let mut kayip: Vec<String> = Vec::new();
+    let mut yedek_bildirildi = false;
+    // İlçe + sektör sonuç önbelleği: aynı ilçe tekrar taranırsa Overpass'a hiç
+    // gidilmez.
+    let mut sonuc_onbellek = SonucOnbellek::yukle();
+    let mut onbellekten = 0usize;
+    let mut agdan = 0usize;
 
     for (idx, ilce) in ilceler.iter().enumerate() {
         let kalan_kota = SONUC_SINIRI.saturating_sub(bulunanlar.len());
@@ -3612,26 +6488,122 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
             bulunanlar.len()
         )));
 
-        let konum = match konum_bul(&ajan, il, ilce) {
-            Ok(konum) => konum,
-            Err(hata) => {
-                atlanan += 1;
-                let _ = tx.send(Mesaj::Log(format!("[!] {ilce} atlandı: {hata}")));
-                thread::sleep(Duration::from_millis(1_100));
-                continue;
+        // Google modunda koordinat gerekmez: Nominatim'e hiç gidilmez.
+        if kaynak == Kaynak::Google {
+            let (bugun, bu_ay) = (bugun_anahtari(), ay_anahtari());
+            let gunluk_dolu = google_kota.gun == bugun && google_kota.gunluk >= ayar.gunluk_limit;
+            let aylik_dolu = google_kota.ay == bu_ay && google_kota.aylik >= ayar.aylik_limit;
+            if gunluk_dolu || aylik_dolu {
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[!] Google bütçesi doldu (günlük {}/{}, aylık {}/{}); kalan {} ilçe taranmadı.",
+                    google_kota.gunluk,
+                    ayar.gunluk_limit,
+                    google_kota.aylik,
+                    ayar.aylik_limit,
+                    ilceler.len() - idx
+                )));
+                break;
             }
+            let oncesi = bulunanlar.len();
+            match google_yedek(
+                tx,
+                &ajan,
+                &ayar,
+                &mut google_kota,
+                il,
+                ilce,
+                sektor,
+                "Google kaynağı seçili",
+            ) {
+                Some(liste) => {
+                    for lead in liste {
+                        if bulunanlar.len() >= SONUC_SINIRI {
+                            break;
+                        }
+                        if gorulen.insert(lead.kaynak.clone()) {
+                            bulunanlar.push(lead);
+                        }
+                    }
+                }
+                None => atlanan += 1,
+            }
+            let eklenen = bulunanlar.len() - oncesi;
+            let _ = tx.send(Mesaj::Log(if eklenen == 0 {
+                format!("[i] {ilce}: Google'da web sitesi olmayan kayıt yok.")
+            } else {
+                format!(
+                    "[✓] {ilce}: {eklenen} kayıt eklendi (toplam {}/{SONUC_SINIRI}).",
+                    bulunanlar.len()
+                )
+            }));
+            thread::sleep(Duration::from_millis(1_100));
+            continue;
+        }
+
+        let (konum, konum_arandi) = match onbellek.al(il, ilce) {
+            Some(konum) => {
+                onbellek_hazir += 1;
+                (konum, false)
+            }
+            None => match konum_bul(&ajan, il, ilce) {
+                Ok(konum) => {
+                    onbellek.ekle(il, ilce, &konum);
+                    onbellek.kaydet();
+                    onbellek_yeni += 1;
+                    (konum, true)
+                }
+                Err(hata) => {
+                    atlanan += 1;
+                    kayip.push(ilce.to_string());
+                    let _ = tx.send(Mesaj::Log(format!("[!] {ilce} atlandı: {hata}")));
+                    thread::sleep(Duration::from_millis(1_100));
+                    continue;
+                }
+            },
         };
 
-        match sitesiz_isletmeler(&ajan, il, ilce, sektor, &konum) {
-            Ok((mut liste, ilce_siteli)) => {
+        // Sunucu zinciri tükendiğinde ilçe kaybolmasın: kısa bir beklemeden
+        // sonra ikinci tur denenir.
+        let mut tarama = ilce_taramasi(&ajan, &mut sonuc_onbellek, il, ilce, sektor, &konum);
+        if let Some(hata) = tarama.hata() {
+            let _ = tx.send(Mesaj::Log(format!(
+                "[↻] {ilce} ilk turda alınamadı ({hata}); 4 sn sonra yeniden denenecek."
+            )));
+            thread::sleep(Duration::from_secs(4));
+            tarama = ilce_taramasi(&ajan, &mut sonuc_onbellek, il, ilce, sektor, &konum);
+        }
+        match tarama.parcala() {
+            Ok((mut liste, ilce_siteli, sunucu, onbellek_gunu)) => {
+                match onbellek_gunu {
+                    Some(gun) => {
+                        onbellekten += 1;
+                        let _ = tx.send(Mesaj::Log(format!(
+                            "[i] {ilce}: sonuçlar önbellekten alındı ({} kayıt, {} gün önce); Overpass'a gidilmedi.",
+                            liste.len(),
+                            gun
+                        )));
+                    }
+                    None => agdan += 1,
+                }
+                yedek_sunucu_bildir(tx, ilce, sunucu, &mut yedek_bildirildi);
                 // İlçe OSM'de boşsa ve tarama bütçesi varsa Google'a düşülür;
                 // böylece tek tarama tüm ücretsiz kotayı tüketmez.
-                if liste.is_empty() && google_denemesi < GOOGLE_TARAMA_SINIRI {
+                if kaynak == Kaynak::Hibrit
+                    && liste.is_empty()
+                    && google_denemesi < GOOGLE_TARAMA_SINIRI
+                {
                     google_denemesi += 1;
                     if ayar.acik() {
-                        if let Some(gelen) =
-                            google_yedek(tx, &ajan, &ayar, &mut google_kota, il, ilce, sektor)
-                        {
+                        if let Some(gelen) = google_yedek(
+                            tx,
+                            &ajan,
+                            &ayar,
+                            &mut google_kota,
+                            il,
+                            ilce,
+                            sektor,
+                            "OSM'de kayıt yok",
+                        ) {
                             liste = gelen;
                         }
                     } else if google_denemesi == 1 {
@@ -3666,13 +6638,41 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
             }
             Err(hata) => {
                 atlanan += 1;
-                let _ = tx.send(Mesaj::Log(format!("[!] {ilce} atlandı: {hata}")));
+                kayip.push(ilce.to_string());
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[!] {ilce} iki turda da alınamadı, listeye eklenmedi: {hata}"
+                )));
             }
         }
 
-        thread::sleep(Duration::from_millis(1_100));
+        // Nominatim'e gidilmediyse bekleme kısaltılır: önbellekli ilçelerde il
+        // geneli tarama hızlanır, Overpass yine yorulmaz.
+        thread::sleep(Duration::from_millis(if konum_arandi {
+            1_100
+        } else {
+            400
+        }));
     }
 
+    onbellek.kaydet();
+    if onbellek_hazir > 0 || onbellek_yeni > 0 {
+        let _ = tx.send(Mesaj::Log(format!(
+            "[i] Konum önbelleği: {onbellek_hazir} ilçe hazır, {onbellek_yeni} yeni sorgu."
+        )));
+    }
+    if onbellekten > 0 || agdan > 0 {
+        let _ = tx.send(Mesaj::Log(format!(
+            "[i] Sonuç önbelleği: {onbellekten} ilçe hazırdı (Overpass'a gidilmedi), {agdan} ilçe canlı tarandı · geçerlilik {} gün (SONUC_TTL_GUN).",
+            sonuc_ttl_gun()
+        )));
+    }
+    if !kayip.is_empty() {
+        let _ = tx.send(Mesaj::Log(format!(
+            "[!] {} ilçe iki turda da alınamadı: {}. Sunucu yoğunluğu geçtiğinde yalnızca bu ilçeleri seçip yeniden tarayın.",
+            kayip.len(),
+            kayip.join(", ")
+        )));
+    }
     let _ = tx.send(Mesaj::Ilerleme {
         tamamlanan: taranan,
         toplam: ilceler.len(),
@@ -3683,10 +6683,22 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
             "[i] {SONUC_SINIRI} kayıt sınırına ulaşıldı; kalan {kalan_ilce} ilçe taranmadı."
         )));
     }
+    // İlçe sırasına göre toplanan liste teslimattan önce sıralanır: Google
+    // kaynağında inceleme sayısı, diğerlerinde satın alma potansiyeli.
+    if kaynak == Kaynak::Google {
+        incelemeye_gore_sirala(&mut bulunanlar);
+    } else {
+        leads_sirala(&mut bulunanlar);
+    }
+    let yuksek = bulunanlar
+        .iter()
+        .filter(|isletme| potansiyel_puani(isletme) >= SICAK_ESIK)
+        .count();
     let _ = tx.send(Mesaj::Log(format!(
-        "[✓] {il} il geneli bitti: {} ilçe tarandı, {} kayıt, {} web siteli kayıt ayıklandı{}.",
+        "[✓] {il} il geneli bitti: {} ilçe tarandı, {} kayıt ({} sıcak fırsat), {} web sitesi olan kayıt ayıklandı{}.",
         taranan,
         bulunanlar.len(),
+        yuksek,
         siteli,
         if atlanan == 0 {
             String::new()
@@ -3697,15 +6709,74 @@ fn tarama_il_geneli(tx: &Sender<Mesaj>, il: &str, sektor: &str) {
     let _ = tx.send(Mesaj::TaramaBitti(bulunanlar));
 }
 
-fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str) {
+fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str, kaynak: Kaynak) {
     let ajan = http_ajani();
-    let _ = tx.send(Mesaj::Log(format!("[>] {ilce} / {il} konumu aranıyor...")));
-    let konum = match konum_bul(&ajan, il, ilce) {
-        Ok(konum) => konum,
-        Err(hata) => {
-            let _ = tx.send(Mesaj::Log(format!("[!] Konum alınamadı: {hata}")));
+
+    // Yalnız Google: koordinat gerekmez, Nominatim'e hiç gidilmez.
+    if kaynak == Kaynak::Google {
+        let ayar = GoogleAyar::oku();
+        if !ayar.acik() {
+            let _ = tx.send(Mesaj::Log(
+                "[!] Google kaynağı seçili ama GOOGLE_PLACES_API_KEY tanımlı değil; .env dosyasına anahtar ekleyin veya OSM/Hibrit seçin."
+                    .to_string(),
+            ));
             let _ = tx.send(Mesaj::TaramaBasarisiz);
             return;
+        }
+        let mut kota = kota_oku();
+        let _ = tx.send(Mesaj::Log(format!(
+            "[>] Google Places: {il} / {ilce} {sektor} taranıyor (en fazla {SONUC_SINIRI} kayıt)..."
+        )));
+        match google_yedek(
+            tx,
+            &ajan,
+            &ayar,
+            &mut kota,
+            il,
+            ilce,
+            sektor,
+            "Google kaynağı seçili",
+        ) {
+            Some(liste) => {
+                let yuksek = liste
+                    .iter()
+                    .filter(|isletme| potansiyel_puani(isletme) >= SICAK_ESIK)
+                    .count();
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[✓] {} potansiyel müşteri bulundu · {yuksek} sıcak fırsat.",
+                    liste.len()
+                )));
+                let _ = tx.send(Mesaj::TaramaBitti(liste));
+            }
+            None => {
+                let _ = tx.send(Mesaj::TaramaBasarisiz);
+            }
+        }
+        return;
+    }
+
+    let mut onbellek = KonumOnbellek::yukle();
+    let konum = match onbellek.al(il, ilce) {
+        Some(konum) => {
+            let _ = tx.send(Mesaj::Log(format!(
+                "[i] {ilce} konumu önbellekten alındı (Konum araması yapılmadı)."
+            )));
+            konum
+        }
+        None => {
+            let _ = tx.send(Mesaj::Log(format!("[>] {ilce} / {il} konumu aranıyor...")));
+            match konum_bul(&ajan, il, ilce) {
+                Ok(konum) => {
+                    onbellek.ekle(il, ilce, &konum);
+                    onbellek.kaydet();
+                    konum
+                }
+                Err(hata) => {
+                    let _ = tx.send(Mesaj::Log(format!("[!] Konum alınamadı: {hata}")));
+                    let _ = tx.send(Mesaj::TaramaBasarisiz);
+                    return;
+                }
+            }
         }
     };
     let alan = if konum.alan_id.is_some() {
@@ -3716,16 +6787,34 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str) {
     let _ = tx.send(Mesaj::Log(format!(
         "[>] OpenStreetMap: {il} / {ilce} {sektor} taranıyor ({alan}, en fazla {SONUC_SINIRI} kayıt)..."
     )));
-    match sitesiz_isletmeler(&ajan, il, ilce, sektor, &konum) {
-        Ok((mut liste, siteli)) => {
-            // OSM bu ilçede boş döndü: bütçe varsa Google yedeği devreye girer.
-            if liste.is_empty() {
+    let mut yedek_bildirildi = false;
+    let mut sonuc_onbellek = SonucOnbellek::yukle();
+    let tarama = ilce_taramasi(&ajan, &mut sonuc_onbellek, il, ilce, sektor, &konum);
+    match tarama.parcala() {
+        Ok((mut liste, siteli, sunucu, onbellek_gunu)) => {
+            if let Some(gun) = onbellek_gunu {
+                let _ = tx.send(Mesaj::Log(format!(
+                    "[i] {ilce}: sonuçlar önbellekten alındı ({} kayıt, {} gün önce); Overpass'a gidilmedi.",
+                    liste.len(),
+                    gun
+                )));
+            }
+            yedek_sunucu_bildir(tx, ilce, sunucu, &mut yedek_bildirildi);
+            // Hibritte OSM boş dönerse ve bütçe varsa Google yedeği devreye girer.
+            if kaynak == Kaynak::Hibrit && liste.is_empty() {
                 let ayar = GoogleAyar::oku();
                 if ayar.acik() {
                     let mut kota = kota_oku();
-                    if let Some(gelen) =
-                        google_yedek(tx, &ajan, &ayar, &mut kota, il, ilce, sektor)
-                    {
+                    if let Some(gelen) = google_yedek(
+                        tx,
+                        &ajan,
+                        &ayar,
+                        &mut kota,
+                        il,
+                        ilce,
+                        sektor,
+                        "OSM'de kayıt yok",
+                    ) {
                         liste = gelen;
                     }
                 } else {
@@ -3735,11 +6824,18 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str) {
                     ));
                 }
             }
+            let yuksek = liste
+                .iter()
+                .filter(|isletme| potansiyel_puani(isletme) >= SICAK_ESIK)
+                .count();
             let ozet = if siteli == 0 {
-                format!("[✓] {} web sitesi olmayan işletme bulundu.", liste.len())
+                format!(
+                    "[✓] {} potansiyel müşteri bulundu · {yuksek} sıcak fırsat.",
+                    liste.len()
+                )
             } else {
                 format!(
-                    "[✓] {} web sitesi olmayan işletme bulundu ({} web siteli kayıt ayıklandı).",
+                    "[✓] {} potansiyel müşteri bulundu ({} sitesi olan kayıt ayıklandı) · {yuksek} sıcak fırsat.",
                     liste.len(),
                     siteli
                 )
@@ -3764,8 +6860,11 @@ fn tarama_tek_ilce(tx: &Sender<Mesaj>, il: &str, ilce: &str, sektor: &str) {
 // ---------------------------------------------------------------------------
 
 const DEMO_KLASORU: &str = "demos";
-/// Overpass'tan istenen en fazla kayıt sayısı.
+/// Sorgu başına listeye giren en fazla kayıt sayısı.
 const SONUC_SINIRI: usize = 20;
+/// Toplam 20 kaydın kaçı "yalnızca sosyal medyası olan" işletmelere ayrılır.
+/// Bu grup en sıcak hedef kitle olduğu için kotası garantidir.
+const NIYETLI_KOTA: usize = 8;
 
 fn html_kacis(metin: &str) -> String {
     metin
@@ -3829,6 +6928,173 @@ fn whatsapp_numarasi(ham: &str) -> Option<String> {
     (10..=15).contains(&numara.len()).then_some(numara)
 }
 
+/// Sektörün web sitesine duyduğu ihtiyaç: müşterisi internette arayan, menü /
+/// hizmet / fiyat karşılaştıran sektörler demo satın almaya daha yakındır.
+/// Ağırlıklar 5-20 arasıdır; tek başına belirleyici değildir, ulaşılabilirliğin
+/// (telefon) arkasından gelir.
+fn sektor_potansiyeli(sektor: &str) -> u8 {
+    match demo_turu(sektor) {
+        // Menü, hizmet listesi veya rezervasyon doğrudan satışa dönüşür.
+        Demo::Menu | Demo::Klinik | Demo::Otel => 20,
+        // Görsel vitrin, program ve referans ihtiyacı yüksek.
+        Demo::Galeri | Demo::Egitim | Demo::Ofis => 15,
+        Demo::Kafe | Demo::Unlu | Demo::Servis | Demo::Eglence => 10,
+        // Ürünleri pazaryerlerinde de satıldığı için site ihtiyacı görece düşük.
+        Demo::Urun => 5,
+    }
+}
+
+/// Bu puanın üstündeki işletmeler arayüzde "sıcak fırsat" işaretlenir ve
+/// listenin en başında gösterilir.
+const SICAK_ESIK: u8 = 75;
+
+/// İşletmenin satın alma niyeti puanı (0-100). Yalnızca tarama sırasında
+/// elimizde olan veriler kullanılır; ek ağ isteği yapılmaz. Ağırlıklar niyet
+/// sırasına göre değil, "site yaptırmaya ne kadar yakın" sırasına göre verilir:
+///
+///   web varlığı: sosyal medya var ama site yok  +38
+///                ücretsiz site aracı            +28
+///                hiçbir web varlığı yok         +12
+///   (niyet, ulaşılabilirlikten daha ağır basar: çevrimiçi görünmek isteyip
+///    site yaptırmamış işletme, sitesiz ve iletişimsiz işletmeden öndedir.)
+///   telefon (mobil numara ayrıca +5)            +25
+///   Google inceleme sayısı (gerçek müşteri)     +0..18
+///   çalışma saatleri (aktif işletme)            +8
+///   adres                                        +5..8
+///   kaydın son 12/36 ayda güncellenmiş olması    +2..5
+///   sektörün web ihtiyacı                        +5..20
+///   koordinat                                    +3
+///   kayıt doluluğu                               +0..5
+fn potansiyel_puani(isletme: &BusinessLead) -> u8 {
+    let mut puan: u16 = match isletme.site {
+        // Çevrimiçi görünmek istediğini göstermiş ama site yaptırmamış.
+        SiteDurumu::Sosyal => 38,
+        // Site ihtiyacını kabul etmiş, ücretsiz araçla idare ediyor.
+        SiteDurumu::Ucretsiz => 28,
+        // Henüz web ihtiyacını fark etmemiş olabilir.
+        SiteDurumu::Yok => 12,
+    };
+    if let Some(numara) = whatsapp_numarasi(&isletme.phone) {
+        puan += 25;
+        // Mobil numara genellikle işletme sahibinin kendi telefonudur.
+        if numara.starts_with("905") {
+            puan += 5;
+        }
+    }
+    if let Some(inceleme) = isletme.inceleme_sayisi {
+        puan += match inceleme {
+            100.. => 18,
+            30..=99 => 12,
+            10..=29 => 6,
+            _ => 0,
+        };
+    }
+    if !isletme.calisma_saatleri.trim().is_empty() {
+        puan += 8;
+    }
+    if isletme.address.contains("No:") {
+        puan += 8;
+    } else if isletme.address.contains(',') {
+        puan += 5;
+    }
+    if let Some(gun) = isletme.son_guncelleme_gun {
+        puan += if gun <= 365 {
+            5
+        } else if gun <= 1_095 {
+            2
+        } else {
+            0
+        };
+    }
+    puan += sektor_potansiyeli(&isletme.category) as u16;
+    if isletme.konum.is_some() {
+        puan += 3;
+    }
+    puan += (isletme.kayit_dolulugu.min(10) / 2) as u16;
+    puan.min(100) as u8
+}
+
+/// Puanın nereden geldiğini tek satırda açıklar:
+/// "86/100 · sosyal medya var, site yok · mobil numara · ...".
+/// Arayüzde gerekçe olarak gösterilir; böylece sıralama şeffaf kalır.
+fn potansiyel_gerekcesi(isletme: &BusinessLead) -> String {
+    let mut parcalar: Vec<String> = Vec::new();
+    match isletme.site {
+        SiteDurumu::Sosyal => parcalar.push("sosyal medya var, site yok".to_string()),
+        SiteDurumu::Ucretsiz => parcalar.push("ücretsiz site aracı".to_string()),
+        SiteDurumu::Yok => {}
+    }
+    if let Some(numara) = whatsapp_numarasi(&isletme.phone) {
+        parcalar.push(if numara.starts_with("905") {
+            "mobil numara".to_string()
+        } else {
+            "sabit numara".to_string()
+        });
+    }
+    if let Some(inceleme) = isletme.inceleme_sayisi {
+        if inceleme >= 10 {
+            parcalar.push(format!("{inceleme} Google incelemesi"));
+        }
+    }
+    if !isletme.calisma_saatleri.trim().is_empty() {
+        parcalar.push("çalışma saatleri".to_string());
+    }
+    if isletme.address.contains("No:") {
+        parcalar.push("kapı numaralı adres".to_string());
+    } else if isletme.address.contains(',') {
+        parcalar.push("sokak/mahalle".to_string());
+    }
+    if let Some(gun) = isletme.son_guncelleme_gun {
+        if gun <= 365 {
+            parcalar.push("güncel kayıt".to_string());
+        }
+    }
+    match sektor_potansiyeli(&isletme.category) {
+        20 => parcalar.push("sektör ihtiyacı yüksek".to_string()),
+        15 => parcalar.push("sektör ihtiyacı orta".to_string()),
+        _ => {}
+    }
+    if parcalar.is_empty() {
+        parcalar.push("yalnızca isim".to_string());
+    }
+    format!(
+        "{}/100 · {}",
+        potansiyel_puani(isletme),
+        parcalar.join(" · ")
+    )
+}
+
+/// Arama sonuçlarını satın alma potansiyeline göre sıralar: puanı yüksek olan
+/// önce, eşitlikte alfabetik sıra (Türkçe karakterler sadeleştirilerek). Sorgu
+/// başına 20 kayıt sınırı olduğu için listeye hangi kayıtların girdiği de bu
+/// sıralamaya bağlıdır; il geneli taramada ilçe başına ayrılan kota da böylece
+/// ilçenin en yüksek potansiyelli kayıtlarından doldurulur.
+/// Google kaynağında sıralama inceleme sayısına göredir: gerçek müşteri
+/// trafiği olan işletme önce gelir (Google'ın kendi sonuç sırası bölgeye göre
+/// değişebiliyor). Eşitlikte potansiyel puanı, sonra ad.
+fn incelemeye_gore_sirala(liste: &mut [BusinessLead]) {
+    liste.sort_by(|a, b| {
+        let inceleme = |lead: &BusinessLead| lead.inceleme_sayisi.unwrap_or(0);
+        inceleme(b)
+            .cmp(&inceleme(a))
+            .then_with(|| potansiyel_puani(b).cmp(&potansiyel_puani(a)))
+            .then_with(|| arama_anahtari(&a.name).cmp(&arama_anahtari(&b.name)))
+    });
+}
+
+fn leads_sirala(liste: &mut [BusinessLead]) {
+    liste.sort_by(|a, b| {
+        // Kara listedeki işletme ("reddetti") hiçbir zaman listenin başında
+        // görünmez; kalanlar puana, eşit puanda iletişim durumuna göre sıralanır.
+        a.durum
+            .kara_listede()
+            .cmp(&b.durum.kara_listede())
+            .then_with(|| potansiyel_puani(b).cmp(&potansiyel_puani(a)))
+            .then_with(|| a.durum.sira().cmp(&b.durum.sira()))
+            .then_with(|| arama_anahtari(&a.name).cmp(&arama_anahtari(&b.name)))
+    });
+}
+
 const GUN_ADLARI: [&str; 7] = [
     "Pazartesi",
     "Salı",
@@ -3890,7 +7156,9 @@ fn whatsapp_durumu(isletme: &BusinessLead) -> Option<String> {
 
 /// Panelde gösterilecek kısa durum: "Şu an açık (kapanış 18:00)".
 fn durum_kisa_cumle(cumle: &str) -> String {
-    let temiz = cumle.trim_start_matches("İşletmeniz ").trim_end_matches('.');
+    let temiz = cumle
+        .trim_start_matches("İşletmeniz ")
+        .trim_end_matches('.');
     let mut karakterler = temiz.chars();
     match karakterler.next() {
         Some(ilk) => ilk.to_uppercase().collect::<String>() + karakterler.as_str(),
@@ -3898,25 +7166,182 @@ fn durum_kisa_cumle(cumle: &str) -> String {
     }
 }
 
+/// Hazır mesaj: işletmenin defterdeki A/B varyantı kullanılır.
 fn whatsapp_mesaji(isletme: &BusinessLead) -> String {
     let durum = whatsapp_durumu(isletme);
-    whatsapp_mesaji_ile(isletme, durum.as_deref())
+    whatsapp_mesaji_varyant(
+        isletme,
+        durum.as_deref(),
+        isletme.mesaj_varyanti.unwrap_or_default(),
+    )
 }
 
-fn whatsapp_mesaji_ile(isletme: &BusinessLead, durum: Option<&str>) -> String {
+/// Mesajdaki sektör cümlesi: demoda gerçekten hangi bölüm üretiliyorsa onu
+/// anlatır (`demo_turu` ile aynı eşleme), böylece vaat ile sayfa tutarlı kalır.
+fn sektor_demo_notu(sektor: &str) -> &'static str {
+    match demo_turu(sektor) {
+        // Hepsi 3-4 kelime: tanıtım cümlesi mesajı uzatmamalı.
+        Demo::Menu => "menü ve günün yemekleri",
+        Demo::Kafe => "menü ve tatlılar",
+        Demo::Unlu => "ürünler ve özel sipariş",
+        Demo::Urun => "ürün vitrini ve teslimat",
+        // Kuaför/berber/güzellik: sayfadaki galeri ve tek tıkla arama.
+        Demo::Galeri => "fotoğraf galerisi ve randevu",
+        // Klinik: hizmet kartlarında uzman kadro vurgusu var.
+        Demo::Klinik => "hizmetler ve uzman kadro",
+        Demo::Otel => "odalar ve olanaklar",
+        Demo::Egitim => "kurslar ve deneme dersi",
+        Demo::Ofis => "hizmetler ve teklif",
+        Demo::Servis => "hizmetler ve fiyat teklifi",
+        Demo::Eglence => "program ve rezervasyon",
+    }
+}
+
+/// Mesaja giren somut gerekçe: işletmenin kendi kaydından (Google yorum/puan,
+/// web varlığı, çalışma saati). Uydurma cümle kurulmaz; elde veri yoksa o
+/// kısım hiç yazılmaz.
+/// Parçanın sokak/cadde olduğunu söyler: "No:12" ya da "Cad.", "Sokak", "Bulvarı"
+/// gibi kelimeler. Mahalle adları ("Caddebostan") yanlışlıkla eşleşmesin diye
+/// kelime sınırına bakılır.
+fn sokak_mi(parca: &str) -> bool {
+    let kucuk = parca.to_lowercase();
+    if kucuk.contains("no:") {
+        return true;
+    }
+    kucuk.split(|k: char| !k.is_alphabetic()).any(|kelime| {
+        matches!(
+            kelime,
+            "cad"
+                | "cadde"
+                | "caddesi"
+                | "cd"
+                | "sok"
+                | "sokak"
+                | "sokagi"
+                | "sokağı"
+                | "bulvar"
+                | "bulvari"
+                | "bulvarı"
+                | "blv"
+                | "meydan"
+                | "meydani"
+                | "meydanı"
+        )
+    })
+}
+
+/// Mesajda tam sokak adresi yerine yalnızca mahalle/ilçe kalır:
+/// "Moda Cad. No:12, Caferağa, Kadıköy / İstanbul" → "Caferağa, Kadıköy / İstanbul".
+/// Mahalle yoksa yalnızca "Kadıköy / İstanbul" yazılır; adres zaten kısaysa
+/// olduğu gibi döner.
+fn kisa_adres(adres: &str) -> String {
+    let parcalar: Vec<&str> = adres
+        .split(',')
+        .map(str::trim)
+        .filter(|parca| !parca.is_empty())
+        .collect();
+    if parcalar.len() < 2 {
+        return adres.trim().to_string();
+    }
+    // Son parça her zaman "İlçe / İl", ondan önceki mahalle ya da cadde.
+    let yer = parcalar[parcalar.len() - 1];
+    let onceki = parcalar[parcalar.len() - 2];
+    if sokak_mi(onceki) {
+        yer.to_string()
+    } else {
+        format!("{onceki}, {yer}")
+    }
+}
+
+fn whatsapp_gerekcesi(isletme: &BusinessLead) -> Option<String> {
+    let itibar = match (isletme.inceleme_sayisi, isletme.yildiz_puani) {
+        (Some(adet), Some(puan)) if adet > 0 => Some(format!(
+            "Google'da {}★ ve {adet} yorumunuz var",
+            puan_metni(puan)
+        )),
+        (Some(adet), _) if adet > 0 => Some(format!("Google'da {adet} yorumunuz var")),
+        (_, Some(puan)) => Some(format!("Google'da {}★ puanınız var", puan_metni(puan))),
+        _ => None,
+    };
+    // Kısa ve tek başına da okunabilen ifadeler: itibar yoksa cümle bununla başlar.
+    let site = match isletme.site {
+        SiteDurumu::Yok => "web siteniz yok",
+        SiteDurumu::Sosyal => "sosyal medya dışında siteniz yok",
+        SiteDurumu::Ucretsiz => "kendi alan adınızda siteniz yok",
+    };
+    let mut cumle = match itibar {
+        // Yorum/puan varsa "bu kadar görünürsünüz ama…" kurgusu en güçlüsü.
+        Some(itibar) => format!("{itibar} ama {site}"),
+        None => {
+            let mut harfler = site.chars();
+            match harfler.next() {
+                Some(ilk) => ilk.to_uppercase().collect::<String>() + harfler.as_str(),
+                None => String::new(),
+            }
+        }
+    };
+    if isletme.calisma_saatleri.trim().is_empty() {
+        cumle.push_str(", çalışma saatiniz de yok");
+    }
+    Some(format!("{cumle}."))
+}
+
+fn whatsapp_mesaji_varyant(
+    isletme: &BusinessLead,
+    durum: Option<&str>,
+    varyant: musteriler::Varyant,
+) -> String {
     let ek = match durum {
         Some(durum) => format!(" {durum}"),
         None => String::new(),
     };
-    let demo_notu = if durum.is_some() {
-        "demoda harita, çalışma saatleri ve açık/kapalı göstergesi de var"
+    // Demo tanıtımı sektör başına birkaç kelime; harita ve açık/kapalı bilgisi
+    // zaten hemen önceki durum cümlesinde ve sayfada yer alıyor.
+    let demo_notu = format!("demoda {}", sektor_demo_notu(&isletme.category));
+    // Ticari ileti kuralları gereği: kaynağı belirt ve aynı kanaldan ret hakkı sun.
+    let kaynak = if isletme.kaynak.contains("google.com") {
+        "Google"
     } else {
-        "demoda konum haritası ve işletme bilgileri hazır"
+        "OpenStreetMap"
     };
-    format!(
-        "Merhaba, {} ({}) için hazırladığım web sitesi taslağını incelemek ister misiniz?{ek} 12 saat geçerli demo dosyasını bu sohbete ekliyorum; {demo_notu}. Beğenirseniz kendi alan adınızda yayına alabilirim.",
-        isletme.name, isletme.address
-    )
+    // Somut gerekçe ilk yanıtın parçası: "neden yazıyorum"un cevabı.
+    let gerekce = match whatsapp_gerekcesi(isletme) {
+        Some(cumle) => format!(" {cumle}"),
+        None => String::new(),
+    };
+    let adres = kisa_adres(&isletme.address);
+    // Kapanış iki varyantta ortak; yalnızca açılış ve taslak cümlesi değişir.
+    let kapanis = format!(
+        " Beğenirseniz alan adınızda yayına alabilirim. Numaraya {kaynak} kaydınızdan ulaştım; istemezseniz \"RET\" yazın."
+    );
+    match varyant {
+        // A: soruyla açılır, taslak kısa bir etiketle sunulur.
+        musteriler::Varyant::A => {
+            let taslak = match isletme.yayin_linki.as_deref() {
+                Some(link) => format!(" Taslak: {link} — {demo_notu}."),
+                None => format!(" 12 saatlik demo dosyasını ekliyorum; {demo_notu}."),
+            };
+            format!(
+                "Merhaba, {} ({adres}) için hazırladığım web sitesi taslağını incelemek ister misiniz?{gerekce}{ek}{taslak}{kapanis}",
+                isletme.name
+            )
+        }
+        // B: soru sormadan doğrudan eksikleri söyler, taslağı çözüm olarak verir.
+        musteriler::Varyant::B => {
+            let taslak = match isletme.yayin_linki.as_deref() {
+                Some(link) => {
+                    format!(" Eksikleri kapatan kısa bir web sitesi taslağı hazırladım: {link} — {demo_notu}.")
+                }
+                None => format!(
+                    " Eksikleri kapatan kısa bir taslak hazırladım; 12 saatlik demo dosyasını ekliyorum — {demo_notu}."
+                ),
+            };
+            format!(
+                "Merhaba, {} ({adres}).{gerekce}{ek}{taslak}{kapanis}",
+                isletme.name
+            )
+        }
+    }
 }
 
 fn hizmet_kartlari(baslik: &str, kartlar: &[(&str, &str, &str)]) -> String {
@@ -4017,8 +7442,16 @@ fn kafe_bolumu() -> String {
     hizmet_kartlari(
         "Menü",
         &[
-            ("☕", "Kahveler", "Filtre kahve, Türk kahvesi ve soğuk seçenekler."),
-            ("🍰", "Tatlılar", "Günlük hazırlanan pasta ve tatlı çeşitleri."),
+            (
+                "☕",
+                "Kahveler",
+                "Filtre kahve, Türk kahvesi ve soğuk seçenekler.",
+            ),
+            (
+                "🍰",
+                "Tatlılar",
+                "Günlük hazırlanan pasta ve tatlı çeşitleri.",
+            ),
             ("🥐", "Atıştırmalıklar", "Sandviç, tost ve kahvaltı tabağı."),
         ],
     )
@@ -4028,8 +7461,16 @@ fn unlu_bolumu() -> String {
     hizmet_kartlari(
         "Ürünlerimiz",
         &[
-            ("🥖", "Taze Üretim", "Her gün taze çıkan ekmek ve hamur işleri."),
-            ("🎂", "Özel Sipariş", "Doğum günü ve davetler için özel pasta."),
+            (
+                "🥖",
+                "Taze Üretim",
+                "Her gün taze çıkan ekmek ve hamur işleri.",
+            ),
+            (
+                "🎂",
+                "Özel Sipariş",
+                "Doğum günü ve davetler için özel pasta.",
+            ),
             ("🤍", "Yanında", "Kahve, çay ve günlük atıştırmalıklar."),
         ],
     )
@@ -4039,8 +7480,16 @@ fn urun_bolumu() -> String {
     hizmet_kartlari(
         "Ürünler",
         &[
-            ("🆕", "Yeni Gelenler", "Sezonun yeni ürünleri ve kampanyalar."),
-            ("⭐", "Çok Satanlar", "Müşterilerin en çok tercih ettiği ürünler."),
+            (
+                "🆕",
+                "Yeni Gelenler",
+                "Sezonun yeni ürünleri ve kampanyalar.",
+            ),
+            (
+                "⭐",
+                "Çok Satanlar",
+                "Müşterilerin en çok tercih ettiği ürünler.",
+            ),
             ("🚚", "Teslimat", "Mağazadan teslim veya adrese gönderim."),
         ],
     )
@@ -4050,7 +7499,11 @@ fn klinik_bolumu() -> String {
     hizmet_kartlari(
         "Hizmetlerimiz",
         &[
-            ("🩺", "Muayene ve Kontrol", "Durum değerlendirmesi ve tedavi planı."),
+            (
+                "🩺",
+                "Muayene ve Kontrol",
+                "Durum değerlendirmesi ve tedavi planı.",
+            ),
             ("✨", "Tedavi", "Uzman kadroyla planlı ve takipli tedavi."),
             ("📅", "Randevu", "Uygun saate hızlı randevu."),
         ],
@@ -4061,9 +7514,17 @@ fn otel_bolumu() -> String {
     hizmet_kartlari(
         "Odalar ve Konaklama",
         &[
-            ("🛏️", "Standart Oda", "Konforlu yatak, klima ve ücretsiz Wi-Fi."),
+            (
+                "🛏️",
+                "Standart Oda",
+                "Konforlu yatak, klima ve ücretsiz Wi-Fi.",
+            ),
             ("🌅", "Deluxe Oda", "Geniş oda, manzara ve kahvaltı dahil."),
-            ("☕", "Kahvaltı & Olanaklar", "Açık büfe kahvaltı, otopark, resepsiyon."),
+            (
+                "☕",
+                "Kahvaltı & Olanaklar",
+                "Açık büfe kahvaltı, otopark, resepsiyon.",
+            ),
         ],
     )
 }
@@ -4083,19 +7544,39 @@ fn egitim_bolumu() -> String {
 fn ofis_bolumu(sektor: &str) -> String {
     let kartlar: &[(&str, &str, &str)] = match sektor {
         "Mimarlık" => &[
-            ("📐", "Mimari Proje", "Konsept, ruhsat ve uygulama projeleri."),
+            (
+                "📐",
+                "Mimari Proje",
+                "Konsept, ruhsat ve uygulama projeleri.",
+            ),
             ("🛋️", "İç Mimarlık", "Mekân tasarımı ve malzeme seçimi."),
-            ("🧱", "Tadilat & Uygulama", "Anahtar teslim tadilat ve denetim."),
+            (
+                "🧱",
+                "Tadilat & Uygulama",
+                "Anahtar teslim tadilat ve denetim.",
+            ),
         ],
         "Emlak" => &[
             ("🏠", "Satılık & Kiralık", "Bölgedeki güncel portföy."),
             ("📊", "Değerleme", "Mülkünüz için gerçekçi fiyat analizi."),
-            ("📝", "Tapu & Sözleşme", "Süreç boyunca resmî işlem desteği."),
+            (
+                "📝",
+                "Tapu & Sözleşme",
+                "Süreç boyunca resmî işlem desteği.",
+            ),
         ],
         "Muhasebe" => &[
-            ("🧾", "Vergi & Beyanname", "Aylık ve yıllık beyanname takibi."),
+            (
+                "🧾",
+                "Vergi & Beyanname",
+                "Aylık ve yıllık beyanname takibi.",
+            ),
             ("🏢", "Şirket Kuruluşu", "Kuruluş işlemleri ve açılış."),
-            ("👥", "Bordro & Danışmanlık", "Personel ve mali danışmanlık."),
+            (
+                "👥",
+                "Bordro & Danışmanlık",
+                "Personel ve mali danışmanlık.",
+            ),
         ],
         "Nakliyat" => &[
             ("🚚", "Şehir İçi Taşıma", "Ev ve ofis taşımacılığı."),
@@ -4108,8 +7589,16 @@ fn ofis_bolumu(sektor: &str) -> String {
             ("🛡️", "Bakım & Destek", "Güncelleme, yedekleme ve destek."),
         ],
         _ => &[
-            ("📋", "Danışmanlık", "İhtiyacınıza uygun çözüm ve süreç planı."),
-            ("🧮", "Teklif & Planlama", "Şeffaf fiyat, net takvim ve kapsam."),
+            (
+                "📋",
+                "Danışmanlık",
+                "İhtiyacınıza uygun çözüm ve süreç planı.",
+            ),
+            (
+                "🧮",
+                "Teklif & Planlama",
+                "Şeffaf fiyat, net takvim ve kapsam.",
+            ),
             ("🤝", "Takip & Destek", "İş bitiminde de yanınızdayız."),
         ],
     };
@@ -4120,19 +7609,33 @@ fn ofis_bolumu(sektor: &str) -> String {
 fn servis_bolumu(sektor: &str) -> String {
     let kartlar: &[(&str, &str, &str)] = match sektor {
         "Oto Tamir" | "Lastikçi" | "Oto Yıkama" | "Oto Kiralama" => &[
-            ("🛠️", "Bakım & Onarım", "Periyodik bakım, fren ve süspansiyon."),
-            ("🛞", "Lastik & Balans", "Lastik değişimi, balans ve rot ayarı."),
+            (
+                "🛠️",
+                "Bakım & Onarım",
+                "Periyodik bakım, fren ve süspansiyon.",
+            ),
+            (
+                "🛞",
+                "Lastik & Balans",
+                "Lastik değişimi, balans ve rot ayarı.",
+            ),
             ("📅", "Randevu", "Sıra beklemeden teslim ve teslim alma."),
         ],
-        "Tesisatçı" | "Elektrikçi" | "Klima" | "Boyacı" | "Marangoz" | "Camcı" | "Çilingir" => &[
-            ("🔧", "Keşif & Teklif", "Yerinde inceleme, net fiyat."),
-            ("🏠", "Uygulama", "Temiz çalışma, planlanan günde teslim."),
-            ("🛡️", "Garanti", "İşçilik garantisi ve acil destek hattı."),
-        ],
+        "Tesisatçı" | "Elektrikçi" | "Klima" | "Boyacı" | "Marangoz" | "Camcı" | "Çilingir" => {
+            &[
+                ("🔧", "Keşif & Teklif", "Yerinde inceleme, net fiyat."),
+                ("🏠", "Uygulama", "Temiz çalışma, planlanan günde teslim."),
+                ("🛡️", "Garanti", "İşçilik garantisi ve acil destek hattı."),
+            ]
+        }
         "Terzi" | "Kuru Temizleme" | "Ayakkabı Tamiri" => &[
             ("✂️", "Özel İşçilik", "Ölçüye ve isteğe göre düzenleme."),
             ("⏱️", "Hızlı Teslim", "Aynı gün teslim seçeneği."),
-            ("🧺", "Bakım & Paketleme", "Temiz, ütülü ve korumalı teslim."),
+            (
+                "🧺",
+                "Bakım & Paketleme",
+                "Temiz, ütülü ve korumalı teslim.",
+            ),
         ],
         "Matbaa" => &[
             ("🖨️", "Dijital Baskı", "Kartvizit, broşür ve afiş."),
@@ -4164,7 +7667,11 @@ fn eglence_bolumu(sektor: &str) -> String {
         "Program & Hizmetler",
         &[
             ("🗓️", "Program", "Güncel etkinlik ve seans saatleri."),
-            ("🎟️", "Rezervasyon", "Telefon veya WhatsApp ile yer ayırtma."),
+            (
+                "🎟️",
+                "Rezervasyon",
+                "Telefon veya WhatsApp ile yer ayırtma.",
+            ),
             ("🎉", "Özel Gün", "Doğum günü, davet ve grup organizasyonu."),
         ],
     )
@@ -4391,6 +7898,11 @@ fn demo_html(isletme: &BusinessLead, gonderen: &str) -> String {
     let sektor = html_kacis(&isletme.category);
     let bolum = demo_bolumu(&isletme.category);
     let kaynak = html_kacis(&isletme.kaynak);
+    // Karne, demo ile aynı klasöre aynı ad köküyle yazılır: göreli bağlantı yeter.
+    let karne_linki = format!(
+        "<p class=\"mt-2\"><a class=\"text-amber-400 hover:underline\" href=\"{}\">Dijital görünürlük karnesi</a></p>",
+        karne_dosya_adi(isletme)
+    );
     let konum = match isletme.konum {
         Some((enlem, boylam)) => konum_bolumu_html(&isletme.name, enlem, boylam),
         None => String::new(),
@@ -4502,6 +8014,7 @@ setInterval(durumGuncelle, 60000);
 {konum}
 <section id="iletisim" class="mt-16 pt-8 border-t border-zinc-800 text-sm text-zinc-400">
 <p>Bu taslak {hazirlayan} tarafından {ad} için hazırlandı.</p>
+{karne_linki}
 {saat_satiri}
 <p class="mt-1">Demo süresi: 12 saat · Kaynak: {kaynak}</p>
 </section>
@@ -4526,8 +8039,23 @@ fn demo_uret(isletme: &BusinessLead, gonderen: &str) -> Result<String, String> {
 }
 
 fn demo_yaz(klasor: &str, isletme: &BusinessLead, gonderen: &str) -> Result<String, String> {
-    fs::create_dir_all(klasor).map_err(|hata| format!("{klasor} klasörü oluşturulamadı: {hata}"))?;
-    let kimlik: String = isletme
+    fs::create_dir_all(klasor)
+        .map_err(|hata| format!("{klasor} klasörü oluşturulamadı: {hata}"))?;
+    let dosya_adi = demo_dosya_adi(isletme);
+    let dosya = format!("{klasor}/{dosya_adi}");
+    fs::write(&dosya, demo_html(isletme, gonderen))
+        .map_err(|hata| format!("{dosya} yazılamadı: {hata}"))?;
+    // Karne demo ile birlikte üretilir: aynı klasörde olduğu için demoda ona
+    // göreli bağlantı var, satış görüşmesinde ikisi birlikte açılır.
+    karne_yaz(klasor, isletme, Some(&dosya_adi))?;
+    Ok(dosya)
+}
+
+/// Kayıt kimliği: OSM node/way numarası veya Google place id'sinin son parçası.
+/// Demo ve karne dosya adlarının sonuna eklenir, böylece aynı adlı iki işletme
+/// birbirinin dosyasını ezmez.
+fn kayit_kimligi(isletme: &BusinessLead) -> String {
+    isletme
         .kaynak
         .rsplit('/')
         .next()
@@ -4540,11 +8068,716 @@ fn demo_yaz(klasor: &str, isletme: &BusinessLead, gonderen: &str) -> Result<Stri
                 '_'
             }
         })
+        .collect()
+}
+
+/// Demo dosyasının adı (klasörsüz). Karne, demoya göreli bağlantı verebilmek
+/// için aynı klasöre yazılır.
+fn demo_dosya_adi(isletme: &BusinessLead) -> String {
+    format!(
+        "{}-{}.html",
+        dosya_slug(&isletme.name),
+        kayit_kimligi(isletme)
+    )
+}
+
+/// Dijital görünürlük karnesinin dosya adı: `karne-<isletme>-<kimlik>.html`.
+fn karne_dosya_adi(isletme: &BusinessLead) -> String {
+    format!(
+        "karne-{}-{}.html",
+        dosya_slug(&isletme.name),
+        kayit_kimligi(isletme)
+    )
+}
+
+/// Karnedeki tek kontrolün durumu (rozet rengi ve simgesi buradan gelir).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KarneDurumu {
+    /// Eksik yok: işletme bu kontrolü geçiyor.
+    Iyi,
+    /// Küçük eksik: kapatılabilir, satışı engellemez.
+    Orta,
+    /// Satışı doğrudan gerekçelendiren eksik.
+    Eksik,
+}
+
+/// Dijital görünürlük karnesindeki tek satır: ne bulundu, ne kadar puan
+/// kaybettirdi ve müşteriye ne önerilecek.
+struct KarneSatiri {
+    baslik: &'static str,
+    deger: String,
+    durum: KarneDurumu,
+    /// Bu eksikliğin 100 üzerinden puan kaybı. 0 ise kontrol geçildi.
+    kayip: u8,
+    oneri: &'static str,
+}
+
+fn karne_satiri(
+    baslik: &'static str,
+    deger: String,
+    kayip: u8,
+    oneri: &'static str,
+) -> KarneSatiri {
+    KarneSatiri {
+        durum: match kayip {
+            0 => KarneDurumu::Iyi,
+            1..=6 => KarneDurumu::Orta,
+            _ => KarneDurumu::Eksik,
+        },
+        baslik,
+        deger,
+        kayip,
+        oneri,
+    }
+}
+
+/// Yıldız puanını Türkçe ondalık ayracıyla yazar: 4.2 → "4,2".
+fn puan_metni(puan: f32) -> String {
+    format!("{puan:.1}").replace('.', ",")
+}
+
+/// İşletmenin dijital görünürlük karnesini ölçer: 100 üzerinden puan ve
+/// kontrol satırları. Yalnızca taramada zaten toplanmış veriler kullanılır;
+/// hiçbir ağ isteği yapılmaz, yani karne Google kotası harcamaz.
+///
+/// Ağırlıklar (toplam 90 puan kaybı mümkün, taban puan 10):
+///   web sitesi yok                  -40   (sosyal medya varsa -30,
+///                                          ücretsiz site aracı varsa -20)
+///   çalışma saatleri kayıtlı değil  -20
+///   telefon kayıtlı değil           -15
+///   Google yorum/puan yok           -15   (10+ yorum -5, 50+ yorum 0,
+///                                          4'ün altındaki puan ayrıca ceza)
+fn karne_olc(isletme: &BusinessLead) -> (u8, Vec<KarneSatiri>) {
+    let link = if isletme.site_linki.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", isletme.site_linki.trim())
+    };
+    let (site_degeri, site_kayip, site_oneri) = match isletme.site {
+        SiteDurumu::Yok => (
+            "Web sitesi yok · sosyal medya hesabı da bulunamadı".to_string(),
+            40,
+            "Kendi alan adınızda mobil uyumlu bir site açın; Google profilinize ekleyin.",
+        ),
+        SiteDurumu::Sosyal => (
+            format!("Web sitesi yok, yalnızca sosyal medya hesabı var{link}"),
+            30,
+            "Sosyal medya profiline ek olarak kendi alan adınızda bir site açın.",
+        ),
+        SiteDurumu::Ucretsiz => (
+            format!("Web sitesi yok, ücretsiz site aracıyla kurulmuş sayfa var{link}"),
+            20,
+            "Ücretsiz alt alan adındaki sayfayı kendi alan adınıza taşıyın.",
+        ),
+    };
+
+    let saat_metni = calisma_saatleri_metni(&isletme.calisma_saatleri);
+    let (saat_degeri, saat_kayip) = if saat_metni.is_empty() {
+        ("Çalışma saatleri kayıtlı değil".to_string(), 20)
+    } else {
+        (format!("Kayıtlı program: {saat_metni}"), 0)
+    };
+
+    let (telefon_degeri, telefon_kayip) = if isletme.phone.trim().is_empty() {
+        ("Telefon numarası kayıtlı değil".to_string(), 15)
+    } else if whatsapp_numarasi(&isletme.phone).is_some() {
+        (
+            format!("{} · WhatsApp ile ulaşılabilir", isletme.phone.trim()),
+            0,
+        )
+    } else {
+        (
+            format!("{} · WhatsApp üzerinden ulaşılamıyor", isletme.phone.trim()),
+            5,
+        )
+    };
+
+    let mut yorum_parcalari: Vec<String> = Vec::new();
+    let mut yorum_kayip: u8 = 15;
+    if let Some(adet) = isletme.inceleme_sayisi {
+        yorum_parcalari.push(format!("{adet} yorum"));
+        yorum_kayip = match adet {
+            50.. => 0,
+            10..=49 => 5,
+            1..=9 => 10,
+            _ => 14,
+        };
+    }
+    if let Some(puan) = isletme.yildiz_puani {
+        yorum_parcalari.push(format!("{} ★", puan_metni(puan)));
+        // Düşük puan, yorum sayısından bağımsız bir güven sorunudur.
+        yorum_kayip = match puan {
+            p if p < 3.5 => yorum_kayip.saturating_add(4),
+            p if p < 4.0 => yorum_kayip.saturating_add(2),
+            _ => yorum_kayip,
+        };
+    }
+    let (yorum_degeri, yorum_kayip) = if yorum_parcalari.is_empty() {
+        (
+            "Google'da yorum ve puan verisi yok".to_string(),
+            yorum_kayip,
+        )
+    } else {
+        (yorum_parcalari.join(" · "), yorum_kayip)
+    };
+
+    let satirlar = vec![
+        karne_satiri("Web sitesi", site_degeri, site_kayip, site_oneri),
+        karne_satiri(
+            "Çalışma saatleri",
+            saat_degeri,
+            saat_kayip,
+            "Google işletme profilinize haftalık saatleri girin; \"şu an açık\" bilgisi görünür.",
+        ),
+        karne_satiri(
+            "Telefon",
+            telefon_degeri,
+            telefon_kayip,
+            "Profilinize tıklanabilir bir telefon numarası ekleyin.",
+        ),
+        karne_satiri(
+            "Google yorumları",
+            yorum_degeri,
+            yorum_kayip,
+            "Müşterilerinizden Google yorumu isteyin; 10 ve üzeri yorum güven oluşturur.",
+        ),
+    ];
+
+    let kayip: u16 = satirlar.iter().map(|satir| satir.kayip as u16).sum();
+    let puan = (100u16.saturating_sub(kayip)).clamp(10, 100) as u8;
+    (puan, satirlar)
+}
+
+/// Puanın sözel karşılığı ve Tailwind renk adı.
+fn karne_sinifi(puan: u8) -> (&'static str, &'static str) {
+    match puan {
+        80.. => ("İyi", "emerald"),
+        60..=79 => ("Orta", "amber"),
+        40..=59 => ("Zayıf", "orange"),
+        _ => ("Kritik", "rose"),
+    }
+}
+
+/// Tek sayfalık dijital görünürlük karnesi. Satış görüşmesinde müşteriye
+/// gösterilecek belge: eksikleri, neden önemli olduğunu ve önerilen adımları
+/// tek ekranda toplar. `demo_dosyasi` verilirse hazırlanan taslağa bağlantı
+/// eklenir (aynı klasörde olduğu için göreli adres yeterli).
+fn karne_html(isletme: &BusinessLead, demo_dosyasi: Option<&str>) -> String {
+    let (puan, satirlar) = karne_olc(isletme);
+    let (sinif, renk) = karne_sinifi(puan);
+    let ad = html_kacis(&isletme.name);
+    let sektor = html_kacis(&isletme.category);
+    let adres = html_kacis(&isletme.address);
+    let kaynak = html_kacis(&isletme.kaynak);
+    let tarih = bugun_anahtari();
+
+    let eksikler: Vec<&KarneSatiri> = satirlar.iter().filter(|satir| satir.kayip > 0).collect();
+    let eksik_sayisi = eksikler.len();
+    let tamam_sayisi = satirlar.len() - eksik_sayisi;
+    let ozet = if eksikler.is_empty() {
+        "Bu karnedeki dört kontrolün hepsi geçildi; acil bir eksik görünmüyor.".to_string()
+    } else {
+        format!(
+            "{} eksik tespit edildi: {}. Müşteri işletmenizi Google'da ararken bu bilgileri göremediğinde doğrudan rakip işletmeye geçiyor.",
+            eksikler.len(),
+            eksikler
+                .iter()
+                .map(|satir| satir.baslik)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+
+    let satir_html: String = satirlar
+        .iter()
+        .map(|satir| {
+            let (rozet, rozet_sinif) = match satir.durum {
+                KarneDurumu::Iyi => ("✓", "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"),
+                KarneDurumu::Orta => ("!", "border-amber-500/40 bg-amber-500/15 text-amber-300"),
+                KarneDurumu::Eksik => ("✕", "border-rose-500/40 bg-rose-500/15 text-rose-300"),
+            };
+            let etiket = match satir.durum {
+                KarneDurumu::Iyi => "tamam",
+                KarneDurumu::Orta => "kısmi",
+                KarneDurumu::Eksik => "eksik",
+            };
+            format!(
+                r##"<div class="flex items-start gap-3 p-4">
+<span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold {rozet_sinif}">{rozet}</span>
+<div class="min-w-0">
+<p class="text-sm font-semibold">{baslik} <span class="ml-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{etiket}</span></p>
+<p class="mt-0.5 break-words text-sm text-zinc-400">{deger}</p>
+</div>
+</div>
+"##,
+                baslik = html_kacis(satir.baslik),
+                deger = html_kacis(&satir.deger),
+            )
+        })
         .collect();
-    let dosya = format!("{klasor}/{}-{kimlik}.html", dosya_slug(&isletme.name));
-    fs::write(&dosya, demo_html(isletme, gonderen))
+
+    let adim_html: String = eksikler
+        .iter()
+        .enumerate()
+        .map(|(sira, satir)| {
+            format!(
+                r##"<li class="flex gap-3"><span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-bold text-amber-300">{}</span><span>{}</span></li>"##,
+                sira + 1,
+                html_kacis(satir.oneri)
+            )
+        })
+        .collect();
+
+    let adim_bolumu = if eksikler.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r##"<h2 class="mt-10 text-lg font-bold">Önerilen adımlar</h2>
+<ol class="mt-3 space-y-2 text-sm text-zinc-300">{adim_html}</ol>
+"##
+        )
+    };
+
+    let demo_blok = match demo_dosyasi {
+        Some(dosya) => format!(
+            r##"<section class="mt-10 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+<h2 class="text-base font-bold text-amber-300">Hazırlanan site taslağı</h2>
+<p class="mt-1 text-sm text-zinc-400">Bu karnedeki eksikleri kapatan örnek sayfa sizin için hazırlandı.</p>
+<a class="mt-3 inline-block rounded-full bg-amber-500 px-5 py-2 text-sm font-bold text-black" href="{href}">Taslağı aç</a>
+</section>
+"##,
+            href = html_kacis(dosya)
+        ),
+        None => String::new(),
+    };
+
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{ad} — Dijital Görünürlük Karnesi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 font-sans text-zinc-100">
+<main class="mx-auto max-w-3xl px-5 py-12">
+<p class="text-xs font-bold uppercase tracking-widest text-amber-400">Dijital Görünürlük Karnesi</p>
+<h1 class="mt-2 text-3xl font-black md:text-4xl">{ad}</h1>
+<p class="mt-1 text-sm text-zinc-400">{sektor} · {adres}</p>
+<p class="mt-1 text-xs text-zinc-500">Rapor tarihi: {tarih} · Kaynak: <a class="hover:underline" href="{kaynak}" target="_blank" rel="noopener">işletme kaydı</a></p>
+
+<section class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+<div class="rounded-xl border border-{renk}-500/40 bg-{renk}-500/10 p-5">
+<p class="text-xs text-zinc-400">Dijital görünürlük puanı</p>
+<p class="mt-1 text-5xl font-black text-{renk}-400">{puan}</p>
+<p class="text-xs text-zinc-400">100 üzerinden</p>
+<p class="mt-3 text-sm font-bold text-{renk}-300">{sinif}</p>
+</div>
+<div class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 sm:col-span-2">
+<p class="text-xs uppercase tracking-widest text-zinc-500">Özet</p>
+<p class="mt-2 text-sm text-zinc-300">{ozet}</p>
+<p class="mt-3 text-xs text-zinc-500">{eksik_sayisi} eksik · {tamam_sayisi} tamam</p>
+</div>
+</section>
+
+<h2 class="mt-10 text-lg font-bold">Tespitler</h2>
+<div class="mt-3 divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
+{satir_html}</div>
+{adim_bolumu}
+{demo_blok}
+
+<section class="mt-10 border-t border-zinc-800 pt-5 text-xs leading-relaxed text-zinc-500">
+<p>Bu karne, işletmenizin herkese açık kayıt bilgilerinden (Google / OpenStreetMap) otomatik olarak üretildi; hiçbir bilgi tahmin edilmedi. Eksik görünen bir bilgi varsa kaydınızı güncellemeniz karnedeki puanı da yükseltir.</p>
+<p class="mt-2">Sektör: {sektor} · Kayıt: {kaynak}</p>
+</section>
+</main>
+</body>
+</html>
+"##
+    )
+}
+
+/// Karneyi yazar. Demo ile aynı klasöre gider; `demo_dosyasi` verilirse
+/// karneden taslağa göreli bağlantı konur.
+fn karne_yaz(
+    klasor: &str,
+    isletme: &BusinessLead,
+    demo_dosyasi: Option<&str>,
+) -> Result<String, String> {
+    fs::create_dir_all(klasor)
+        .map_err(|hata| format!("{klasor} klasörü oluşturulamadı: {hata}"))?;
+    let dosya = format!("{klasor}/{}", karne_dosya_adi(isletme));
+    fs::write(&dosya, karne_html(isletme, demo_dosyasi))
         .map_err(|hata| format!("{dosya} yazılamadı: {hata}"))?;
     Ok(dosya)
+}
+
+/// Karneyi üretir (gerekirse demoyu da üretir) ve tarayıcıda açar.
+fn karne_ac(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) {
+    if lead.demo_yolu.is_none() {
+        match demo_uret(lead, gonderen) {
+            Ok(yol) => lead.demo_yolu = Some(yol),
+            Err(hata) => {
+                logs.push(format!("[!] {hata}"));
+                return;
+            }
+        }
+    }
+    let dosya = format!("{DEMO_KLASORU}/{}", karne_dosya_adi(lead));
+    if !std::path::Path::new(&dosya).exists() {
+        if let Err(hata) = karne_yaz(DEMO_KLASORU, lead, Some(&demo_dosya_adi(lead))) {
+            logs.push(format!("[!] {hata}"));
+            return;
+        }
+    }
+    match tarayicida_ac(&dosya) {
+        Ok(()) => logs.push(format!(
+            "[✓] {} için dijital görünürlük karnesi açıldı: {dosya}",
+            lead.name
+        )),
+        Err(hata) => logs.push(format!("[!] Karne açılamadı: {hata}")),
+    }
+}
+
+/// Yayın çalışma kopyasının bulunduğu klasör (asıl çalışma ağacının dışında,
+/// `gh-pages` dalına bağlı ayrı bir git worktree).
+const YAYIN_KLASORU: &str = ".yayin";
+/// Demo dosyalarının yayınlandığı dal. GitHub Pages bu dalı kök olarak yayınlar.
+const YAYIN_DALI: &str = "gh-pages";
+
+/// Dış komutu sessiz çalıştırır (arayüzden çağrıldığı için konsol penceresi
+/// açılmaz) ve çıktısını döndürür; başarısızlıkta `stderr` metnini taşır.
+fn komut_calistir(dizin: &str, program: &str, args: &[&str]) -> Result<String, String> {
+    let mut emir = Command::new(program);
+    emir.args(args).current_dir(dizin);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: git çağrıları için konsol penceresi açılmasın.
+        emir.creation_flags(0x0800_0000);
+    }
+    let cikti = emir
+        .output()
+        .map_err(|hata| format!("{program} çalıştırılamadı: {hata}"))?;
+    if !cikti.status.success() {
+        let hata = String::from_utf8_lossy(&cikti.stderr).trim().to_string();
+        return Err(format!("{program} {}: {hata}", args.join(" ")));
+    }
+    Ok(String::from_utf8_lossy(&cikti.stdout).to_string())
+}
+
+/// Uzak depo adresinden GitHub sahibini ve depo adını çıkarır.
+/// `https://github.com/owner/repo.git`, `git@github.com:owner/repo.git` ve
+/// sonunda `.git` olmayan biçimler desteklenir.
+fn github_depo(uzak: &str) -> Option<(String, String)> {
+    let temiz = uzak.trim();
+    let kalan = temiz.split("github.com").nth(1)?;
+    let kalan = kalan.trim_start_matches(['/', ':']);
+    let parcalar: Vec<&str> = kalan.split('/').filter(|parca| !parca.is_empty()).collect();
+    if parcalar.len() < 2 {
+        return None;
+    }
+    let depo = parcalar[1].trim_end_matches(".git");
+    if depo.is_empty() {
+        return None;
+    }
+    Some((parcalar[0].to_string(), depo.to_string()))
+}
+
+/// Bir demo dosyasının paylaşılabilir GitHub Pages adresi:
+/// `https://<sahip>.github.io/<depo>/demos/<dosya>`.
+fn yayin_adresi(sahip: &str, depo: &str, dosya: &str) -> String {
+    format!(
+        "https://{}.github.io/{}/demos/{}",
+        sahip.to_lowercase(),
+        depo,
+        dosya
+    )
+}
+
+/// Yayın kök sayfası: yayınlanmış tüm demoları listeleyen sade bir dizin.
+fn yayin_dizini(dosyalar: &[String]) -> String {
+    let mut satirlar = String::new();
+    let mut sirali: Vec<&String> = dosyalar.iter().collect();
+    sirali.sort();
+    for dosya in sirali {
+        let etiket = dosya
+            .trim_end_matches(".html")
+            .trim_start_matches("karne-")
+            .replace('-', " ");
+        satirlar.push_str(&format!(
+            "<li><a href=\"demos/{}\">{}</a></li>\n",
+            html_kacis(dosya),
+            html_kacis(&etiket)
+        ));
+    }
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo yayını</title>
+<style>
+body{{background:#0b0e13;color:#eaeef5;font-family:system-ui,sans-serif;margin:0;padding:48px 20px}}
+main{{max-width:720px;margin:0 auto}}
+h1{{font-size:22px;margin:0 0 6px}}
+p{{color:#8b95a7;font-size:13px;margin:0 0 24px}}
+ul{{list-style:none;padding:0;margin:0;display:grid;gap:8px}}
+a{{display:block;padding:12px 14px;border:1px solid #232a36;border-radius:10px;color:#eaeef5;text-decoration:none;background:#12161d}}
+a:hover{{border-color:#3a4557}}
+</style>
+</head>
+<body>
+<main>
+<h1>Hazırlanan demo sayfaları</h1>
+<p>Bu bağlantılar taslak amaçlıdır; işletmelerin onayı olmadan yayına alınmaz.</p>
+<ul>
+{satirlar}</ul>
+</main>
+</body>
+</html>
+"##
+    )
+}
+
+/// `gh-pages` dalına bağlı yayın çalışma kopyasını hazırlar.
+fn yayin_hazirla(kok: &str) -> Result<(), String> {
+    let klasor = format!("{kok}/{YAYIN_KLASORU}");
+    if std::path::Path::new(&klasor).join(".git").exists() {
+        return Ok(());
+    }
+    if std::path::Path::new(&klasor).exists() {
+        return Err(format!(
+            "{YAYIN_KLASORU} klasörü var ama bir git worktree değil; silip yeniden deneyin."
+        ));
+    }
+    let dal_var = komut_calistir(
+        kok,
+        "git",
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{YAYIN_DALI}"),
+        ],
+    )
+    .is_ok();
+    if dal_var {
+        komut_calistir(kok, "git", &["worktree", "add", YAYIN_KLASORU, YAYIN_DALI])
+            .map(|_| ())
+            .map_err(|hata| format!("{hata} (gerekirse: git worktree prune)"))?;
+    } else {
+        komut_calistir(kok, "git", &["worktree", "add", "--detach", YAYIN_KLASORU])
+            .map_err(|hata| format!("{hata} (gerekirse: git worktree prune)"))?;
+        komut_calistir(&klasor, "git", &["checkout", "--orphan", YAYIN_DALI])?;
+        // Orphan dalda dizin boşaltılır; hata (boş dizin) yok sayılır.
+        let _ = komut_calistir(&klasor, "git", &["rm", "-rf", "."]);
+    }
+    Ok(())
+}
+
+/// Demoyu (ve varsa karneyi) GitHub Pages dalına yayınlar ve paylaşılabilir
+/// adresi döndürür. Yalnızca değişen dosyalar commit'lenir; aynı demo ikinci
+/// kez yayınlandığında yeni commit oluşmaz.
+fn yayina_gonder(kok: &str, dosyalar: &[String], logs: &mut Vec<String>) -> Result<String, String> {
+    let klasor = format!("{kok}/{YAYIN_KLASORU}");
+    let hedef_klasor = format!("{klasor}/demos");
+    fs::create_dir_all(&hedef_klasor)
+        .map_err(|hata| format!("{hedef_klasor} oluşturulamadı: {hata}"))?;
+
+    let mut yayinlanan: Vec<String> = Vec::new();
+    for kaynak in dosyalar {
+        let ad = std::path::Path::new(kaynak)
+            .file_name()
+            .map(|ad| ad.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if ad.is_empty() {
+            continue;
+        }
+        // Karne demoya göreli bağlantı verdiği için ikisi de aynı klasöre gider.
+        fs::copy(kaynak, format!("{hedef_klasor}/{ad}"))
+            .map_err(|hata| format!("{ad} kopyalanamadı: {hata}"))?;
+        yayinlanan.push(ad);
+    }
+    if yayinlanan.is_empty() {
+        return Err("Yayınlanacak dosya yok.".to_string());
+    }
+
+    // Kök dizin, yayınlanmış tüm demoları listeleyen sayfa olur.
+    let mut mevcut: Vec<String> = fs::read_dir(&hedef_klasor)
+        .map(|kayitlar| {
+            kayitlar
+                .filter_map(|kayit| kayit.ok())
+                .filter(|kayit| {
+                    kayit
+                        .path()
+                        .extension()
+                        .is_some_and(|uzanti| uzanti == "html")
+                })
+                .map(|kayit| kayit.file_name().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    mevcut.sort();
+    fs::write(format!("{klasor}/index.html"), yayin_dizini(&mevcut))
+        .map_err(|hata| format!("index.html yazılamadı: {hata}"))?;
+
+    if komut_calistir(&klasor, "git", &["add", "-A"]).is_err() {
+        // Boş depoda ilk ekleme; yine de devam edilir.
+    }
+    let degisiklik = komut_calistir(&klasor, "git", &["status", "--porcelain"])?;
+    if !degisiklik.trim().is_empty() {
+        let ad = komut_calistir(kok, "git", &["config", "user.name"])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let eposta = komut_calistir(kok, "git", &["config", "user.email"])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let ad = if ad.is_empty() {
+            "Demo Yayını".to_string()
+        } else {
+            ad
+        };
+        let eposta = if eposta.is_empty() {
+            "demo@localhost".to_string()
+        } else {
+            eposta
+        };
+        let mesaj = format!("Demo yayını: {}", yayinlanan.join(", "));
+        komut_calistir(
+            &klasor,
+            "git",
+            &[
+                "-c",
+                &format!("user.name={ad}"),
+                "-c",
+                &format!("user.email={eposta}"),
+                "commit",
+                "-m",
+                &mesaj,
+            ],
+        )?;
+    } else {
+        logs.push("[i] Yayında değişiklik yok; mevcut link kullanılabilir.".to_string());
+    }
+
+    let uzak = komut_calistir(kok, "git", &["remote", "get-url", "origin"])?;
+    let (sahip, depo) = github_depo(&uzak)
+        .ok_or_else(|| format!("origin adresi GitHub deposu değil: {}", uzak.trim()))?;
+    komut_calistir(&klasor, "git", &["push", "origin", YAYIN_DALI])?;
+    Ok(yayin_adresi(&sahip, &depo, &yayinlanan[0]))
+}
+
+/// Demoyu (yoksa önce üretip) GitHub Pages'e yayınlar ve adresi döndürür.
+/// Yayın başarısız olursa `None` döner; çağıranlar akışı durdurmadan devam eder.
+/// Karneyi yayına hazırlar: dosya yoksa üretir ve yolunu döndürür. Üretilemezse
+/// `None` döner; bu durumda mesaja karne linki eklenmez (kırık link verilmez).
+/// Yayındaki demo sayfasının kösesine karne bağlantısı ekler. Böylece mesajda
+/// tek link kalır ama karne demo üzerinden tek tıkla açılır.
+fn karne_rozeti_ekle(demo_yolu: &str, karne_adi: &str) -> Result<(), String> {
+    let html =
+        fs::read_to_string(demo_yolu).map_err(|hata| format!("{demo_yolu} okunamadı: {hata}"))?;
+    // Aynı demo birden çok kez yayınlanırsa rozet çoğalmasın.
+    if html.contains(karne_adi) {
+        return Ok(());
+    }
+    let rozet = format!(
+        "<a href=\"{karne_adi}\" style=\"position:fixed;right:16px;bottom:16px;z-index:9999;display:inline-block;background:#0f172a;color:#f8fafc;padding:10px 16px;border-radius:999px;font:600 13px/1.2 system-ui,sans-serif;text-decoration:none;box-shadow:0 6px 20px rgba(15,23,42,.35)\">Eksikler ve puan → dijital karne</a>"
+    );
+    let yeni = match html.rfind("</body>") {
+        Some(yer) => format!("{}{rozet}{}", &html[..yer], &html[yer..]),
+        None => format!("{html}{rozet}"),
+    };
+    fs::write(demo_yolu, yeni).map_err(|hata| format!("{demo_yolu} yazılamadı: {hata}"))
+}
+
+fn karne_hazirla(klasor: &str, lead: &BusinessLead, logs: &mut Vec<String>) -> Option<String> {
+    let dosya = format!("{klasor}/{}", karne_dosya_adi(lead));
+    if !std::path::Path::new(&dosya).exists() {
+        if let Err(hata) = karne_yaz(klasor, lead, Some(&demo_dosya_adi(lead))) {
+            logs.push(format!("[!] Karne üretilemedi: {hata}"));
+        }
+    }
+    std::path::Path::new(&dosya).exists().then_some(dosya)
+}
+
+/// Yayındaki bir dosyanın adresini, demoyla aynı klasördeki başka bir dosya
+/// için üretir: `…/demos/x.html` + `karne-x.html` → `…/demos/karne-x.html`.
+fn yayin_alt_adresi(demo_adresi: &str, dosya: &str) -> String {
+    match demo_adresi.rsplit_once('/') {
+        Some((taban, _)) => format!("{taban}/{dosya}"),
+        None => demo_adresi.to_string(),
+    }
+}
+
+fn yayina_gonder_ve_link_al(
+    lead: &mut BusinessLead,
+    gonderen: &str,
+    logs: &mut Vec<String>,
+) -> Option<String> {
+    if lead.demo_yolu.is_none() {
+        match demo_uret(lead, gonderen) {
+            Ok(yol) => lead.demo_yolu = Some(yol),
+            Err(hata) => {
+                logs.push(format!("[!] {hata}"));
+                return None;
+            }
+        }
+    }
+    let demo_yolu = lead.demo_yolu.clone()?;
+    let kok = std::env::current_dir()
+        .map(|dizin| dizin.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    if let Err(hata) = yayin_hazirla(&kok) {
+        logs.push(format!("[!] Yayın hazırlanamadı: {hata}"));
+        return None;
+    }
+
+    // Karne demo ile birlikte yayınlanır: dosya yoksa (eski demo, elle açılan
+    // dosya) yayından önce burada üretilir ki mesajdaki link boşa çıkmasın.
+    let karne_dosyasi = karne_dosya_adi(lead);
+    let karne_yolu = karne_hazirla(DEMO_KLASORU, lead, logs);
+
+    // Karne yayına gidecekse demo sayfasına bağlantısı iliştirilir ki mesajda
+    // ikinci bir adres yer almasın.
+    if karne_yolu.is_some() {
+        if let Err(hata) = karne_rozeti_ekle(&demo_yolu, &karne_dosyasi) {
+            logs.push(format!("[!] Karne rozeti eklenemedi: {hata}"));
+        }
+    }
+
+    let mut dosyalar = vec![demo_yolu];
+    if let Some(yol) = karne_yolu.clone() {
+        dosyalar.push(yol);
+    }
+    match yayina_gonder(&kok, &dosyalar, logs) {
+        Ok(adres) => {
+            lead.yayin_linki = Some(adres.clone());
+            lead.karne_linki = karne_yolu.map(|_| yayin_alt_adresi(&adres, &karne_dosyasi));
+            if let Some(karne_adresi) = lead.karne_linki.clone() {
+                logs.push(format!("[i] Dijital karne de yayında: {karne_adresi}"));
+            }
+            logs.push(format!("[✓] {} yayınlandı: {adres}", lead.name));
+            Some(adres)
+        }
+        Err(hata) => {
+            logs.push(format!("[!] Yayın başarısız: {hata}"));
+            None
+        }
+    }
+}
+
+/// Demoyu GitHub Pages'e yayınlar, linki günlüğe yazar ve tarayıcıda açar.
+fn demo_yayinla(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) {
+    if let Some(adres) = yayina_gonder_ve_link_al(lead, gonderen, logs) {
+        if let Err(hata) = tarayicida_ac(&adres) {
+            logs.push(format!("[!] Link açılamadı: {hata}"));
+        }
+    }
 }
 
 /// Demos klasörünü dosya yöneticisinde açar.
@@ -4569,7 +8802,9 @@ fn tarayicida_ac(url: &str) -> Result<(), String> {
     let sonuc = Command::new("open").arg(url).spawn();
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     let sonuc = Command::new("xdg-open").arg(url).spawn();
-    sonuc.map(|_| ()).map_err(|hata| format!("{url} açılamadı: {hata}"))
+    sonuc
+        .map(|_| ())
+        .map_err(|hata| format!("{url} açılamadı: {hata}"))
 }
 
 fn main() -> eframe::Result<()> {
@@ -4613,8 +8848,8 @@ mod testler {
             {"type":"node","id":4,"tags":{"amenity":"cafe"}}
         ]}"#;
 
-        let (liste, siteli) = overpass_isle(json, "İstanbul", "Beşiktaş", "Restoran")
-        .expect("yanıt işlenmeliydi");
+        let (liste, siteli) =
+            overpass_isle(json, "İstanbul", "Beşiktaş", "Restoran").expect("yanıt işlenmeliydi");
 
         assert_eq!(siteli, 1, "web sitesi olan kayıt sayılmalı");
         assert_eq!(liste.len(), 2, "isimsiz kayıt listeye girmemeli");
@@ -4647,9 +8882,536 @@ mod testler {
             kaynak: "https://www.openstreetmap.org/node/42".to_string(),
             konum: Some((41.04285, 29.00753)),
             calisma_saatleri: "Mo-Fr 09:00-18:00; Sa 10:00-16:00".to_string(),
+            kayit_dolulugu: 0,
+            site: SiteDurumu::Yok,
+            site_linki: String::new(),
+            son_guncelleme_gun: Some(30),
+            inceleme_sayisi: None,
+            yildiz_puani: None,
+            durum: musteriler::Durum::Yeni,
             demo_yolu: None,
             mesaj_hazir: false,
+            yayin_linki: None,
+            karne_linki: None,
+            mesaj_varyanti: None,
         }
+    }
+
+    #[test]
+    fn potansiyeli_yuksek_isletmeler_once_siralanir() {
+        let mut telefonlu_saatli = ornek_isletme();
+        telefonlu_saatli.name = "Zeynep Restoran".to_string();
+
+        let mut telefonlu_a = ornek_isletme();
+        telefonlu_a.name = "Işık Kafe".to_string();
+        telefonlu_a.calisma_saatleri.clear();
+
+        let mut telefonlu_b = ornek_isletme();
+        telefonlu_b.name = "İnci Kafe".to_string();
+        telefonlu_b.calisma_saatleri.clear();
+
+        let mut saatli = ornek_isletme();
+        saatli.name = "Ahmet Berber".to_string();
+        saatli.phone.clear();
+
+        let mut ciplak = ornek_isletme();
+        ciplak.name = "Burak Kafe".to_string();
+        ciplak.phone.clear();
+        ciplak.calisma_saatleri.clear();
+
+        let mut liste = vec![ciplak, saatli, telefonlu_a, telefonlu_b, telefonlu_saatli];
+        leads_sirala(&mut liste);
+
+        let adlar: Vec<&str> = liste.iter().map(|isletme| isletme.name.as_str()).collect();
+        assert_eq!(
+            adlar,
+            vec![
+                "Zeynep Restoran",
+                "İnci Kafe",
+                "Işık Kafe",
+                "Ahmet Berber",
+                "Burak Kafe"
+            ],
+            "telefon+saat > telefon > saat > hiçbiri; eşit puanda Türkçe alfabetik"
+        );
+    }
+
+    #[test]
+    fn kayit_dolulugu_ek_etiketlerle_artar() {
+        let bos: serde_json::Value =
+            serde_json::from_str(r#"{"name":"Kafe","amenity":"cafe"}"#).expect("json");
+        assert_eq!(kayit_dolulugu(&bos), 0, "isim + tür etiketi puan getirmez");
+
+        let dolu: serde_json::Value = serde_json::from_str(
+            r#"{"name":"Kafe","amenity":"cafe","phone":"+90 212 000 00 00",
+               "addr:street":"Cadde","cuisine":"turkish","wheelchair":"yes",
+               "outdoor_seating":"yes","payment:credit_cards":"yes",
+               "brand":"Deneme"}"#,
+        )
+        .expect("json");
+        assert_eq!(
+            kayit_dolulugu(&dolu),
+            10,
+            "puanlanan alanlar (telefon/adres) sayılmaz, diğer 5 etiket tavanı doldurur"
+        );
+    }
+
+    #[test]
+    fn potansiyel_puani_niyet_ve_ulasilabilirligi_puanlar() {
+        let mut tam = ornek_isletme();
+        tam.address = "Barbaros Bulvarı No:12, Beşiktaş / İstanbul".to_string();
+        assert_eq!(
+            potansiyel_puani(&tam),
+            86,
+            "site yok 12 + mobil telefon 30 + saat 8 + adres 8 + güncel 5 + sektör 20 + konum 3"
+        );
+        assert!(potansiyel_gerekcesi(&tam).starts_with("86/100 · mobil numara"));
+
+        let mut sosyal = ornek_isletme();
+        sosyal.address = "Barbaros Bulvarı No:12, Beşiktaş / İstanbul".to_string();
+        sosyal.site = SiteDurumu::Sosyal;
+        sosyal.site_linki = "https://instagram.com/kafe".to_string();
+        assert_eq!(
+            potansiyel_puani(&sosyal),
+            100,
+            "sosyal medyası olup sitesi olmayan en sıcak hedef (100'de tavanlanır)"
+        );
+        assert!(potansiyel_puani(&sosyal) > potansiyel_puani(&tam));
+        assert!(potansiyel_gerekcesi(&sosyal).contains("sosyal medya var, site yok"));
+
+        let mut incelemeli = ornek_isletme();
+        incelemeli.site = SiteDurumu::Sosyal;
+        incelemeli.inceleme_sayisi = Some(150);
+        assert!(
+            potansiyel_gerekcesi(&incelemeli).contains("150 Google incelemesi"),
+            "inceleme sayısı gerekçede görünmeli"
+        );
+
+        let mut ciplak = ornek_isletme();
+        ciplak.phone.clear();
+        ciplak.calisma_saatleri.clear();
+        ciplak.address = "Beşiktaş / İstanbul".to_string();
+        ciplak.konum = None;
+        ciplak.son_guncelleme_gun = None;
+        assert_eq!(
+            potansiyel_puani(&ciplak),
+            32,
+            "yalnızca 'site yok' + sektör puanı kalır"
+        );
+        assert!(potansiyel_puani(&ciplak) < SICAK_ESIK);
+    }
+
+    #[test]
+    fn gecici_hatalar_ayirt_edilir() {
+        assert!(gecici_hata("sunucu HTTP 502 döndü: bad gateway"));
+        assert!(gecici_hata("sunucu HTTP 429 döndü: çok istek"));
+        assert!(gecici_hata("bağlantı kurulamadı: dns"));
+        assert!(!gecici_hata("sunucu HTTP 400 döndü: kötü istek"));
+        assert!(!gecici_hata("konum yanıtı çözümlenemedi"));
+        // Zaman aşımı da geçicidir: sunucu sırası yoğunken bağlantı düşer.
+        assert!(gecici_hata("zaman aşımı: timed out reading response"));
+    }
+
+    #[test]
+    fn retry_after_basligi_beklemeye_cevrilir() {
+        let mesaj = "sunucu HTTP 429 döndü (Retry-After: 7 sn): çok istek";
+        assert_eq!(retry_after_sn(mesaj), Some(7));
+        // Aşırı uzun süreler kırpılır: tarama bir sunucuda kilitlenmemeli.
+        assert_eq!(
+            retry_after_sn("sunucu HTTP 429 döndü (Retry-After: 120 sn): yavaş"),
+            Some(15)
+        );
+        // Başlık yoksa artan bekleme kullanılır.
+        assert_eq!(retry_after_sn("sunucu HTTP 503 döndü: yoğun"), None);
+    }
+    /// Birincil sunucu 502 döndüğünde zincirin yedek sunucuya geçtiğini ve
+    /// ilçenin verisiz kalmadığını doğrular (ağ gerekmez).
+    #[test]
+    fn overpass_birincil_502_verince_yedek_sunucuya_gecer() {
+        let mut denemeler: Vec<String> = Vec::new();
+        let mut gonder = |adres: &str| -> Result<String, String> {
+            denemeler.push(adres.to_string());
+            if adres.contains("birincil") {
+                Err("sunucu HTTP 502 döndü: yoğun".to_string())
+            } else {
+                Ok("{\"elements\":[]}".to_string())
+            }
+        };
+        let sunucular = [
+            ("https://sahte-birincil/api/interpreter", "sahte-birincil"),
+            ("https://sahte-yedek/api/interpreter", "sahte-yedek"),
+        ];
+        let (govde, sunucu_adi) =
+            overpass_istek_zincir(&mut gonder, &sunucular, Duration::from_secs(20))
+                .expect("yedek sunucudan yanıt gelmeliydi");
+
+        assert_eq!(sunucu_adi, "sahte-yedek", "502 sonrası yedeğe geçilmeli");
+        assert!(
+            govde.contains("elements"),
+            "yedek sunucunun gövdesi dönmeli"
+        );
+        assert_eq!(
+            denemeler.len(),
+            OVERPASS_DENEMESI + 1,
+            "birincil {OVERPASS_DENEMESI} kez denenip yedeğe geçilmeli"
+        );
+    }
+
+    #[test]
+    fn overpass_tum_sunucular_dusunce_hepsini_raporlar() {
+        let mut gonder =
+            |_: &str| -> Result<String, String> { Err("sunucu HTTP 504 döndü".to_string()) };
+        let sunucular = [
+            ("https://a/api/interpreter", "a.example"),
+            ("https://b/api/interpreter", "b.example"),
+        ];
+        let hata = overpass_istek_zincir(&mut gonder, &sunucular, Duration::from_secs(20))
+            .expect_err("hiçbiri yanıt vermedi");
+        // Kayıp ilçenin nedeni günlükte sunucu sunucu görünmeli.
+        assert!(hata.contains("a.example"), "hata: {hata}");
+        assert!(hata.contains("b.example"), "hata: {hata}");
+    }
+
+    #[test]
+    fn overpass_sure_butcesi_asilinca_kalan_sunucu_denenmez() {
+        let mut denemeler = 0usize;
+        let mut gonder = |_: &str| -> Result<String, String> {
+            denemeler += 1;
+            Err("sunucu HTTP 429 döndü (Retry-After: 1 sn): çok istek".to_string())
+        };
+        let sunucular = [
+            ("https://a/api/interpreter", "a.example"),
+            ("https://b/api/interpreter", "b.example"),
+        ];
+        // Bütçe sıfır: hiçbir sunucuya gidilmemeli.
+        let hata = overpass_istek_zincir(&mut gonder, &sunucular, Duration::ZERO)
+            .expect_err("bütçe dolunca hata dönmeli");
+        assert_eq!(denemeler, 0, "bütçe dolunca istek atılmamalı");
+        assert!(hata.contains("süre bütçesi doldu"), "hata: {hata}");
+    }
+
+    #[test]
+    fn overpass_sunuculari_uc_global_ayna_icerir() {
+        assert_eq!(OVERPASS_SUNUCULARI.len(), 3);
+        // Bölgesel ayna (yalnız İsviçre verisi) yedek olarak kullanılamaz:
+        // kapsam dışı ilçede hata değil boş döner.
+        assert!(OVERPASS_SUNUCULARI
+            .iter()
+            .all(|(_, ad)| *ad != "overpass.osm.ch"));
+        assert!(OVERPASS_SUNUCULARI
+            .iter()
+            .all(|(adres, _)| adres.starts_with("https://")));
+    }
+
+    #[test]
+    fn tekrar_dene_gecici_hatada_yeniden_dener() {
+        let mut deneme = 0;
+        let sonuc = tekrar_dene(|| {
+            deneme += 1;
+            if deneme < 2 {
+                Err("sunucu HTTP 503 döndü: yoğun".to_string())
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(sonuc, Ok(7));
+        assert_eq!(deneme, 2, "ilk hata geçici olduğu için tekrar denenmeli");
+    }
+
+    #[test]
+    fn tekrar_dene_kalici_hatada_durmaz() {
+        let mut deneme = 0;
+        let sonuc: Result<(), String> = tekrar_dene(|| {
+            deneme += 1;
+            Err("sunucu HTTP 400 döndü: kötü istek".to_string())
+        });
+        assert!(sonuc.is_err());
+        assert_eq!(deneme, 1, "kalıcı hatada tekrar denenmemeli");
+    }
+
+    #[test]
+    fn konum_onbellegi_kaydeder_ve_okur() {
+        let mut onbellek = KonumOnbellek::default();
+        assert!(onbellek.al("İstanbul", "Beşiktaş").is_none());
+
+        onbellek.ekle(
+            "İstanbul",
+            "Beşiktaş",
+            &Konum {
+                enlem: 41.04,
+                boylam: 29.0,
+                yaricap_m: 3_000,
+                alan_id: Some(3_601_765_893),
+            },
+        );
+        let konum = onbellek
+            .al("İstanbul", "Beşiktaş")
+            .expect("önbellekten gelmeli");
+        assert_eq!(konum.alan_id, Some(3_601_765_893));
+        assert_eq!(konum.yaricap_m, 3_000);
+        assert!(
+            onbellek.al("istanbul", "besiktas").is_some(),
+            "Türkçe karakter ve büyük/küçük harf farkı aynı kaydı bulmalı"
+        );
+
+        let metin = serde_json::to_string(&onbellek).expect("json");
+        let geri: KonumOnbellek = serde_json::from_str(&metin).expect("json");
+        assert!(geri.al("İstanbul", "Beşiktaş").is_some());
+
+        // 180 günden eski kayıt geçersiz sayılır.
+        let anahtar = KonumOnbellek::anahtar("İstanbul", "Beşiktaş");
+        if let Some(kayit) = onbellek.kayitlar.get_mut(&anahtar) {
+            kayit.tarih = "2020-01-01".to_string();
+        }
+        assert!(onbellek.al("İstanbul", "Beşiktaş").is_none());
+    }
+
+    #[test]
+    fn google_istegi_page_size_kullanir() {
+        let govde = google_govdesi("İstanbul", "Beşiktaş", "Restoran", None);
+        assert_eq!(govde["pageSize"], SONUC_SINIRI);
+        assert!(
+            govde.get("maxResultCount").is_none(),
+            "kullanımdan kaldırılan maxResultCount gönderilmemeli"
+        );
+        assert!(govde.get("pageToken").is_none(), "ilk sayfada jeton yok");
+        assert_eq!(govde["textQuery"], "Restoran Beşiktaş İstanbul");
+
+        let ikinci = google_govdesi("İstanbul", "Beşiktaş", "Restoran", Some("JETON"));
+        assert_eq!(ikinci["pageToken"], "JETON");
+        assert_eq!(ikinci["pageSize"], SONUC_SINIRI);
+    }
+
+    #[test]
+    fn sonuc_onbellegi_ilce_sektor_bazinda_ayrisir() {
+        let mut onbellek = SonucOnbellek::default();
+        onbellek.ekle(
+            "İstanbul",
+            "Beşiktaş",
+            "Kafe",
+            &[ornek_isletme()],
+            3,
+            "overpass-api.de",
+        );
+        let kayit = onbellek
+            .al("İstanbul", "Beşiktaş", "Kafe")
+            .expect("önbellekte olmalı");
+        assert_eq!(kayit.leads.len(), 1);
+        assert_eq!(kayit.siteli, 3);
+        assert_eq!(kayit.gun, 0);
+        // Aynı ilçenin başka sektörü ve başka ilçe önbellekte yok.
+        assert!(onbellek.al("İstanbul", "Beşiktaş", "Restoran").is_none());
+        assert!(onbellek.al("İstanbul", "Kadıköy", "Kafe").is_none());
+    }
+
+    #[test]
+    fn sonuc_onbelleginde_eski_kayit_kullanilmaz() {
+        let mut onbellek = SonucOnbellek::default();
+        onbellek.ekle(
+            "İstanbul",
+            "Beşiktaş",
+            "Kafe",
+            &[ornek_isletme()],
+            0,
+            "overpass-api.de",
+        );
+        let anahtar = SonucOnbellek::anahtar("İstanbul", "Beşiktaş", "Kafe");
+        onbellek.kayitlar.get_mut(&anahtar).expect("kayıt").tarih = "2020-01-01".to_string();
+        assert!(
+            onbellek.al("İstanbul", "Beşiktaş", "Kafe").is_none(),
+            "geçerlilik süresi dolmuş kayıt kullanılmamalı"
+        );
+    }
+
+    #[test]
+    fn onbellekli_ilce_ag_istemez() {
+        // Önbellekte kayıt varsa ilçe taraması ağa hiç çıkmaz: imkânsız bir
+        // konum ve gerçek ajanla bile sonuç önbellekten döner.
+        let mut onbellek = SonucOnbellek::default();
+        onbellek.ekle(
+            "İstanbul",
+            "Beşiktaş",
+            "Restoran",
+            &[ornek_isletme(), ornek_isletme()],
+            2,
+            "overpass-api.de",
+        );
+        let konum = Konum {
+            enlem: 0.0,
+            boylam: 0.0,
+            yaricap_m: 1,
+            alan_id: None,
+        };
+        let sonuc = ilce_taramasi(
+            &http_ajani(),
+            &mut onbellek,
+            "İstanbul",
+            "Beşiktaş",
+            "Restoran",
+            &konum,
+        );
+        match sonuc {
+            IlceTaramasi::Onbellek(kayit) => {
+                assert_eq!(kayit.leads.len(), 2);
+                assert_eq!(kayit.gun, 0);
+            }
+            _ => panic!("sonuç önbellekten gelmeliydi, ağa çıkılmamalı"),
+        }
+    }
+
+    #[test]
+    fn sonuc_onbellegi_json_gidis_donusu() {
+        let mut onbellek = SonucOnbellek::default();
+        onbellek.ekle(
+            "İstanbul",
+            "Beşiktaş",
+            "Kafe",
+            &[ornek_isletme()],
+            1,
+            "z.overpass-api.de",
+        );
+        let metin = serde_json::to_string(&onbellek).expect("serileşmeli");
+        let geri: SonucOnbellek = serde_json::from_str(&metin).expect("çözümlenmeli");
+        let kayit = geri
+            .al("İstanbul", "Beşiktaş", "Kafe")
+            .expect("kayıt korunmalı");
+        assert_eq!(kayit.leads[0].name, "Kafe <Deneme>");
+        assert_eq!(kayit.leads[0].phone, "+90 532 123 45 67");
+        assert_eq!(kayit.leads[0].site, SiteDurumu::Yok);
+        assert_eq!(kayit.leads[0].durum, musteriler::Durum::Yeni);
+        assert_eq!(kayit.leads[0].konum, Some((41.04285, 29.00753)));
+    }
+
+    #[test]
+    fn gun_farki_tarihleri_cozer() {
+        assert_eq!(gun_farki("2026-10-01", "2026-10-04"), Some(3));
+        assert_eq!(gun_farki("2026-10-04", "2026-10-01"), Some(-3));
+        assert_eq!(gun_farki("bozuk", "2026-10-01"), None);
+        assert_eq!(gun_farki("2026-10-01", "2026-10-01"), Some(0));
+    }
+
+    #[test]
+    fn kaynak_secimi_etiketlenir() {
+        assert_eq!(Kaynak::HEPSI.len(), 3);
+        assert_eq!(Kaynak::Hibrit.etiket(), "Hibrit");
+        assert_eq!(Kaynak::Google.etiket(), "Google");
+        assert_eq!(Kaynak::Osm.etiket(), "OSM");
+        assert!(Kaynak::Google.aciklama().contains("inceleme"));
+        assert!(Kaynak::Osm.aciklama().contains("ücretsiz"));
+    }
+
+    #[test]
+    fn google_kaynaginda_inceleme_sayisi_once_gelir() {
+        let mut cok_inceleme = ornek_isletme();
+        cok_inceleme.name = "Zeynep Restoran".to_string();
+        cok_inceleme.inceleme_sayisi = Some(140);
+
+        let mut az_inceleme = ornek_isletme();
+        az_inceleme.name = "Ahmet Kafe".to_string();
+        az_inceleme.inceleme_sayisi = Some(12);
+
+        let mut incelemesiz = ornek_isletme();
+        incelemesiz.name = "Burak Berber".to_string();
+        incelemesiz.inceleme_sayisi = None;
+
+        let mut liste = vec![incelemesiz, az_inceleme, cok_inceleme];
+        incelemeye_gore_sirala(&mut liste);
+
+        let adlar: Vec<&str> = liste.iter().map(|isletme| isletme.name.as_str()).collect();
+        assert_eq!(
+            adlar,
+            vec!["Zeynep Restoran", "Ahmet Kafe", "Burak Berber"],
+            "inceleme sayısı azalan sırada olmalı"
+        );
+    }
+
+    #[test]
+    fn overpass_sorgusu_niyetli_gruba_ayri_kota_verir() {
+        let sorgu = overpass_sorgusu(
+            &[("amenity", "^restaurant$")],
+            "(area.a)",
+            Some(3_600_000_001),
+        );
+        assert!(sorgu.contains("area(3600000001)->.a;"), "{sorgu}");
+        assert!(sorgu.contains(")->.sitesiz;"), "sitesiz kümesi olmalı");
+        assert!(sorgu.contains(")->.niyetli;"), "niyetli kümesi olmalı");
+        assert!(
+            sorgu.contains(&format!(".sitesiz out center meta {SONUC_SINIRI};")),
+            "sitesiz grubun kotası: {sorgu}"
+        );
+        assert!(
+            sorgu.contains(&format!(".niyetli out center meta {NIYETLI_KOTA};")),
+            "niyetli grubun kotası: {sorgu}"
+        );
+        assert!(
+            !sorgu.contains("(\n("),
+            "küme bloğu iki kez açılmamalı (Overpass 400 verir): {sorgu}"
+        );
+        assert!(
+            sorgu.contains("[\"contact:website\"~\"instagram"),
+            "sosyal desen contact:website etiketi için de aranmalı"
+        );
+    }
+
+    #[test]
+    fn sosyal_medya_ve_ucretsiz_site_ayirt_edilir() {
+        for sosyal in [
+            "https://www.instagram.com/kafedeneme",
+            "http://facebook.com/kafe",
+            "https://linktr.ee/kafe",
+            "https://wa.me/905321234567",
+        ] {
+            assert_eq!(
+                site_durumu_bul(sosyal),
+                Some(SiteDurumu::Sosyal),
+                "{sosyal} sosyal medya sayılmalı"
+            );
+        }
+        for ucretsiz in [
+            "https://kafe.business.site",
+            "https://kafedeneme.blogspot.com",
+            "https://kafe.wixsite.com/anasayfa",
+        ] {
+            assert_eq!(
+                site_durumu_bul(ucretsiz),
+                Some(SiteDurumu::Ucretsiz),
+                "{ucretsiz} ücretsiz site sayılmalı"
+            );
+        }
+        assert_eq!(site_durumu_bul("https://kafedeneme.com"), None);
+        assert_eq!(site_durumu_bul(""), None);
+        assert_eq!(
+            site_durumu_bul("https://box.com/kafe"),
+            None,
+            "x.com kuralı box.com gibi alan adlarını yakalamamalı"
+        );
+    }
+
+    #[test]
+    fn sosyal_medyali_kayit_listeye_girer() {
+        let json = r#"{"elements":[
+            {"type":"node","id":10,"lat":41.0,"lon":29.0,"timestamp":"2026-09-01T12:00:00Z","tags":{"name":"Instagram Kafe","amenity":"cafe","website":"https://instagram.com/instagramkafe"}},
+            {"type":"node","id":11,"lat":41.0,"lon":29.1,"tags":{"name":"Site Sahibi","amenity":"cafe","website":"https://kafesitesi.com"}},
+            {"type":"node","id":12,"lat":41.0,"lon":29.2,"tags":{"name":"Facebook Berber","shop":"hairdresser","contact:facebook":"https://facebook.com/berber"}}
+        ]}"#;
+
+        let (liste, siteli) =
+            overpass_isle(json, "İstanbul", "Beşiktaş", "Kafe").expect("yanıt işlenmeliydi");
+        assert_eq!(siteli, 1, "gerçek sitesi olan kayıt ayıklanmalı");
+        assert_eq!(liste.len(), 2, "sosyal medyalı iki kayıt listede kalmalı");
+        assert!(liste
+            .iter()
+            .all(|isletme| isletme.site == SiteDurumu::Sosyal));
+
+        let instagram = liste
+            .iter()
+            .find(|isletme| isletme.name == "Instagram Kafe")
+            .expect("instagram kaydı listede olmalı");
+        assert_eq!(instagram.site_linki, "https://instagram.com/instagramkafe");
+        assert!(
+            instagram.son_guncelleme_gun.is_some(),
+            "OSM timestamp gün sayısına çevrilmeli"
+        );
     }
 
     #[test]
@@ -4675,10 +9437,7 @@ mod testler {
 
     #[test]
     fn demo_dosyasi_adi_turkce_karakterleri_sadeler() {
-        assert_eq!(
-            dosya_slug("Şişli Çiçekçi & Kahve"),
-            "sisli-cicekci-kahve"
-        );
+        assert_eq!(dosya_slug("Şişli Çiçekçi & Kahve"), "sisli-cicekci-kahve");
     }
 
     #[test]
@@ -4687,19 +9446,31 @@ mod testler {
         assert!(html.contains("Kafe &lt;Deneme&gt;"));
         assert!(html.contains("tel:+905321234567"));
         assert!(html.contains("Demo süresi: 12 saat"));
-        assert!(html.contains("Menü"), "restoran demosunda menü bölümü olmalı");
+        assert!(
+            html.contains("Menü"),
+            "restoran demosunda menü bölümü olmalı"
+        );
         assert!(
             html.contains("export/embed.html") && html.contains("marker=41.04285,29.00753"),
             "konum varsa gömülü harita olmalı"
         );
         assert!(html.contains("Pzt-Cum 09:00-18:00 · Cmt 10:00-16:00"));
-        assert!(html.contains("id=\"acik-durum\""), "açık/kapalı satırı olmalı");
-        assert!(html.contains("const program ="), "haftalık program JS'e gömülmeli");
+        assert!(
+            html.contains("id=\"acik-durum\""),
+            "açık/kapalı satırı olmalı"
+        );
+        assert!(
+            html.contains("const program ="),
+            "haftalık program JS'e gömülmeli"
+        );
         assert!(
             html.contains("setInterval(durumGuncelle, 60000)"),
             "gösterge dakikada bir güncellenmeli"
         );
-        assert!(html.contains("kalanMetni"), "kapanışa kalan süre hesaplanmalı");
+        assert!(
+            html.contains("kalanMetni"),
+            "kapanışa kalan süre hesaplanmalı"
+        );
         assert!(
             html.contains("\" gün\"") && html.contains("/ 1440"),
             "bir günden uzun süreler gün olarak yazılmalı"
@@ -4713,7 +9484,10 @@ mod testler {
         konumsuz.konum = None;
         konumsuz.calisma_saatleri = String::new();
         let sade = demo_html(&konumsuz, "");
-        assert!(!sade.contains("export/embed.html"), "konum yoksa harita eklenmemeli");
+        assert!(
+            !sade.contains("export/embed.html"),
+            "konum yoksa harita eklenmemeli"
+        );
         assert!(!sade.contains("🕒"), "saat yoksa satır eklenmemeli");
     }
 
@@ -4774,18 +9548,265 @@ mod testler {
 
     #[test]
     fn whatsapp_mesaji_durumu_icerir() {
-        let mesaj = whatsapp_mesaji_ile(
+        let mesaj = whatsapp_mesaji_varyant(
             &ornek_isletme(),
             Some("İşletmeniz şu an kapalı; açılış yarın 09:00."),
+            musteriler::Varyant::A,
         );
         assert!(mesaj.contains("İşletmeniz şu an kapalı; açılış yarın 09:00."));
-        assert!(mesaj.contains("çalışma saatleri ve açık/kapalı göstergesi"));
+        assert!(mesaj.contains("demoda menü ve günün yemekleri"));
 
-        let durumsuz = whatsapp_mesaji_ile(&ornek_isletme(), None);
+        let durumsuz = whatsapp_mesaji_varyant(&ornek_isletme(), None, musteriler::Varyant::A);
         assert!(!durumsuz.contains("İşletmeniz şu an"));
-        assert!(durumsuz.contains("12 saat geçerli demo dosyasını"));
-        assert!(durumsuz.contains("konum haritası"));
-        assert!(!durumsuz.contains("çalışma saatleri ve açık/kapalı"));
+        assert!(durumsuz.contains("12 saatlik demo dosyasını"));
+        assert!(durumsuz.contains("demoda menü ve günün yemekleri"));
+    }
+
+    #[test]
+    fn whatsapp_mesaji_yayin_linkini_icerir() {
+        let mut lead = ornek_isletme();
+        let linksiz = whatsapp_mesaji(&lead);
+        assert!(
+            !linksiz.contains("http"),
+            "link yokken adres yazılmamalı: {linksiz}"
+        );
+        assert!(linksiz.contains("demo dosyasını ekliyorum"));
+
+        lead.yayin_linki = Some("https://ornek.github.io/repo/demos/kafe-42.html".to_string());
+        let linkli = whatsapp_mesaji(&lead);
+        assert!(linkli.contains("https://ornek.github.io/repo/demos/kafe-42.html"));
+        assert!(
+            !linkli.contains("dosyasını ekliyorum"),
+            "link varken dosya gönderme cümlesi kalmamalı"
+        );
+        // Durum bilgisi linkle birlikte de korunur.
+        let with_durum = whatsapp_mesaji_varyant(
+            &lead,
+            Some("İşletmeniz şu an açık."),
+            musteriler::Varyant::A,
+        );
+        assert!(with_durum.contains("İşletmeniz şu an açık."));
+        assert!(with_durum.contains("kafe-42.html"));
+        // WhatsApp bağlantısı için kodlama adresi bozmamalı.
+        assert!(url_encode(&linkli).contains("https%3A%2F%2Fornek.github.io"));
+    }
+
+    #[test]
+    fn whatsapp_mesaji_sektore_gore_kisisellesir() {
+        let mut lead = ornek_isletme();
+        lead.category = "Kuaför".to_string();
+        let kuafor = whatsapp_mesaji(&lead);
+        assert!(kuafor.contains("fotoğraf galerisi"), "{kuafor}");
+        assert!(kuafor.contains("randevu"));
+
+        lead.category = "Restoran".to_string();
+        let restoran = whatsapp_mesaji(&lead);
+        assert!(restoran.contains("menü"), "{restoran}");
+        assert!(!restoran.contains("galeri"));
+
+        lead.category = "Diş Kliniği".to_string();
+        let klinik = whatsapp_mesaji(&lead);
+        assert!(klinik.contains("hizmetler"), "{klinik}");
+        assert!(klinik.contains("uzman kadro"));
+
+        // Üç sektör için üç farklı cümle üretilmeli.
+        assert_ne!(kuafor, restoran);
+        assert_ne!(restoran, klinik);
+        assert_ne!(kuafor, klinik);
+    }
+
+    #[test]
+    fn whatsapp_gerekcesi_kendi_verisini_kullanir() {
+        // Google kaydı: yıldız + yorum var, çalışma saati yok, yalnızca sosyal medya.
+        let mut lead = ornek_isletme();
+        lead.site = SiteDurumu::Sosyal;
+        lead.inceleme_sayisi = Some(37);
+        lead.yildiz_puani = Some(4.2);
+        lead.calisma_saatleri.clear();
+        let gerekce = whatsapp_gerekcesi(&lead).expect("gerekçe yazılmalı");
+        assert!(
+            gerekce.contains("Google'da 4,2★ ve 37 yorumunuz var"),
+            "{gerekce}"
+        );
+        assert!(gerekce.contains("sosyal medya dışında siteniz yok"));
+        assert!(gerekce.contains("çalışma saatiniz de yok"));
+        assert!(gerekce.ends_with('.'));
+
+        // OSM kaydı: yorum/puan yok, çalışma saati var → yalnızca site eksikliği.
+        let osm = ornek_isletme();
+        let gerekce = whatsapp_gerekcesi(&osm).expect("gerekçe yazılmalı");
+        assert_eq!(gerekce, "Web siteniz yok.");
+
+        // Yalnızca yorum sayısı varsa yıldız uydurulmaz.
+        let mut yorumlu = ornek_isletme();
+        yorumlu.calisma_saatleri.clear();
+        yorumlu.site = SiteDurumu::Yok;
+        yorumlu.inceleme_sayisi = Some(12);
+        let gerekce = whatsapp_gerekcesi(&yorumlu).expect("gerekçe yazılmalı");
+        assert!(gerekce.contains("Google'da 12 yorumunuz var"), "{gerekce}");
+        assert!(!gerekce.contains('★'));
+    }
+
+    #[test]
+    fn kisa_adres_sokak_yerine_mahalle_gosterir() {
+        assert_eq!(
+            kisa_adres("Moda Cad. No:12, Caferağa, Kadıköy / İstanbul"),
+            "Caferağa, Kadıköy / İstanbul"
+        );
+        assert_eq!(
+            kisa_adres("Barbaros Bulvarı No:12, Beşiktaş / İstanbul"),
+            "Beşiktaş / İstanbul"
+        );
+        assert_eq!(
+            kisa_adres("Caferağa, Kadıköy / İstanbul"),
+            "Caferağa, Kadıköy / İstanbul"
+        );
+        assert_eq!(kisa_adres("Kadıköy / İstanbul"), "Kadıköy / İstanbul");
+        assert_eq!(kisa_adres("  "), "");
+        // Mahalle adı cadde/sokak kelimesiyle karışmamalı.
+        assert_eq!(
+            kisa_adres("Caddebostan, Kadıköy / İstanbul"),
+            "Caddebostan, Kadıköy / İstanbul"
+        );
+    }
+
+    #[test]
+    fn varyant_b_soru_sormadan_gerekceyle_acar() {
+        let mut lead = ornek_isletme();
+        lead.yayin_linki = Some("https://ornek.github.io/r/demos/x.html".to_string());
+        lead.inceleme_sayisi = Some(20);
+        lead.yildiz_puani = Some(4.5);
+        let a = whatsapp_mesaji_varyant(&lead, None, musteriler::Varyant::A);
+        let b = whatsapp_mesaji_varyant(&lead, None, musteriler::Varyant::B);
+
+        assert!(a.contains("ister misiniz?"), "{a}");
+        assert!(!b.contains("ister misiniz?"), "{b}");
+        // B selamdan hemen sonra veriyi verir; soru sormaz.
+        assert!(
+            b.contains("(Beşiktaş / İstanbul). Google'da 4,5★ ve 20 yorumunuz var"),
+            "{b}"
+        );
+        assert!(b.contains("taslağı hazırladım"), "{b}");
+        assert_ne!(a, b);
+        // Ortak kapanış ve tek link korunur.
+        for mesaj in [&a, &b] {
+            assert!(mesaj.contains("\"RET\" yazın"));
+            assert_eq!(mesaj.matches("http").count(), 1, "{mesaj}");
+        }
+    }
+
+    #[test]
+    fn mesaj_varyanti_kayittan_gelir() {
+        let mut lead = ornek_isletme();
+        lead.mesaj_varyanti = Some(musteriler::Varyant::B);
+        assert!(!whatsapp_mesaji(&lead).contains("ister misiniz?"));
+
+        lead.mesaj_varyanti = None;
+        assert!(whatsapp_mesaji(&lead).contains("ister misiniz?"));
+    }
+
+    #[test]
+    fn whatsapp_mesaji_sokak_adresi_yazmaz() {
+        let mut lead = ornek_isletme();
+        lead.address = "Moda Cad. No:12, Caferağa, Kadıköy / İstanbul".to_string();
+        let mesaj = whatsapp_mesaji(&lead);
+        assert!(mesaj.contains("(Caferağa, Kadıköy / İstanbul)"), "{mesaj}");
+        assert!(!mesaj.contains("No:12"), "{mesaj}");
+        assert!(!mesaj.contains("Moda Cad."), "{mesaj}");
+    }
+
+    #[test]
+    fn whatsapp_mesaji_gerekceyi_baslangica_koyar() {
+        let mut lead = ornek_isletme();
+        lead.inceleme_sayisi = Some(41);
+        lead.yildiz_puani = Some(4.6);
+        let mesaj = whatsapp_mesaji(&lead);
+        // Gerekçe, sorudan hemen sonra ve durum cümlesinden önce gelmeli.
+        let soru = mesaj.find("ister misiniz?").expect("soru cümlesi");
+        let gerekce = mesaj.find("4,6★ ve 41 yorumunuz var").expect("gerekçe");
+        let taslak = mesaj
+            .find("Taslak:")
+            .or_else(|| mesaj.find("demo dosyasını"))
+            .expect("taslak");
+        assert!(soru < gerekce && gerekce < taslak, "{mesaj}");
+        assert!(!mesaj.contains("  "), "çift boşluk olmamalı: {mesaj}");
+    }
+
+    #[test]
+    fn yayin_alt_adresi_ayni_klasoru_korur() {
+        assert_eq!(
+            yayin_alt_adresi(
+                "https://ornek.github.io/repo/demos/kafe-42.html",
+                "karne-kafe-42.html"
+            ),
+            "https://ornek.github.io/repo/demos/karne-kafe-42.html"
+        );
+        // Klasör ayracı olmayan adres olduğu gibi kalır.
+        assert_eq!(yayin_alt_adresi("adres-yok", "x.html"), "adres-yok");
+    }
+
+    #[test]
+    fn karne_yoksa_yayindan_once_uretilir() {
+        let klasor =
+            std::env::temp_dir().join(format!("nexus_karne_hazirla_{}", std::process::id()));
+        let klasor_yolu = klasor.to_string_lossy().to_string();
+        let lead = ornek_isletme();
+        let beklenen = klasor.join("karne-kafe-deneme-42.html");
+        assert!(!beklenen.exists(), "test temiz başlamalı");
+
+        let mut logs = Vec::new();
+        let yol = karne_hazirla(&klasor_yolu, &lead, &mut logs).expect("karne üretilmeli");
+        assert!(yol.ends_with("karne-kafe-deneme-42.html"), "{yol}");
+        let icerik = fs::read_to_string(&yol).expect("karne okunmalı");
+        assert!(icerik.contains("Dijital Görünürlük Karnesi"));
+        assert!(logs.is_empty(), "beklenmeyen günlük: {logs:?}");
+
+        // İkinci çağrı dosyayı yeniden üretmez, mevcut yolu döndürür.
+        assert_eq!(karne_hazirla(&klasor_yolu, &lead, &mut logs), Some(yol));
+
+        let _ = fs::remove_dir_all(&klasor);
+    }
+
+    #[test]
+    fn whatsapp_mesaji_tek_link_tasir() {
+        let mut lead = ornek_isletme();
+        lead.yayin_linki = Some("https://ornek.github.io/repo/demos/kafe-42.html".to_string());
+        lead.karne_linki = Some(yayin_alt_adresi(
+            lead.yayin_linki.as_deref().unwrap_or_default(),
+            "karne-kafe-42.html",
+        ));
+        let mesaj = whatsapp_mesaji(&lead);
+        assert!(mesaj.contains("https://ornek.github.io/repo/demos/kafe-42.html"));
+        assert!(
+            !mesaj.contains("karne-kafe-42.html"),
+            "karne ayrı adres olarak yazılmamalı: {mesaj}"
+        );
+        // Tek link: WhatsApp'ta okunabilirlik için sınır.
+        assert_eq!(mesaj.matches("http").count(), 1, "{mesaj}");
+    }
+
+    #[test]
+    fn karne_rozeti_demoya_eklenir_ve_tekrarlanmaz() {
+        let klasor =
+            std::env::temp_dir().join(format!("nexus_karne_rozeti_{}", std::process::id()));
+        fs::create_dir_all(&klasor).expect("klasör oluşmalı");
+        let demo = klasor.join("kafe.html");
+        fs::write(&demo, "<html><body><h1>Kafe</h1></body></html>").expect("demo yazılmalı");
+        let yol = demo.to_string_lossy().to_string();
+
+        karne_rozeti_ekle(&yol, "karne-kafe.html").expect("rozet eklenmeli");
+        let icerik = fs::read_to_string(&demo).expect("demo okunmalı");
+        assert_eq!(icerik.matches("karne-kafe.html").count(), 1, "{icerik}");
+        // Bağlantı gövdenin sonunda, mevcut içeriği bölmeden durur.
+        assert!(icerik.find("</h1>").expect("başlık") < icerik.find("karne-kafe.html").unwrap());
+        assert!(icerik.contains("</body>"));
+
+        // Aynı demo yeniden yayınlanırsa ikinci rozet eklenmez.
+        karne_rozeti_ekle(&yol, "karne-kafe.html").expect("ikinci çağrı sorunsuz olmalı");
+        let tekrar = fs::read_to_string(&demo).expect("demo okunmalı");
+        assert_eq!(tekrar.matches("karne-kafe.html").count(), 1, "{tekrar}");
+
+        let _ = fs::remove_dir_all(&klasor);
     }
 
     #[test]
@@ -4848,14 +9869,193 @@ mod testler {
 
         let yol = demo_yaz(&klasor_yolu, &ornek_isletme(), "+90 500 111 22 33")
             .expect("demo dosyası yazılmalı");
-        assert!(yol.ends_with("kafe-deneme-42.html"), "beklenmeyen dosya: {yol}");
+        assert!(
+            yol.ends_with("kafe-deneme-42.html"),
+            "beklenmeyen dosya: {yol}"
+        );
         let icerik = fs::read_to_string(&yol).expect("yazılan dosya okunmalı");
         assert!(icerik.contains("Kafe &lt;Deneme&gt;"));
+        // Karne demoyla birlikte üretilir ve demoda ona bağlantı vardır.
+        let karne = klasor.join("karne-kafe-deneme-42.html");
+        assert!(karne.exists(), "karne dosyası yazılmalı: {karne:?}");
+        assert!(
+            icerik.contains("href=\"karne-kafe-deneme-42.html\""),
+            "demoda karne bağlantısı olmalı"
+        );
+        let karne_icerik = fs::read_to_string(&karne).expect("karne okunmalı");
+        assert!(karne_icerik.contains("Dijital Görünürlük Karnesi"));
+        assert!(karne_icerik.contains("Kafe &lt;Deneme&gt;"));
+        assert!(
+            karne_icerik.contains("href=\"kafe-deneme-42.html\""),
+            "karneden demoya bağlantı olmalı"
+        );
 
         let _ = fs::remove_dir_all(&klasor);
     }
 
+    #[test]
+    fn github_pages_adresi_uzak_adresten_uretilir() {
+        for uzak in [
+            "https://github.com/profesyonelofis-oss/final100.git",
+            "https://github.com/profesyonelofis-oss/final100",
+            "https://github.com/profesyonelofis-oss/final100/\n",
+            "git@github.com:profesyonelofis-oss/final100.git",
+        ] {
+            let (sahip, depo) = github_depo(uzak).expect("depo çözülmeli");
+            assert_eq!(sahip, "profesyonelofis-oss", "uzak: {uzak}");
+            assert_eq!(depo, "final100", "uzak: {uzak}");
+            assert_eq!(
+                yayin_adresi(&sahip, &depo, "kafe-42.html"),
+                "https://profesyonelofis-oss.github.io/final100/demos/kafe-42.html"
+            );
+        }
+        // GitHub dışı ve eksik adresler sessizce link üretmemeli.
+        assert!(github_depo("https://gitlab.com/a/b.git").is_none());
+        assert!(github_depo("https://github.com/sadece-sahip").is_none());
+        assert!(github_depo("").is_none());
+    }
+
+    #[test]
+    fn yayin_dizini_dosyalari_sirali_listeler() {
+        let dizin = yayin_dizini(&[
+            "b-2.html".to_string(),
+            "a-1.html".to_string(),
+            "karne-a-1.html".to_string(),
+        ]);
+        assert!(dizin.contains("demos/a-1.html"));
+        assert!(dizin.contains("demos/b-2.html"));
+        assert!(dizin.contains("demos/karne-a-1.html"));
+        assert!(
+            dizin.find("a-1.html").unwrap() < dizin.find("b-2.html").unwrap(),
+            "dosyalar sıralı olmalı"
+        );
+        // Karne öneki ve tireler başlıkta sadeleşir.
+        assert!(dizin.contains(">a 1<"), "{}", dizin);
+    }
+
+    #[test]
+    fn karne_eksik_site_ve_saati_puanlar() {
+        // Örnek işletmede telefon var, site yok (40), çalışma saati var (0),
+        // Google yorum/puan verisi yok (15) → 55 kayıp, yani 45 puan.
+        let (puan, satirlar) = karne_olc(&ornek_isletme());
+        assert_eq!(puan, 45);
+        assert_eq!(karne_sinifi(puan).0, "Zayıf");
+        assert_eq!(satirlar.len(), 4);
+        let site = &satirlar[0];
+        assert_eq!(site.baslik, "Web sitesi");
+        assert_eq!(site.durum, KarneDurumu::Eksik);
+        assert!(site.deger.contains("Web sitesi yok"));
+        let saat = &satirlar[1];
+        assert_eq!(saat.kayip, 0);
+        assert_eq!(saat.durum, KarneDurumu::Iyi);
+    }
+
+    #[test]
+    fn karne_google_yorum_ve_puanini_gosterir() {
+        let mut lead = ornek_isletme();
+        lead.inceleme_sayisi = Some(120);
+        lead.yildiz_puani = Some(4.6);
+        let (puan, satirlar) = karne_olc(&lead);
+        // Yalnızca site eksik: 100 - 40 = 60.
+        assert_eq!(puan, 60);
+        let yorum = satirlar
+            .iter()
+            .find(|satir| satir.baslik == "Google yorumları")
+            .expect("yorum satırı olmalı");
+        assert!(yorum.deger.contains("120 yorum"), "{}", yorum.deger);
+        assert!(yorum.deger.contains("4,6 ★"), "{}", yorum.deger);
+        assert_eq!(yorum.kayip, 0);
+
+        // Düşük puan, yorum sayısı çok olsa da ceza alır.
+        let mut dusuk = ornek_isletme();
+        dusuk.inceleme_sayisi = Some(80);
+        dusuk.yildiz_puani = Some(3.1);
+        let (_, satirlar) = karne_olc(&dusuk);
+        let yorum = satirlar
+            .iter()
+            .find(|satir| satir.baslik == "Google yorumları")
+            .expect("yorum satırı olmalı");
+        assert_eq!(yorum.kayip, 4);
+        assert!(yorum.deger.contains("3,1 ★"), "{}", yorum.deger);
+    }
+
+    #[test]
+    fn karne_html_eksikleri_onerileri_ve_taslak_baglayicisini_yazar() {
+        let lead = ornek_isletme();
+        let html = karne_html(&lead, None);
+        assert!(html.contains("Dijital Görünürlük Karnesi"));
+        assert!(html.contains("Web sitesi yok"));
+        // Metin HTML kaçışından geçer: kesme işareti `&#39;` olur.
+        assert!(html.contains("Google&#39;da yorum ve puan verisi yok"));
+        assert!(html.contains("Önerilen adımlar"));
+        assert!(!html.contains("Taslağı aç"));
+        // Pazarlama metni değil, kaydın kendi verisi yazılır; ad kaçırılır.
+        assert!(html.contains("Kafe &lt;Deneme&gt;"));
+        assert!(html.contains("İşletme kaydı") || html.contains("Kaynak:"));
+
+        let html = karne_html(&lead, Some("kafe-deneme-42.html"));
+        assert!(html.contains("href=\"kafe-deneme-42.html\""));
+        assert!(html.contains("Taslağı aç"));
+    }
+
     /// Canlı ağ isteği: `cargo test -- --ignored --nocapture`
+    #[test]
+    #[ignore = "OpenStreetMap'e gerçek istek atar"]
+    fn canli_ikinci_tarama_onbellekten_gelir() {
+        let ajan = http_ajani();
+        let konum = konum_bul(&ajan, "İstanbul", "Beşiktaş").expect("konum bulunmalı");
+        // Boş önbellekle başlanır: ilk tarama ağa çıkmak zorunda.
+        let mut onbellek = SonucOnbellek::default();
+
+        let basla = Instant::now();
+        let birinci = ilce_taramasi(
+            &ajan,
+            &mut onbellek,
+            "İstanbul",
+            "Beşiktaş",
+            "Restoran",
+            &konum,
+        );
+        let ilk_sure = basla.elapsed();
+        let adet = match &birinci {
+            IlceTaramasi::Ag { leads, sunucu, .. } => {
+                println!(
+                    "ilk tarama: {ilk_sure:?} · sunucu: {sunucu} · {} kayıt",
+                    leads.len()
+                );
+                leads.len()
+            }
+            IlceTaramasi::Onbellek(_) => panic!("boş önbellekte ağa çıkmalıydı"),
+            IlceTaramasi::Hata(hata) => panic!("tarama başarısız: {hata}"),
+        };
+
+        let basla = Instant::now();
+        let ikinci = ilce_taramasi(
+            &ajan,
+            &mut onbellek,
+            "İstanbul",
+            "Beşiktaş",
+            "Restoran",
+            &konum,
+        );
+        let ikinci_sure = basla.elapsed();
+        match &ikinci {
+            IlceTaramasi::Onbellek(kayit) => {
+                println!(
+                    "önbellekli tarama: {ikinci_sure:?} · {} kayıt · {} gün önce",
+                    kayit.leads.len(),
+                    kayit.gun
+                );
+                assert_eq!(kayit.leads.len(), adet, "önbellek aynı listeyi vermeli");
+            }
+            _ => panic!("ikinci tarama önbellekten gelmeliydi, Overpass'a gitmemeli"),
+        }
+        assert!(
+            ikinci_sure < ilk_sure,
+            "önbellekli tarama ağdan hızlı olmalı ({ikinci_sure:?} < {ilk_sure:?})"
+        );
+    }
+
     #[test]
     #[ignore = "OpenStreetMap'e gerçek istek atar"]
     fn canli_tarama_gercek_isletme_dondurur() {
@@ -4863,16 +10063,19 @@ mod testler {
         let konum = konum_bul(&ajan, "İstanbul", "Beşiktaş").expect("konum bulunmalı");
         assert!(konum.yaricap_m >= 1_200);
         println!("alan_id: {:?}", konum.alan_id);
-        let (liste, siteli) = sitesiz_isletmeler(
-            &ajan,
-            "İstanbul",
-            "Beşiktaş",
-            "Restoran",
-            &konum,
-        )
-        .expect("tarama çalışmalı");
-        println!("web sitesi olmayan: {}, web sitesi olan: {}", liste.len(), siteli);
-        let koordinatli = liste.iter().filter(|isletme| isletme.konum.is_some()).count();
+        let (liste, siteli, sunucu) =
+            sitesiz_isletmeler(&ajan, "İstanbul", "Beşiktaş", "Restoran", &konum)
+                .expect("tarama çalışmalı");
+        println!("yanıtı veren sunucu: {sunucu}");
+        println!(
+            "web sitesi olmayan: {}, web sitesi olan: {}",
+            liste.len(),
+            siteli
+        );
+        let koordinatli = liste
+            .iter()
+            .filter(|isletme| isletme.konum.is_some())
+            .count();
         let saatli = liste
             .iter()
             .filter(|isletme| !isletme.calisma_saatleri.is_empty())
@@ -4884,10 +10087,8 @@ mod testler {
             liste.len() <= SONUC_SINIRI,
             "sorgu başına en fazla {SONUC_SINIRI} kayıt gelmeli"
         );
-        assert!(liste
-            .iter()
-            .all(|isletme| !isletme.name.is_empty()
-                && isletme.kaynak.starts_with("https://www.openstreetmap.org/")));
+        assert!(liste.iter().all(|isletme| !isletme.name.is_empty()
+            && isletme.kaynak.starts_with("https://www.openstreetmap.org/")));
     }
 
     #[test]
@@ -4931,8 +10132,16 @@ mod testler {
         }
         for tanim in SEKTORLER {
             assert!(!tanim.osm.is_empty(), "OSM eşlemesi yok: {}", tanim.ad);
-            assert!(!osm_kurallari(tanim.ad).is_empty(), "eşleme yok: {}", tanim.ad);
-            assert!(!demo_bolumu(tanim.ad).is_empty(), "demo bölümü yok: {}", tanim.ad);
+            assert!(
+                !osm_kurallari(tanim.ad).is_empty(),
+                "eşleme yok: {}",
+                tanim.ad
+            );
+            assert!(
+                !demo_bolumu(tanim.ad).is_empty(),
+                "demo bölümü yok: {}",
+                tanim.ad
+            );
         }
 
         // Adlar benzersiz olmalı; aynı sektör iki kez listelenmemeli.
@@ -4946,7 +10155,8 @@ mod testler {
         assert!(SEKTORLER.iter().any(|tanim| tanim.ad == "Giyim"));
         assert!(SEKTORLER.iter().any(|tanim| tanim.ad == "Tekstil"));
         assert!(osm_kurallari("Giyim")[0].1.contains("clothes"));
-        assert!(            SEKTORLER.len() >= 200,
+        assert!(
+            SEKTORLER.len() >= 200,
             "sektör listesi kapsamlı olmalı: {}",
             SEKTORLER.len()
         );
@@ -4963,18 +10173,20 @@ mod testler {
                 );
                 gruplar.push(tanim.grup);
             }
-        }        assert!(gruplar.len() >= 34, "grup sayısı: {}", gruplar.len());
+        }
+        assert!(gruplar.len() >= 34, "grup sayısı: {}", gruplar.len());
         assert_eq!(sektor_grubu("Giyim"), "Giyim & Aksesuar");
         assert_eq!(sektor_grubu("Spor Salonu"), "Spor & Fitness");
         assert_eq!(sektor_grubu("Düğün Salonu"), "Mekân & Etkinlik");
         assert_eq!(sektor_grubu("Halı"), "Tekstil & Ev Tekstili");
-        assert_eq!(sektor_grubu("Diş Kliniği"), "Sağlık");
+        assert_eq!(sektor_grubu("Diş Kliniği"), "Sağlık Kuruluşları");
         assert_eq!(sektor_grubu("Tesisatçı"), "Tesisat & Güvenlik");
         assert_eq!(sektor_grubu("Nakliyat"), "Lojistik & Seyahat");
         assert_eq!(sektor_grubu("Peyzaj"), "Çevre & Bakım");
         assert_eq!(sektor_grubu("Noter"), "Hukuk & Mali");
-        assert_eq!(sektor_grubu("Mobilya"), "Ev & Yaşam");
-        assert_eq!(sektor_grubu("Elektronik"), "Elektronik & Teknoloji");        assert_eq!(sektor_grubu("Pet Kuaför"), "Evcil Hayvan");
+        assert_eq!(sektor_grubu("Mobilya"), "Mobilya & Dekorasyon");
+        assert_eq!(sektor_grubu("Elektronik"), "Elektronik & Teknoloji");
+        assert_eq!(sektor_grubu("Pet Kuaför"), "Evcil Hayvan");
         assert_eq!(sektor_grubu("Fabrika"), "Sanayi & Üretim");
         assert_eq!(sektor_grubu("Arıcılık"), "Tarım & Hayvancılık");
         assert_eq!(sektor_grubu("Vergi Danışmanı"), "Hukuk & Mali");
@@ -4994,13 +10206,80 @@ mod testler {
             .map(|grup| SEKTORLER.iter().filter(|tanim| tanim.grup == *grup).count())
             .max()
             .unwrap_or(0);
-        assert!(en_kalabalik <= 15, "en kalabalık grup {en_kalabalik} sektör");
+        assert!(
+            en_kalabalik <= 15,
+            "en kalabalık grup {en_kalabalik} sektör"
+        );
+    }
+
+    /// Google Business Profile / Places kategorilerinden eklenen sektörler
+    /// katalogda kalmalı ve OSM eşlemesi gerçek bir etikete dayanmalı.
+    #[test]
+    fn google_kategorilerinden_eklenen_sektorler_katalogda() {
+        for (ad, anahtar, desen) in [
+            ("Berber", "shop", "hairdresser"),
+            ("Tırnak Stüdyosu", "shop", "nails"),
+            ("Solaryum", "leisure", "tanning_salon"),
+            ("Oto Kaporta", "shop", "car_repair"),
+            ("Oto Muayene", "amenity", "vehicle_inspection"),
+            ("Oto Döşeme", "craft", "upholsterer"),
+            ("Diş Laboratuvarı", "craft", "dental_technician"),
+            ("Göz Kliniği", "healthcare", "optometrist"),
+            ("Yoga Stüdyosu", "sport", "yoga"),
+            ("Pilates Stüdyosu", "sport", "pilates"),
+            ("Tercüme Bürosu", "office", "translator"),
+            ("Grafik Tasarım", "office", "graphic_design"),
+            ("Ortak Çalışma Ofisi", "office", "coworking"),
+            ("Motel", "tourism", "motel"),
+            ("Nargile Kafe", "amenity", "hookah_lounge"),
+            ("Hediyelik Eşya", "shop", "gift"),
+            ("Elektronik Tamiri", "craft", "electronics_repair"),
+            ("Pet Otel", "amenity", "animal_boarding"),
+            ("Kebapçı", "amenity", "restaurant"),
+            ("Dönerci", "amenity", "fast_food"),
+            ("Kahveci", "amenity", "cafe"),
+            ("Simitçi", "shop", "bakery"),
+            ("Yemek Servisi", "craft", "catering"),
+            ("Gelinlik", "shop", "clothes"),
+            ("Perde & Stor", "shop", "window_blind"),
+            ("Güvenlik Kamerası", "shop", "security"),
+            ("Butik Otel", "tourism", "hotel"),
+            ("Karavan Parkı", "tourism", "caravan_site"),
+            ("Öğrenci Yurdu", "amenity", "dormitory"),
+            ("Meslek Kursu", "amenity", "training"),
+            ("Web Tasarım", "office", "it"),
+            ("Kurye", "shop", "courier"),
+            ("Halı Saha", "leisure", "pitch"),
+            ("Karaoke", "amenity", "karaoke_box"),
+            ("Mini Golf", "leisure", "miniature_golf"),
+            ("Planetaryum", "amenity", "planetarium"),
+            ("Temizlik Şirketi", "shop", "cleaning"),
+            ("Dernek", "office", "association"),
+            ("Zirai İlaç", "shop", "agrarian"),
+        ] {
+            let kurallar = osm_kurallari(ad);
+            assert!(!kurallar.is_empty(), "{ad} katalogda yok");
+            assert!(
+                kurallar
+                    .iter()
+                    .any(|(kural_anahtari, kural_deseni)| *kural_anahtari == anahtar
+                        && kural_deseni.contains(desen)),
+                "{ad} eşlemesi: {kurallar:?}"
+            );
+            assert!(sektor_grubu(ad) != "Diğer", "{ad} grubu tanımsız");
+            assert!(!demo_bolumu(ad).is_empty(), "{ad} demo şablonu yok");
+        }
+        assert!(
+            SEKTORLER.len() >= 315,
+            "katalog daralmamalı: {}",
+            SEKTORLER.len()
+        );
     }
 
     #[test]
     fn sektor_panelinde_gruplar_ve_sektorler_tutarli() {
         let gruplar = sektor_gruplari();
-        assert_eq!(gruplar.len(), 34, "grup sayısı: {}", gruplar.len());
+        assert_eq!(gruplar.len(), 47, "grup sayısı: {}", gruplar.len());
 
         // Gruplar tekrarsız ve katalog sırasıyla gelmeli.
         let mut sirali = gruplar.clone();
@@ -5008,13 +10287,13 @@ mod testler {
         assert_eq!(sirali.len(), gruplar.len(), "grup tekrarı olmamalı");
 
         // Her grubun sektörleri var ve toplam, kataloğun tamamına eşit.
-        let toplam: usize = gruplar
-            .iter()
-            .map(|grup| grup_sektorleri(grup).len())
-            .sum();
+        let toplam: usize = gruplar.iter().map(|grup| grup_sektorleri(grup).len()).sum();
         assert_eq!(toplam, SEKTORLER.len());
         assert!(!grup_sektorleri("Kuyum & Saat").is_empty());
-        assert_eq!(grup_sektorleri("Kuyum & Saat"), vec!["Kuyumcu", "Saatçi"]);
+        assert_eq!(
+            grup_sektorleri("Kuyum & Saat"),
+            vec!["Kuyumcu", "Saatçi", "Saat Tamiri", "Gümüş"]
+        );
 
         // Panelden gelen sıra numarası katalogdaki sektöre işaret etmeli.
         for sira in [0usize, 1, 5, 40, 120, SEKTORLER.len() - 1] {
@@ -5027,17 +10306,29 @@ mod testler {
     fn google_kotasi_gunluk_ve_aylik_siniri_korur() {
         let mut kota = GoogleKota::default();
         for _ in 0..3 {
-            assert_eq!(kota_karari(&mut kota, "2026-11-01", "2026-11", 3, 10), KotaKarari::Izin);
+            assert_eq!(
+                kota_karari(&mut kota, "2026-11-01", "2026-11", 3, 10),
+                KotaKarari::Izin
+            );
         }
         assert_eq!(
             kota_karari(&mut kota, "2026-11-01", "2026-11", 3, 10),
             KotaKarari::GunlukDolu
         );
         // Ertesi gün günlük sayaç sıfırlanır, aylık devam eder.
-        assert_eq!(kota_karari(&mut kota, "2026-11-02", "2026-11", 3, 4), KotaKarari::Izin);
-        assert_eq!(kota_karari(&mut kota, "2026-11-02", "2026-11", 3, 4), KotaKarari::AylikDolu);
+        assert_eq!(
+            kota_karari(&mut kota, "2026-11-02", "2026-11", 3, 4),
+            KotaKarari::Izin
+        );
+        assert_eq!(
+            kota_karari(&mut kota, "2026-11-02", "2026-11", 3, 4),
+            KotaKarari::AylikDolu
+        );
         // Yeni ay her iki sayacı da sıfırlar.
-        assert_eq!(kota_karari(&mut kota, "2026-12-01", "2026-12", 3, 4), KotaKarari::Izin);
+        assert_eq!(
+            kota_karari(&mut kota, "2026-12-01", "2026-12", 3, 4),
+            KotaKarari::Izin
+        );
         assert_eq!(kota.gunluk, 1);
         assert_eq!(kota.aylik, 1);
     }
@@ -5085,10 +10376,16 @@ mod testler {
         let (liste, siteli) = google_isle(ham, "Kuaför").expect("yanıt çözümlenmeli");
         assert_eq!(siteli, 1, "web siteli kayıt ayıklandı");
         assert_eq!(liste.len(), 2);
-        let moda = liste.iter().find(|lead| lead.name == "Moda Kuaför").unwrap();
+        let moda = liste
+            .iter()
+            .find(|lead| lead.name == "Moda Kuaför")
+            .unwrap();
         assert_eq!(moda.phone, "0216 000 00 00");
         assert_eq!(moda.konum, Some((40.98, 29.02)));
-        assert_eq!(moda.calisma_saatleri, "Mo-Fr 09:00-18:00; Sa 10:00-14:00; Su off");
+        assert_eq!(
+            moda.calisma_saatleri,
+            "Mo-Fr 09:00-18:00; Sa 10:00-14:00; Su off"
+        );
         // Saklanabilen tek Google alanı place ID; kaynak bağlantısı onu taşır.
         assert!(moda.kaynak.contains("place_id:abc"));
     }
@@ -5104,7 +10401,10 @@ mod testler {
 
     #[test]
     fn bos_ilce_taramasi_il_geneline_gecer() {
-        assert!(il_geneline_gecilir(0, false), "boş ilçe il geneline geçmeli");
+        assert!(
+            il_geneline_gecilir(0, false),
+            "boş ilçe il geneline geçmeli"
+        );
         // İl geneli de boşsa tarama yeniden başlatılmaz.
         assert!(!il_geneline_gecilir(0, true));
         assert!(!il_geneline_gecilir(3, false));
