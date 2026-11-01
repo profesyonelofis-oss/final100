@@ -10,7 +10,6 @@ Veritabani konumu: <klasor>/data/zeytin_takip.db (web klasorunun icinde tasinar)
 
 import hashlib
 import os
-import base64
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
@@ -206,6 +205,11 @@ def _create_schema(cursor):
         except sqlite3.OperationalError:
             pass
 
+    # Eski surumler sifreyi geri cozulebilir de sakliyordu (sifre_gizli).
+    # Artik yalnizca hash tutulur; kalan kopyalar burada silinir.
+    cursor.execute(
+        "UPDATE kullanicilar SET sifre_gizli = NULL WHERE sifre_gizli IS NOT NULL")
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_fisi_tarih ON alim_fisi(tarih)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_alim_fisi_uretici ON alim_fisi(uretici_ad)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_satis_fisi_tarih ON satis_fisi(tarih)")
@@ -232,81 +236,26 @@ def init_db():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Sifre saklama (GERI CUZULEBILIR): yonetici panelinde goruntulenebilmesi icin.
-# Anahtar data/ klasorunde tutulur; klasor hostinge tasinirsa anahtar da tasınır.
+# Sifre saklama: yalnizca PBKDF2-HMAC-SHA256 hash + tuz. Sifreler geri
+# cozulemez. `sifre_gizli` kolonu eski veritabanlariyla uyum icin durur ama
+# hicbir zaman doldurulmaz (migration eski degerleri temizler).
 # ---------------------------------------------------------------------------
-
-def _sifre_anahtari_yolu():
-    return DATA_DIR / "sifre_anahtari.key"
-
-
-def _sifre_anahtari():
-    """Anahtari oku; yoksa uretip data/ icine kaydet."""
-    yol = _sifre_anahtari_yolu()
-    if yol.exists():
-        return yol.read_text(encoding="utf-8").strip()
-    anahtar = secrets.token_urlsafe(32)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    yol.write_text(anahtar, encoding="utf-8")
-    try:
-        os.chmod(yol, 0o600)
-    except OSError:
-        pass
-    return anahtar
-
-
-def _xor_mask(sifre):
-    """Sifreyi anahtarla maskeler; sadece yonetici goruntulemek icin cozulur.
-    Gercek guvenlik saglamaz (anahtar ayni klasorde) - ama DB baskasi eline
-    gecse bile sifreler acik metin DEGIL, anahtar dosyasi olmadan okunamaz."""
-    if not sifre:
-        return ""
-    anahtar = _sifre_anahtari()
-    veri = sifre.encode("utf-8")
-    m_anahtar = anahtar.encode("utf-8")
-    kutulu = bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri))
-    return base64.urlsafe_b64encode(kutulu).decode("ascii")
-
-
-def _xor_unmask(kutulu):
-    if not kutulu:
-        return ""
-    anahtar = _sifre_anahtari()
-    try:
-        veri = base64.urlsafe_b64decode(kutulu.encode("ascii"))
-    except Exception:
-        return ""
-    m_anahtar = anahtar.encode("utf-8")
-    return bytes(b ^ m_anahtar[i % len(m_anahtar)] for i, b in enumerate(veri)).decode(
-        "utf-8", errors="replace")
-
-
-def get_user_sifre(kullanici_adi):
-    """Yonetici paneli icin saklanan sifreyi cozup dondurur; yoksa None."""
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT sifre_gizli FROM kullanicilar WHERE kullanici_adi = ?",
-        (kullanici_adi,)).fetchone()
-    conn.close()
-    if not row or not row[0]:
-        return None
-    return _xor_unmask(row[0])
 
 
 def set_user_sifre(kullanici_adi, sifre):
-    """Kullanicinin sifresini hem hash hem geri cozulebilir sakla."""
+    """Kullanicinin sifresini yalnizca hash olarak sakla (geri cozulemez)."""
     conn = get_connection()
     conn.execute(
-        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = ? "
+        "UPDATE kullanicilar SET sifre_hash = ?, sifre_gizli = NULL "
         "WHERE kullanici_adi = ?",
-        (_hash_password(sifre), _xor_mask(sifre), kullanici_adi))
+        (_hash_password(sifre), kullanici_adi))
     conn.commit()
     conn.close()
 
 
 def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
                 ip_adresi=None, uyelik_tipi=None):
-    """Yeni kullanici: hash + geri cozulebilir saklama + otomatik 3 gun deneme.
+    """Yeni kullanici: yalnizca sifre hash'i + otomatik 3 gun deneme.
 
     Deneme lisansi: lisans_durumu='aktif', lisans_bitis=bugun+3 gun.
     Cihaz bilgisi ayni zamanda cihaz_kayitlari tablosuna yazilir; ayni cihazdan
@@ -338,8 +287,8 @@ def create_user(kullanici_adi, sifre, cihaz_id=None, mac_adresi=None,
         conn.execute(
             "INSERT INTO kullanicilar (kullanici_adi, sifre_hash, sifre_gizli, "
             "lisans_durumu, lisans_bitis, cihaz_id, uyelik_tipi) "
-            "VALUES (?, ?, ?, 'aktif', ?, ?, ?)",
-            (kullanici_adi, _hash_password(sifre), _xor_mask(sifre),
+            "VALUES (?, ?, NULL, 'aktif', ?, ?, ?)",
+            (kullanici_adi, _hash_password(sifre),
              lisans_bitis, cihaz_id, uyelik_tipi))
         if cihaz_id:
             conn.execute(

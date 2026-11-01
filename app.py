@@ -956,16 +956,12 @@ def kullanicilar():
     if not _admin_mi():
         flash("Bu b\u00f6l\u00fcm yaln\u0131zca y\u00f6netici i\u00e7indir.", "hata")
         return redirect(url_for("genel_bakis"))
-    sifreler = {}
-    for k in webdb.get_all_users():
-        sifreler[k[1]] = webdb.get_user_sifre(k[1]) or "-"
     # Kullanici -> cihaz eslesmesi
     cihazlar = {c[1]: c for c in webdb.get_cihaz_id_listesi()}
     bildirimler = webdb.get_odeme_bildirimleri()
     okunmamis = webdb.okunmamis_bildirim_sayisi()
     return render_template("kullanicilar.html",
                            kullanicilar=webdb.get_all_users(),
-                           sifreler=sifreler,
                            cihazlar=cihazlar,
                            bildirimler=bildirimler,
                            okunmamis=okunmamis,
