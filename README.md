@@ -1,6 +1,6 @@
 # KARAOĞLU Zeytin Takip — WEB Sürümü
 
-[![Duman testi](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml/badge.svg)](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml)
+[![Testler](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml/badge.svg)](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml)
 
 Masaüstü uygulamasının (app.exe) web tabanlı sürümü. Aynı alan/şema mantığıyla
 satıcı alımları, teslimat (satış) fişleri, giderler, kalibre fiyatları ve

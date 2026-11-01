@@ -2806,14 +2806,12 @@ fn google_saat(metin: &str) -> Option<String> {
         .or_else(|| metin.strip_suffix("A.M."))
     {
         (kalan.trim(), false)
-    } else if let Some(kalan) = metin
-        .strip_suffix("PM")
-        .or_else(|| metin.strip_suffix("pm"))
-        .or_else(|| metin.strip_suffix("P.M."))
-    {
-        (kalan.trim(), true)
     } else {
-        return None;
+        let kalan = metin
+            .strip_suffix("PM")
+            .or_else(|| metin.strip_suffix("pm"))
+            .or_else(|| metin.strip_suffix("P.M."))?;
+        (kalan.trim(), true)
     };
     let (saat_kismi, dakika_kismi) = govde.split_once(':')?;
     let mut saat: u32 = saat_kismi.trim().parse().ok()?;
@@ -2905,7 +2903,7 @@ fn google_isle(ham: &str, sektor: &str) -> Result<(Vec<BusinessLead>, usize), St
         }
     }
 
-    isletmeler.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    isletmeler.sort_by_key(|a| a.name.to_lowercase());
     Ok((isletmeler, siteli))
 }
 
@@ -3482,7 +3480,7 @@ fn overpass_isle(
         });
     }
 
-    isletmeler.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    isletmeler.sort_by_key(|a| a.name.to_lowercase());
     Ok((isletmeler, siteli))
 }
 
@@ -4574,6 +4572,26 @@ fn tarayicida_ac(url: &str) -> Result<(), String> {
     sonuc.map(|_| ()).map_err(|hata| format!("{url} açılamadı: {hata}"))
 }
 
+fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([1120.0, 720.0])
+            .with_title("Nexus Enterprise - İşletme Keşif ve Demo Otomasyonu"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "Nexus Enterprise",
+        options,
+        Box::new(|cc| {
+            yazi_tipi_yukle(&cc.egui_ctx);
+            tema_uygula(&cc.egui_ctx);
+            Box::<LeadApp>::default()
+        }),
+    )
+}
+
 #[cfg(test)]
 mod testler {
     use super::*;
@@ -5112,24 +5130,4 @@ mod testler {
         }
         assert_eq!(kalan, 0, "tüm ilçeler gezilince hak tükenmeli");
     }
-}
-
-fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([1120.0, 720.0])
-            .with_title("Nexus Enterprise - İşletme Keşif ve Demo Otomasyonu"),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "Nexus Enterprise",
-        options,
-        Box::new(|cc| {
-            yazi_tipi_yukle(&cc.egui_ctx);
-            tema_uygula(&cc.egui_ctx);
-            Box::<LeadApp>::default()
-        }),
-    )
 }

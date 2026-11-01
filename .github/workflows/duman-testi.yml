@@ -1,12 +1,14 @@
-name: Duman testi
+name: Testler
 
-# hizli_test.py kendi gecici veritabanini kurar, Flask sunucusunu ayaga kaldirir,
-# tum ana akisi (kurulum, giris, alim/gider/teslimat, rapor, logo, veri klasoru)
-# test eder ve kapanir. Gercek data/ klasoruna dokunmaz.
+# İki iş:
+#  1) duman-testi  : Flask web sürümünün uçtan uca duman testi (ubuntu)
+#  2) masaustu-rust: masaüstü uygulamasının testleri + clippy (windows)
 #
-# Test, sunucuyu proje ici .venv icindeki yorumlayiciyla baslatir; sanal ortam
-# yoksa kendi Python'unu kullanir. Bu yuzden Windows ve Linux'ta ayni sekilde
-# kosar; CI daha hizli olan ubuntu calistiricisinda kosuyor.
+# hizli_test.py kendi geçici veritabanını kurar, sunucuyu ayağa kaldırır,
+# tüm ana akışı test eder ve kapanır. Gerçek data/ klasörüne dokunmaz.
+#
+# Masaüstü uygulaması eframe/egui tabanlı olduğu ve Windows için
+# geliştirildiği için Rust işi windows-latest üzerinde koşar.
 
 on:
   push:
@@ -17,7 +19,7 @@ permissions:
 
 jobs:
   duman-testi:
-    name: Uctan uca duman testi
+    name: Web (uctan uca duman testi)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -29,6 +31,9 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          # requirements.txt değişmedikçe indirilen paketler önbellekten gelir
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: Sanal ortam + bagimliliklar
         run: |
@@ -37,3 +42,37 @@ jobs:
 
       - name: Duman testini kos
         run: .venv/bin/python hizli_test.py
+
+  masaustu-rust:
+    name: Masaustu (cargo test + clippy)
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v7
+
+      - name: Rust (stable + clippy)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+          cargo clippy --version
+
+      # Yalnızca indirilen crate'ler önbelleklenir; target/ klasörü büyük
+      # olduğu için önbelleğe alınmaz (depo önbellek kotasını şişirmesin).
+      - name: Cargo indirme onbellegi
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Testler
+        run: cargo test --all-targets
+
+      - name: Clippy (uyarilar hata sayilir)
+        run: cargo clippy --all-targets -- -D warnings
