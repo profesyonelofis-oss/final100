@@ -62,17 +62,21 @@ jobs:
           rustc --version
           cargo clippy --version
 
-      # Yalnızca indirilen crate'ler önbelleklenir; target/ klasörü büyük
-      # olduğu için önbelleğe alınmaz (depo önbellek kotasını şişirmesin).
-      - name: Cargo indirme onbellegi
+      # İndirilen crate'ler + derleme çıktıları (target/) birlikte önbelleklenir.
+      # Anahtar Cargo.lock'a bağlı; kaynak değiştiğinde bağımlılık derlemeleri
+      # önbellekten gelir, yalnızca kendi crate'imiz yeniden derlenir.
+      - name: Cargo onbellegi (indirme + target)
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            target
+          # target/ de önbelleğe girdiği için anahtar v2 ile ayrıldı; eski
+          # (yalnızca indirme) önbellekleriyle karışmaz.
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-v2-
 
       - name: Testler
         run: cargo test --all-targets
