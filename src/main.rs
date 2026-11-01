@@ -317,6 +317,68 @@ fn sektor_rengi(sektor: &str) -> egui::Color32 {
     }
 }
 
+/// `Color32` → `#rrggbb`. Demo sayfasında CSS değişkeni olarak kullanılır.
+fn hex_renk(renk: egui::Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", renk.r(), renk.g(), renk.b())
+}
+
+/// Demo başlığının altındaki tek cümle. Yalnızca sektörün bölüm adından
+/// kurulur; işletme hakkında doğrulanmamış iddia ("en iyi", "taze malzeme",
+/// "uzman kadro") yazılmaz.
+fn demo_lead(sektor: &str) -> String {
+    let bolum = if [
+        "Restoran", "Kebap", "Kafe", "Fırın", "Pastane", "Döner", "Pide", "Tatlı", "Büfe",
+    ]
+    .iter()
+    .any(|kelime| sektor.contains(kelime))
+    {
+        "Menü"
+    } else if ["Kuaför", "Güzellik", "Berber"]
+        .iter()
+        .any(|kelime| sektor.contains(kelime))
+    {
+        "Hizmetler ve randevu"
+    } else if ["Otel", "Pansiyon"]
+        .iter()
+        .any(|kelime| sektor.contains(kelime))
+    {
+        "Odalar"
+    } else if ["Kurs", "Okul", "Kreş"]
+        .iter()
+        .any(|kelime| sektor.contains(kelime))
+    {
+        "Kurslar"
+    } else {
+        "Hizmetler"
+    };
+    format!(
+        "{bolum}, konum ve iletişim bilgileri tek sayfada — mobilde hızlı açılan, kendi alan adınızda yayına alınabilen bir taslak."
+    )
+}
+
+/// Hero altındaki bilgi çipleri: yalnızca gerçekten dolu olan özellikler.
+fn demo_cipleri(isletme: &BusinessLead, konum_var: bool, saat_var: bool) -> String {
+    let mut cipler = vec!["Mobil uyumlu"];
+    if whatsapp_numarasi(&isletme.phone).is_some() {
+        cipler.push("Tek tıkla arama");
+    }
+    if konum_var {
+        cipler.push("Harita gömülü");
+    }
+    if saat_var {
+        cipler.push("Açık/kapalı göstergesi");
+    }
+    cipler
+        .iter()
+        .map(|cip| {
+            format!(
+                "<span class=\"rounded-full border border-white/10 bg-white/[0.02] px-3 py-1.5\">{cip}</span>"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn govde_font(boyut: f32) -> egui::FontId {
     egui::FontId::new(boyut, egui::FontFamily::Proportional)
 }
@@ -9010,12 +9072,13 @@ fn konum_bolumu_html(isletme_adi: &str, enlem: f64, boylam: f64) -> String {
         "https://www.openstreetmap.org/?mlat={enlem:.5}&mlon={boylam:.5}#map=18/{enlem:.5}/{boylam:.5}"
     );
     format!(
-        r##"<section class="mt-14">
-<h2 class="text-2xl font-bold mb-6">Konum</h2>
-<div class="rounded-xl overflow-hidden border border-zinc-800">
-<iframe title="{ad} konumu" width="100%" height="320" style="border:0" loading="lazy" src="{embed}"></iframe>
+        r##"<section id="konum" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
+<h2 class="text-2xl md:text-3xl font-black tracking-tight mb-2">Konum</h2>
+<p class="text-zinc-400 text-[14.5px] mb-8">{ad} — haritada yakından görün.</p>
+<div class="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.02]">
+<iframe title="{ad} konumu" width="100%" height="340" style="border:0;display:block" loading="lazy" src="{embed}"></iframe>
 </div>
-<a class="inline-block mt-3 text-amber-400 text-sm hover:underline" href="{link}" target="_blank" rel="noopener">Haritada aç</a>
+<a class="inline-flex mt-4 text-[13.5px] font-semibold accent hover:underline" href="{link}" target="_blank" rel="noopener">Haritada aç ↗</a>
 </section>
 "##
     )
@@ -9136,10 +9199,49 @@ setInterval(durumGuncelle, 60000);
     );
     let tel_blogu = match whatsapp_numarasi(&isletme.phone) {
         Some(tel) => format!(
-            "<a href=\"tel:+{tel}\" class=\"inline-block bg-amber-500 text-zinc-950 font-bold px-6 py-3 rounded-full\">📞 Hemen Ara</a>"
+            "<a href=\"tel:+{tel}\" class=\"inline-flex items-center gap-2 rounded-full accent-bg px-6 py-3 text-[14px] font-bold shadow-lg transition hover:-translate-y-0.5\">📞 Hemen Ara</a>"
         ),
         None => String::new(),
     };
+
+    // --- Yeni demo iskeletinin parçaları ---------------------------------
+    // Sektör rengi CSS değişkeni olarak verilir: her demo kendi paletiyle gelir.
+    let vurgu = hex_renk(sektor_rengi(&isletme.category));
+    let adres_eki = if adres.is_empty() {
+        String::new()
+    } else {
+        format!(" · {adres}")
+    };
+    let konum_var = !konum.is_empty();
+    let konum_menu = if konum_var {
+        "<a class=\"hover:text-white transition\" href=\"#konum\">Konum</a>\n".to_string()
+    } else {
+        String::new()
+    };
+    let konum_menu_mobil = if konum_var {
+        "<a class=\"block\" href=\"#konum\">Konum</a>\n".to_string()
+    } else {
+        String::new()
+    };
+    let konum_butonu = if konum_var {
+        "<a href=\"#konum\" class=\"inline-flex items-center gap-2 rounded-full border border-white/15 px-6 py-3 text-[14px] font-semibold transition hover:border-white/40\">Konumu gör</a>".to_string()
+    } else {
+        String::new()
+    };
+    let cipler = demo_cipleri(isletme, konum_var, !saatler.is_empty());
+    let telefon_metni = if isletme.phone.is_empty() {
+        "Kayıtta yok".to_string()
+    } else {
+        html_kacis(&isletme.phone)
+    };
+    // Mobilde ekranın altında duran tek dokunuşluk arama düğmesi.
+    let sticky_cta = match whatsapp_numarasi(&isletme.phone) {
+        Some(tel) => format!(
+            "<a href=\"tel:+{tel}\" class=\"md:hidden fixed inset-x-4 bottom-4 z-30 accent-bg text-center font-extrabold py-4 rounded-2xl shadow-2xl\">📞 Hemen Ara</a>"
+        ),
+        None => "<a href=\"#iletisim\" class=\"md:hidden fixed inset-x-4 bottom-4 z-30 accent-bg text-center font-extrabold py-4 rounded-2xl shadow-2xl\">İletişim</a>".to_string(),
+    };
+    let lead_metni = demo_lead(&isletme.category);
 
     format!(
         r##"<!DOCTYPE html>
@@ -9150,29 +9252,126 @@ setInterval(durumGuncelle, 60000);
 <title>{ad} — {sektor}</title>
 {paylasim}
 <script src="https://cdn.tailwindcss.com"></script>
+<style>
+:root{{--accent:{vurgu}}}
+html{{scroll-behavior:smooth}}
+body{{background:#08090d}}
+.accent{{color:var(--accent)}}
+.accent-bg{{background:var(--accent);color:#08090d}}
+.glow{{position:absolute;border-radius:9999px;filter:blur(90px);opacity:.26;pointer-events:none}}
+@keyframes yuz{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(22px)}}}}
+.yuz{{animation:yuz 14s ease-in-out infinite}}
+.grid-bg{{background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:54px 54px;mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 70%)}}
+.reveal{{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}}
+.reveal.in{{opacity:1;transform:none}}
+.card{{transition:transform .2s ease,border-color .2s ease}}
+.card:hover{{transform:translateY(-4px);border-color:var(--accent)}}
+@media (prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important}}.reveal{{opacity:1;transform:none}}}}
+</style>
+<noscript><style>.reveal{{opacity:1;transform:none}}</style></noscript>
 </head>
-<body class="bg-zinc-950 text-zinc-100 font-sans">
-<div class="bg-amber-500 text-black text-xs font-bold text-center py-2 px-4">12 SAAT GEÇERLİ TASLAK DEMO — {ad} için hazırlandı</div>
-<main class="max-w-4xl mx-auto px-4 py-16">
-<p class="text-amber-400 text-xs font-bold uppercase tracking-widest mb-4">{sektor}</p>
-<h1 class="text-4xl md:text-5xl font-black mb-4">{ad}</h1>
-<p class="text-zinc-400 mb-2">📍 {adres}</p>
-<p class="text-zinc-400 max-w-xl mt-6">İşletmeniz için hazırlanmış modern ve mobil uyumlu web sitesi taslağı. Menü, galeri, harita ve iletişim formu bölümleri eklenebilir; kendi alan adınızda yayına alınabilir.</p>
-<div class="mt-8 flex flex-wrap gap-3">
-{tel_blogu}
-<a href="#iletisim" class="inline-block border border-zinc-700 text-zinc-200 px-6 py-3 rounded-full">İletişim</a>
+<body class="bg-[#08090d] text-zinc-100 antialiased">
+
+<div class="accent-bg text-center text-[11.5px] font-bold tracking-wide py-2 px-4 relative z-50">12 SAAT GEÇERLİ TASLAK DEMO — {ad} için hazırlandı</div>
+
+<header class="sticky top-0 z-40 backdrop-blur-xl bg-[#08090d]/75 border-b border-white/10">
+<div class="max-w-5xl mx-auto px-5 h-16 flex items-center gap-5">
+<a href="#ust" class="flex items-center gap-2.5 font-extrabold tracking-tight text-[15px] min-w-0">
+<span class="w-2.5 h-2.5 rounded-full accent-bg shrink-0"></span>
+<span class="truncate">{ad}</span>
+</a>
+<nav class="hidden md:flex items-center gap-6 ml-auto text-[13.5px] text-zinc-400">
+<a class="hover:text-white transition" href="#hizmetler">Hizmetler</a>
+{konum_menu}
+<a class="hover:text-white transition" href="#iletisim">İletişim</a>
+</nav>
+<a href="#iletisim" class="hidden md:inline-flex items-center rounded-full border border-white/15 px-4 py-2 text-[13px] font-semibold hover:border-white/40 transition">İletişim</a>
+<button id="menu-dugme" class="md:hidden ml-auto rounded-lg border border-white/15 px-3 py-1.5 text-sm" aria-label="Menüyü aç" aria-expanded="false">☰</button>
 </div>
+<div id="menu" class="hidden md:hidden border-t border-white/10 px-5 py-4 space-y-3 text-sm text-zinc-300">
+<a class="block" href="#hizmetler">Hizmetler</a>
+{konum_menu_mobil}
+<a class="block" href="#iletisim">İletişim</a>
+</div>
+</header>
+
+<main id="ust">
+<section class="relative overflow-hidden border-b border-white/10">
+<div class="glow yuz w-[520px] h-[520px] -top-40 -right-32" style="background:var(--accent)"></div>
+<div class="glow yuz w-[380px] h-[380px] -bottom-48 -left-24" style="background:#6d5dfc"></div>
+<div class="absolute inset-0 grid-bg"></div>
+<div class="relative max-w-5xl mx-auto px-5 py-20 md:py-28 reveal">
+<span class="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.03] px-3.5 py-1.5 text-[11px] uppercase tracking-[0.16em] accent">{sektor}{adres_eki}</span>
+<h1 class="mt-6 text-[clamp(38px,7vw,70px)] leading-[1.02] font-black tracking-tight">{ad}</h1>
+<p class="mt-5 max-w-[58ch] text-[15px] md:text-[17px] leading-relaxed text-zinc-400">{lead_metni}</p>
+<div class="mt-9 flex flex-wrap gap-3">{tel_blogu}{konum_butonu}</div>
+<div class="mt-10 flex flex-wrap gap-2.5 text-[12.5px] text-zinc-400">{cipler}</div>
+</div>
+</section>
+
+<section id="hizmetler" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
 {bolum}
+</section>
+
 {konum}
-<section id="iletisim" class="mt-16 pt-8 border-t border-zinc-800 text-sm text-zinc-400">
-<p>Bu taslak {hazirlayan} tarafından {ad} için hazırlandı.</p>
-{karne_linki}
+
+<section id="iletisim" class="max-w-5xl mx-auto px-5 py-16 md:py-20 reveal">
+<h2 class="text-2xl md:text-3xl font-black tracking-tight mb-2">İletişim</h2>
+<p class="text-zinc-400 text-[14.5px] mb-8">Adres, telefon ve çalışma saatleri aşağıda; tek tıkla arayabilirsiniz.</p>
+<div class="grid gap-4 sm:grid-cols-2">
+<div class="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Adres</div>
+<div class="text-[14px] leading-relaxed">{adres}</div>
+</div>
+<div class="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Telefon</div>
+<div class="text-[14px] leading-relaxed">{telefon_metni}</div>
+</div>
+</div>
+<div class="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+<div class="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-2">Çalışma saatleri</div>
 {saat_satiri}
-<p class="mt-1">Demo süresi: 12 saat · Kaynak: {kaynak}</p>
+</div>
+{karne_linki}
 </section>
 </main>
+
+<footer class="border-t border-white/10 py-10 pb-28 md:pb-10 text-[13px] text-zinc-500">
+<div class="max-w-5xl mx-auto px-5 flex flex-wrap gap-4 justify-between items-center">
+<p>Bu taslak {hazirlayan} tarafından {ad} için hazırlandı.</p>
+<p>Demo süresi: 12 saat · Kaynak: {kaynak}</p>
+</div>
+</footer>
+
+{sticky_cta}
 {durum_script}
 <script>
+const menuDugme = document.getElementById("menu-dugme");
+const menu = document.getElementById("menu");
+if (menuDugme && menu) {{
+  menuDugme.addEventListener("click", () => {{
+    const acik = menu.classList.toggle("hidden") === false;
+    menuDugme.setAttribute("aria-expanded", acik ? "true" : "false");
+  }});
+  menu.querySelectorAll("a").forEach((bag) => bag.addEventListener("click", () => {{
+    menu.classList.add("hidden");
+    menuDugme.setAttribute("aria-expanded", "false");
+  }}));
+}}
+const gozlemci = "IntersectionObserver" in window
+  ? new IntersectionObserver((girisler) => {{
+      girisler.forEach((giris) => {{
+        if (!giris.isIntersecting) return;
+        giris.target.classList.add("in");
+        gozlemci.unobserve(giris.target);
+      }});
+    }}, {{ threshold: 0, rootMargin: "0px 0px -8% 0px" }})
+  : null;
+document.querySelectorAll(".reveal").forEach((oge) => {{
+  if (gozlemci) gozlemci.observe(oge);
+  else oge.classList.add("in");
+}});
+
 const anahtar = "demo_{anahtar}";
 const baslangic = Number(localStorage.getItem(anahtar) || Date.now());
 localStorage.setItem(anahtar, baslangic);
@@ -10880,6 +11079,61 @@ mod testler {
         let linksiz = takip_mesaji(&kayit);
         assert!(!linksiz.contains("http"), "{linksiz}");
         assert!(linksiz.contains("Moda Kafe"));
+    }
+
+    #[test]
+    fn demo_html_iskelet_bilesenlerini_icerir() {
+        let html = demo_html(&ornek_isletme(), "+90 500 111 22 33");
+        // Sabit menü, mobil menü ve alt arama düğmesi (mobilde tek dokunuş).
+        assert!(html.contains("sticky top-0"), "sabit menü olmalı");
+        assert!(
+            html.contains("id=\"menu-dugme\""),
+            "mobil menü düğmesi olmalı"
+        );
+        assert!(html.contains("id=\"menu\""));
+        assert!(html.contains("md:hidden fixed inset-x-4 bottom-4"));
+        // Sektör rengi CSS değişkeni olarak gömülür.
+        assert!(html.contains("--accent:#"), "sektör rengi gömülmeli");
+        // Scroll animasyonu ve hareket azaltma tercihi.
+        assert!(html.contains("IntersectionObserver"));
+        assert!(html.contains("prefers-reduced-motion"));
+        // JS kapalıysa içerik görünür kalır.
+        assert!(html.contains("<noscript>"));
+    }
+
+    #[test]
+    fn demo_slogani_sektore_gore_bolum_soyler() {
+        assert!(demo_lead("Restoran").starts_with("Menü"));
+        assert!(demo_lead("Kuaför").starts_with("Hizmetler ve randevu"));
+        assert!(demo_lead("Otel").starts_with("Odalar"));
+        assert!(demo_lead("Dil Kursu").starts_with("Kurslar"));
+        assert!(demo_lead("Diş Kliniği").starts_with("Hizmetler"));
+        // İşletme hakkında doğrulanmamış iddia yazılmaz.
+        let metin = demo_lead("Restoran");
+        assert!(!metin.contains("en iyi") && !metin.contains("taze malzeme"));
+    }
+
+    #[test]
+    fn demo_cipleri_yalniz_dolu_ozellikleri_yazar() {
+        let mut lead = ornek_isletme();
+        lead.phone.clear();
+        let cipler = demo_cipleri(&lead, false, false);
+        assert!(cipler.contains("Mobil uyumlu"));
+        assert!(!cipler.contains("Tek tıkla arama"));
+        assert!(!cipler.contains("Harita gömülü"));
+
+        let mut dolu = ornek_isletme();
+        dolu.phone = "+90 532 123 45 67".to_string();
+        let cipler = demo_cipleri(&dolu, true, true);
+        assert!(cipler.contains("Tek tıkla arama"));
+        assert!(cipler.contains("Harita gömülü"));
+        assert!(cipler.contains("Açık/kapalı göstergesi"));
+    }
+
+    #[test]
+    fn hex_renk_css_bicimini_uretir() {
+        assert_eq!(hex_renk(egui::Color32::from_rgb(255, 172, 92)), "#ffac5c");
+        assert_eq!(hex_renk(egui::Color32::from_rgb(0, 0, 0)), "#000000");
     }
 
     #[test]

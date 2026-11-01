@@ -16,9 +16,14 @@ Depoda iki ayrı uygulama var:
 ücretsiz kota defterde sayılır. Bulunan işletme için demo sayfası, dijital
 görünürlük karnesi ve GitHub Pages yayın linki üretilir.
 
+Demo tek dosyalık bir sayfadır: sabit cam menü, sektöre göre renklenen
+animasyonlu hero, mobil menü, kaydırdıkça açılan bölümler ve mobilde sabit
+arama düğmesi. Ücretli araç veya API kullanmaz; sayfa kendi kendine yeter
+(yalnızca Tailwind CDN ve gömülü OSM haritası ağdan gelir).
+
 ```bash
 cargo run                 # derle ve aç
-cargo test --all-targets  # 79 test (2 ağ testi varsayilan kapalı)
+cargo test --all-targets  # 95 test (2 ağ testi varsayilan kapalı)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
