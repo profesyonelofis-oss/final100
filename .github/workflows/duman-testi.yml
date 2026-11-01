@@ -1,0 +1,38 @@
+name: Duman testi
+
+# hizli_test.py kendi gecici veritabanini kurar, Flask sunucusunu ayaga kaldirir,
+# tum ana akisi (kurulum, giris, alim/gider/teslimat, rapor, logo, veri klasoru)
+# test eder ve kapanir. Gercek data/ klasorune dokunmaz.
+#
+# Test, sunucuyu ".venv\Scripts\python.exe" ile baslattigi icin Windows
+# calistirici kullanilir.
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  duman-testi:
+    name: Uctan uca duman testi
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sanal ortam + bagimliliklar
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Duman testini kos
+        run: .venv\Scripts\python.exe hizli_test.py
