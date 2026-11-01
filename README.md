@@ -1,6 +1,54 @@
-# KARAOĞLU Zeytin Takip — WEB Sürümü
+# final100 — İşletme Keşif (masaüstü) + Zeytin Takip (web)
 
 [![Testler](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml/badge.svg)](https://github.com/profesyonelofis-oss/final100/actions/workflows/duman-testi.yml)
+
+Depoda iki ayrı uygulama var:
+
+| Uygulama | Teknoloji | Ne yapar |
+|---|---|---|
+| **İşletme Keşif** (bu repodaki aktif çalışma) | Rust + egui masaüstü | Web sitesi olmayan işletmeleri bulur; demo, dijital karne ve WhatsApp mesajı hazırlar |
+| **Zeytin Takip** | Flask + SQLite web | Satıcı alımları, teslimat fişleri, gider ve komisyon takibi |
+
+## İşletme Keşif — masaüstü uygulaması
+
+81 il ve tüm ilçeler, 47 grupta 320 sektör. Tarama OpenStreetMap (Overpass)
+üzerinden yapılır; ilçe boş dönerse Google Places yedeği devreye girer ve
+ücretsiz kota defterde sayılır. Bulunan işletme için demo sayfası, dijital
+görünürlük karnesi ve GitHub Pages yayın linki üretilir.
+
+```bash
+cargo run                 # derle ve aç
+cargo test --all-targets  # 79 test (2 ağ testi varsayilan kapalı)
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+**Satış akışı**
+
+1. İl / ilçe / sektör seç, tara. Liste satın alma potansiyeline göre sıralanır.
+2. Karttaki WhatsApp düğmesi mesajı **önce önizler**: metin, karakter sayısı,
+   link sayısı ve kalan günlük hak. Yayın linki yoksa önizlemeden önce yayınlanır.
+3. "WhatsApp'ı aç ve gönder" sohbeti hazırlar; gönderimi siz yaparsınız.
+4. "Gönderdim" işaretlenince kayıt takip kuyruğuna girer; 3 gün sonra
+   "Takip kuyruğu" panelinden tek tuşla hatırlatma mesajı hazırlanır.
+5. Görüşme notu ve son gönderim tarihi sağdaki işletme detayında durur.
+
+**Kurallar ve sınırlar**
+
+| Konu | Davranış |
+|---|---|
+| Günlük gönderim | En fazla **15** mesaj; sayaç defterde, yeniden başlatınca da sürer |
+| Kara liste | "RET" / "Reddetti" işaretlenen işletmeye bir daha mesaj hazırlanmaz |
+| A/B denemesi | Varyant sektör içinde dengeli dağıtılır, kayıtta sabit kalır |
+| Örneklem | Kol başına 30 gönderimin altında panel "örneklem yetersiz" uyarısı verir |
+| Google kotası | `GOOGLE_GUNLUK_LIMIT` (vars. 10) · `GOOGLE_AYLIK_LIMIT` (vars. 200) |
+| Defter | `musteri_kayitlari.json`; her yazmadan önce `musteri_kayitlari.yedek.json` |
+
+Gizli değerler `.env` dosyasından okunur (`GOOGLE_PLACES_API_KEY`); `.env`,
+`.env` ile üretilen çalışma dosyaları ve üretilen `demos/` klasörü sürüm
+kontrolüne girmez.
+
+## Zeytin Takip — WEB Sürümü
 
 Masaüstü uygulamasının (app.exe) web tabanlı sürümü. Aynı alan/şema mantığıyla
 satıcı alımları, teslimat (satış) fişleri, giderler, kalibre fiyatları ve

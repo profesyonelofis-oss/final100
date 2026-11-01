@@ -114,6 +114,13 @@ enum ListeSuzgeci {
 /// Mesaj gönderildikten kaç gün sonra takip listesine düşer.
 const TAKIP_GUN: i64 = 3;
 
+/// Bir günde hazırlanabilecek en fazla WhatsApp mesajı.
+///
+/// Mesajlar elle gönderilse de aynı numaradan arka arkaya 20-30 sohbet
+/// açmak hesabı spam olarak işaretletir. Fren defterde tutulur: uygulama
+/// kapatılıp açılsa da günlük sayaç sıfırlanmaz.
+const GUNLUK_GONDERIM_LIMITI: usize = 15;
+
 /// İki `YYYY-MM-DD` tarihi arasındaki gün farkı.
 fn gun_farki(eski: &str, yeni: &str) -> Option<i64> {
     let once = chrono::NaiveDate::parse_from_str(eski, "%Y-%m-%d").ok()?;
@@ -159,6 +166,10 @@ pub struct LeadApp {
     is_whatsapp_connected: bool,
     whatsapp_acik: bool,
     detay_idx: Option<usize>,
+    /// Gönderim öncesi önizleme: (liste indeksi, hazır mesaj metni).
+    onizleme: Option<(usize, String)>,
+    /// Takip kuyruğu paneli (yanıt bekleyen, zamanı gelmiş işletmeler).
+    takip_panel_acik: bool,
     ilce_kaydir: bool,
     /// Sektör seçim paneli açık mı ve sol sütunda hangi grup seçili.
     sektor_panel_acik: bool,
@@ -214,6 +225,8 @@ impl Default for LeadApp {
             is_whatsapp_connected: false,
             whatsapp_acik: false,
             detay_idx: None,
+            onizleme: None,
+            takip_panel_acik: false,
             ilce_kaydir: true,
             sektor_panel_acik: false,
             sektor_panel_grup: 0,
@@ -1010,20 +1023,48 @@ fn whatsapp_ac(lead: &mut BusinessLead, gonderen: &str, logs: &mut Vec<String>) 
     if lead.yayin_linki.is_none() {
         yayina_gonder_ve_link_al(lead, gonderen, logs);
     }
-    let url = format!(
-        "https://wa.me/{numara}?text={}",
-        url_encode(&whatsapp_mesaji(lead))
-    );
-    match tarayicida_ac(&url) {
-        Ok(()) => {
-            lead.mesaj_hazir = true;
-            logs.push(format!(
-                "[✓] {} için WhatsApp sohbeti hazırlandı; mesajı siz gönderiyorsunuz.",
-                lead.name
-            ));
-        }
-        Err(hata) => logs.push(format!("[!] WhatsApp açılamadı: {hata}")),
+    let mesaj = whatsapp_mesaji(lead);
+    if sohbet_ac(&numara, &mesaj, logs) {
+        lead.mesaj_hazir = true;
+        logs.push(format!(
+            "[✓] {} için WhatsApp sohbeti hazırlandı; mesajı siz gönderiyorsunuz.",
+            lead.name
+        ));
     }
+}
+
+/// Hazır metni WhatsApp sohbetinde açar; açılıp açılmadığını döndürür.
+fn sohbet_ac(numara: &str, mesaj: &str, logs: &mut Vec<String>) -> bool {
+    let url = format!("https://wa.me/{numara}?text={}", url_encode(mesaj));
+    match tarayicida_ac(&url) {
+        Ok(()) => true,
+        Err(hata) => {
+            logs.push(format!("[!] WhatsApp açılamadı: {hata}"));
+            false
+        }
+    }
+}
+
+/// Yanıt bekleyen bir işletmeye gönderilecek kısa hatırlatma.
+fn takip_mesaji(kayit: &musteriler::Musteri) -> String {
+    let gecen = kayit
+        .son_gonderim
+        .as_deref()
+        .or(kayit.son_temas.as_deref())
+        .and_then(|tarih| musteriler::gun_farki(tarih, &bugun_anahtari()))
+        .unwrap_or(0)
+        .max(1);
+    let mut metin = format!(
+        "Merhaba, {gecen} gün önce {} için hazırladığım web sitesi taslağını paylaşmıştım. İnceleme fırsatınız oldu mu?",
+        kayit.ad
+    );
+    if let Some(link) = kayit.yayin_linki.as_deref() {
+        metin.push_str(&format!(" Taslak hâlâ yayında: {link}"));
+    }
+    metin.push_str(
+        " İsterseniz alan adınızda 2 dakikada yayına alabilirim. İstemezseniz \"RET\" yazın, bir daha yazmam.",
+    );
+    metin
 }
 
 fn detay_satiri(ui: &mut egui::Ui, etiket: &str, deger: &str) {
@@ -1043,10 +1084,12 @@ fn kart_ciz(
     gonderen: &str,
     logs: &mut Vec<String>,
     acik: bool,
-) -> bool {
+    limit_doldu: bool,
+) -> (bool, bool) {
     let secili = lead.selected;
     let kategori_rengi = sektor_rengi(&lead.category);
     let mut detay_iste = false;
+    let mut onizleme_iste = false;
 
     let kenar = if acik {
         MAVI.gamma_multiply(0.55)
@@ -1155,14 +1198,24 @@ fn kart_ciz(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             let numara = whatsapp_numarasi(&lead.phone);
-                            let wa = birincil_buton(ui, wa_metin, numara.is_some(), None);
+                            let wa = birincil_buton(
+                                ui,
+                                wa_metin,
+                                numara.is_some() && !limit_doldu,
+                                None,
+                            );
                             let wa = if numara.is_none() {
                                 wa.on_hover_text("Bu işletmenin telefon numarası kayıtta yok")
+                            } else if limit_doldu {
+                                wa.on_hover_text(format!(
+                                    "Günlük gönderim hakkı doldu ({} mesaj); yarın devam edin",
+                                    GUNLUK_GONDERIM_LIMITI
+                                ))
                             } else {
-                                wa
+                                wa.on_hover_text("Mesajı göndermeden önce önizleriniz")
                             };
                             if wa.clicked() {
-                                whatsapp_ac(lead, gonderen, logs);
+                                onizleme_iste = true;
                             }
 
                             ui.add_space(6.0);
@@ -1197,11 +1250,435 @@ fn kart_ciz(
         );
     }
 
-    detay_iste
+    (detay_iste, onizleme_iste)
 }
 
 impl LeadApp {
     /// Seçilen işletmenin ayrıntılarını ve aksiyonlarını sağ panelde gösterir.
+    /// Günlük gönderim hakkı doldu mu?
+    fn gunluk_limit_doldu(&self) -> bool {
+        self.defter.gun_gonderim(&bugun_anahtari()) >= GUNLUK_GONDERIM_LIMITI
+    }
+
+    /// WhatsApp'ı açmadan önce yayın linkini tamamlar, mesajı üretir ve
+    /// önizlemeyi açar. Gönderme kararı kullanıcının kalir.
+    fn gonderime_hazirla(&mut self, idx: usize, gonderen: &str) {
+        if idx >= self.leads.len() {
+            return;
+        }
+        if self.leads[idx].durum.kara_listede() {
+            self.logs.push(format!(
+                "[!] {} mesaj istemedi (kara liste); WhatsApp açılmadı.",
+                self.leads[idx].name
+            ));
+            return;
+        }
+        if whatsapp_numarasi(&self.leads[idx].phone).is_none() {
+            self.logs.push(format!(
+                "[!] {}: telefon numarası kayıtta yok, mesaj hazırlanamadı.",
+                self.leads[idx].name
+            ));
+            return;
+        }
+        let bugun = bugun_anahtari();
+        let anahtar = musteriler::anahtar_uret(
+            &self.leads[idx].kaynak,
+            &self.leads[idx].name,
+            self.leads[idx].konum,
+        );
+        // Aynı işletmeye aynı gün tekrar mesaj hazırlamak haktan düşmez.
+        if !self.defter.bugun_gonderildi_mi(&anahtar, &bugun) && self.gunluk_limit_doldu() {
+            self.logs.push(format!(
+                "[!] Günlük gönderim hakkı doldu ({}/{}). Hesabın askıya alınmaması için yarın devam edin.",
+                GUNLUK_GONDERIM_LIMITI, GUNLUK_GONDERIM_LIMITI
+            ));
+            return;
+        }
+        if self.leads[idx].yayin_linki.is_none() {
+            yayina_gonder_ve_link_al(&mut self.leads[idx], gonderen, &mut self.logs);
+        }
+        let mesaj = whatsapp_mesaji(&self.leads[idx]);
+        self.onizleme = Some((idx, mesaj));
+    }
+
+    /// Önizlemedeki mesajı WhatsApp sohbetine aktarır ve gönderimi deftere işler.
+    fn gonderimi_baslat(&mut self, idx: usize, gonderen: &str) {
+        if idx >= self.leads.len() {
+            return;
+        }
+        whatsapp_ac(&mut self.leads[idx], gonderen, &mut self.logs);
+        self.gonderim_kaydet(idx);
+    }
+
+    /// Gönderimi deftere yazar; aynı işletme için günde bir kez sayılır.
+    fn gonderim_kaydet(&mut self, idx: usize) {
+        if idx >= self.leads.len() {
+            return;
+        }
+        let anahtar = musteriler::anahtar_uret(
+            &self.leads[idx].kaynak,
+            &self.leads[idx].name,
+            self.leads[idx].konum,
+        );
+        let bugun = bugun_anahtari();
+        let onceki = self.defter.gun_gonderim(&bugun);
+        self.defter.gonderim_kaydet(&anahtar, &bugun);
+        let simdiki = self.defter.gun_gonderim(&bugun);
+        if simdiki == onceki {
+            return;
+        }
+        if let Some(link) = self.leads[idx].yayin_linki.clone() {
+            self.defter.link_ayarla(&anahtar, &link);
+        }
+        self.defter.kaydet();
+        self.logs.push(format!(
+            "[i] Bugünkü gönderim: {simdiki}/{GUNLUK_GONDERIM_LIMITI}"
+        ));
+    }
+
+    /// Gönderim öncesi mesaj önizlemesi: metin, uzunluk, link ve kalan hak.
+    fn onizleme_paneli(&mut self, ctx: &egui::Context, gonderen: &str) {
+        let Some((idx, mesaj)) = self.onizleme.clone() else {
+            return;
+        };
+        if idx >= self.leads.len() {
+            self.onizleme = None;
+            return;
+        }
+        let ekran = ctx.screen_rect();
+        let boyut = egui::vec2((ekran.width() - 240.0).clamp(430.0, 560.0), 448.0);
+        let konum = ekran.center() - boyut * 0.5;
+        let mut kapat = false;
+        let mut gonder = false;
+        let mut ret = false;
+
+        egui::Area::new(egui::Id::new("onizleme_ortu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(ekran.min)
+            .show(ctx, |ui| {
+                let (rect, yanit) = ui.allocate_exact_size(ekran.size(), egui::Sense::click());
+                ui.painter()
+                    .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(155));
+                if yanit.clicked() {
+                    kapat = true;
+                }
+            });
+
+        let kalan =
+            GUNLUK_GONDERIM_LIMITI.saturating_sub(self.defter.gun_gonderim(&bugun_anahtari()));
+        egui::Area::new(egui::Id::new("onizleme_panel"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(konum)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(KART)
+                    .stroke(egui::Stroke::new(1.0_f32, KENAR_GUCLU))
+                    .rounding(egui::Rounding::same(16.0))
+                    .inner_margin(egui::Margin::symmetric(20.0, 16.0))
+                    .show(ui, |ui| {
+                        ui.set_width(boyut.x - 40.0);
+                        ui.horizontal(|ui| {
+                            bolum_etiketi(ui, "MESAJ ÖNİZLEMESİ");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if hayalet_buton(ui, "Kapat").clicked() {
+                                        kapat = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(&self.leads[idx].name)
+                                .font(baslik_font(15.0))
+                                .color(METIN),
+                        );
+                        ui.add_space(10.0);
+                        egui::Frame::none()
+                            .fill(GIRINTI)
+                            .stroke(egui::Stroke::new(1.0_f32, KENAR))
+                            .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
+                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.set_width(boyut.x - 64.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(200.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(&mesaj).size(12.5).color(METIN),
+                                        );
+                                    });
+                            });
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} karakter · {} link · bugün kalan hak: {kalan}",
+                                mesaj.chars().count(),
+                                mesaj.matches("https://").count()
+                            ))
+                            .size(10.5)
+                            .color(DIM),
+                        );
+                        ui.add_space(12.0);
+                        if birincil_buton(
+                            ui,
+                            "WhatsApp'ı aç ve gönder",
+                            true,
+                            Some(egui::vec2(boyut.x - 40.0, 36.0)),
+                        )
+                        .clicked()
+                        {
+                            gonder = true;
+                        }
+                        ui.add_space(6.0);
+                        if ikincil_buton(
+                            ui,
+                            "İstemedi (RET) · kara listeye al",
+                            true,
+                            Some(egui::vec2(boyut.x - 40.0, 32.0)),
+                        )
+                        .clicked()
+                        {
+                            ret = true;
+                        }
+                    });
+            });
+
+        if gonder {
+            self.gonderimi_baslat(idx, gonderen);
+            kapat = true;
+        }
+        if ret {
+            let anahtar = musteriler::anahtar_uret(
+                &self.leads[idx].kaynak,
+                &self.leads[idx].name,
+                self.leads[idx].konum,
+            );
+            self.defter
+                .durum_ayarla(&anahtar, musteriler::Durum::Reddetti, &bugun_anahtari());
+            self.defter.kaydet();
+            self.leads[idx].durum = musteriler::Durum::Reddetti;
+            self.logs
+                .push(format!("[i] {} → kara liste (RET).", self.leads[idx].name));
+            kapat = true;
+        }
+        if kapat {
+            self.onizleme = None;
+        }
+    }
+
+    /// Takip kuyruğu: yanıt bekleyen ve üzerinden `TAKIP_GUN` gün geçmiş
+    /// işletmeler; hepsine tek tuşla hatırlatma hazırlanabilir.
+    fn takip_paneli(&mut self, ctx: &egui::Context) {
+        if !self.takip_panel_acik {
+            return;
+        }
+        let bugun = bugun_anahtari();
+        let kayitlar: Vec<musteriler::Musteri> = self
+            .defter
+            .takip_edilecekler(&bugun, TAKIP_GUN)
+            .into_iter()
+            .cloned()
+            .collect();
+        let ekran = ctx.screen_rect();
+        let boyut = egui::vec2(
+            (ekran.width() - 200.0).clamp(560.0, 660.0),
+            (ekran.height() - 200.0).clamp(360.0, 520.0),
+        );
+        let konum = ekran.center() - boyut * 0.5;
+        let mut kapat = false;
+        let mut acilacak: Option<String> = None;
+
+        egui::Area::new(egui::Id::new("takip_ortu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(ekran.min)
+            .show(ctx, |ui| {
+                let (rect, yanit) = ui.allocate_exact_size(ekran.size(), egui::Sense::click());
+                ui.painter()
+                    .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(155));
+                if yanit.clicked() {
+                    kapat = true;
+                }
+            });
+
+        egui::Area::new(egui::Id::new("takip_panel"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(konum)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(KART)
+                    .stroke(egui::Stroke::new(1.0_f32, KENAR_GUCLU))
+                    .rounding(egui::Rounding::same(16.0))
+                    .inner_margin(egui::Margin::symmetric(20.0, 16.0))
+                    .show(ui, |ui| {
+                        ui.set_width(boyut.x - 40.0);
+                        ui.set_height(boyut.y - 32.0);
+                        ui.horizontal(|ui| {
+                            bolum_etiketi(ui, "TAKİP KUYRUĞU");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if hayalet_buton(ui, "Kapat").clicked() {
+                                        kapat = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+                        // Huni: satışın hangi aşamada tıkandığını tek satırda gösterir.
+                        let huni = self.defter.ozet();
+                        let yanit = huni.ilgilenen + huni.kara_liste;
+                        let ulasilan = huni.gonderilen + yanit;
+                        let oran = (yanit * 100).checked_div(ulasilan).unwrap_or(0);
+                        egui::Frame::none()
+                            .fill(GIRINTI)
+                            .stroke(egui::Stroke::new(1.0_f32, KENAR))
+                            .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.set_width(boyut.x - 64.0);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Huni: {} kayıt · {} mesaj · {} yanıt (%{oran}) · {} ilgileniyor · {} kara liste",
+                                        huni.toplam, ulasilan, yanit, huni.ilgilenen, huni.kara_liste
+                                    ))
+                                    .size(10.5)
+                                    .color(SOLUK),
+                                );
+                            });
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} işletme {} gündür yanıt bekliyor · günlük kalan hak: {}",
+                                kayitlar.len(),
+                                TAKIP_GUN,
+                                GUNLUK_GONDERIM_LIMITI
+                                    .saturating_sub(self.defter.gun_gonderim(&bugun))
+                            ))
+                            .size(10.5)
+                            .color(DIM),
+                        );
+                        ui.add_space(8.0);
+                        if kayitlar.is_empty() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Şu an takip sırası boş: gönderilen mesajların hepsi yanıtlanmış ya da henüz 3 gün dolmamış.",
+                                )
+                                .size(11.5)
+                                .color(SOLUK),
+                            );
+                        }
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for kayit in &kayitlar {
+                                    let gecen = kayit
+                                        .son_gonderim
+                                        .as_deref()
+                                        .or(kayit.son_temas.as_deref())
+                                        .and_then(|tarih| {
+                                            musteriler::gun_farki(tarih, &bugun)
+                                        })
+                                        .unwrap_or(0);
+                                    egui::Frame::none()
+                                        .fill(GIRINTI)
+                                        .stroke(egui::Stroke::new(1.0_f32, KENAR))
+                                        .rounding(egui::Rounding::same(YUVARLAK_KUCUK))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.vertical(|ui| {
+                                                    ui.spacing_mut().item_spacing.y = 3.0;
+                                                    ui.label(
+                                                        egui::RichText::new(&kayit.ad)
+                                                            .size(12.5)
+                                                            .color(METIN),
+                                                    );
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "{} · {} · {gecen} gün önce{}",
+                                                            kayit.kategori,
+                                                            if kayit.telefon.is_empty() {
+                                                                "telefon yok"
+                                                            } else {
+                                                                &kayit.telefon
+                                                            },
+                                                            if kayit.notlar.is_empty() {
+                                                                String::new()
+                                                            } else {
+                                                                format!(" · not: {}", kayit.notlar)
+                                                            }
+                                                        ))
+                                                        .size(10.5)
+                                                        .color(DIM),
+                                                    );
+                                                });
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        let numara =
+                                                            whatsapp_numarasi(&kayit.telefon);
+                                                        let dugme = ikincil_buton(
+                                                            ui,
+                                                            "Hatırlat",
+                                                            numara.is_some(),
+                                                            Some(egui::vec2(86.0, 26.0)),
+                                                        );
+                                                        if dugme.clicked() {
+                                                            acilacak =
+                                                                Some(kayit.anahtar.clone());
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                        });
+                                    ui.add_space(6.0);
+                                }
+                            });
+                    });
+            });
+
+        if let Some(anahtar) = acilacak {
+            self.takip_sohbet_ac(&anahtar, &bugun);
+        }
+        if kapat {
+            self.takip_panel_acik = false;
+        }
+    }
+
+    /// Takip kuyruğundaki bir işletmeye hatırlatma mesajı hazırlar.
+    fn takip_sohbet_ac(&mut self, anahtar: &str, bugun: &str) {
+        let Some(kayit) = self.defter.kayit(anahtar).cloned() else {
+            return;
+        };
+        let Some(numara) = whatsapp_numarasi(&kayit.telefon) else {
+            self.logs
+                .push(format!("[!] {}: telefon numarası kayıtta yok.", kayit.ad));
+            return;
+        };
+        if self.defter.gun_gonderim(bugun) >= GUNLUK_GONDERIM_LIMITI {
+            self.logs.push(format!(
+                "[!] Günlük gönderim hakkı doldu ({}/{}). Yarın devam edin.",
+                GUNLUK_GONDERIM_LIMITI, GUNLUK_GONDERIM_LIMITI
+            ));
+            return;
+        }
+        let mesaj = takip_mesaji(&kayit);
+        if sohbet_ac(&numara, &mesaj, &mut self.logs) {
+            self.defter.gonderim_kaydet(anahtar, bugun);
+            self.defter.kaydet();
+            self.logs.push(format!(
+                "[✓] {} için takip mesajı hazır; günlük hak {}/{GUNLUK_GONDERIM_LIMITI}.",
+                kayit.ad,
+                self.defter.gun_gonderim(bugun)
+            ));
+        }
+    }
+
     fn detay_paneli(&mut self, ctx: &egui::Context, gonderen: &str) {
         let Some(idx) = self.detay_idx else {
             return;
@@ -1213,6 +1690,18 @@ impl LeadApp {
 
         let mut kapat = false;
         let mut yeni_durum: Option<musteriler::Durum> = None;
+        let mut wa_iste = false;
+        // Görüşme notu: panelde düzenlenir, değişince deftere yazılır.
+        let mut not_metni = self
+            .defter
+            .kayit(&musteriler::anahtar_uret(
+                &self.leads[idx].kaynak,
+                &self.leads[idx].name,
+                self.leads[idx].konum,
+            ))
+            .map(|kayit| kayit.notlar.clone())
+            .unwrap_or_default();
+        let mut not_degisti = false;
         // Defterdeki son temas tarihi panelde gösterilir (iptal öncesi okunur).
         let anahtar = musteriler::anahtar_uret(
             &self.leads[idx].kaynak,
@@ -1223,8 +1712,18 @@ impl LeadApp {
             .defter
             .kayit(&anahtar)
             .and_then(|kayit| kayit.son_temas.clone());
+        let son_gonderim = self
+            .defter
+            .kayit(&anahtar)
+            .and_then(|kayit| kayit.son_gonderim.clone());
         // A/B sayaçları panelde tek satırda gösterilir.
         let varyant_ozeti = self.defter.varyant_ozeti();
+        let sektor_ozeti = self
+            .defter
+            .varyant_ozeti_kategori(&self.leads[idx].category);
+        // 30 gönderimin altında oran farkı gürültüdür; panel bunu açıkça söyler.
+        let orneklem_yetersiz = varyant_ozeti.iter().any(|ozet| ozet.gonderim > 0)
+            && !varyant_ozeti.iter().all(|ozet| ozet.anlamli());
         egui::SidePanel::right("detay_paneli")
             .resizable(false)
             .exact_width(348.0)
@@ -1387,7 +1886,58 @@ impl LeadApp {
                                     .size(10.5)
                                     .color(DIM),
                             );
+                            if orneklem_yetersiz {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Örneklem yetersiz: kol başına {}+ gönderim gerekir.",
+                                        musteriler::ANLAMLI_ORNEKLEM
+                                    ))
+                                    .size(10.0)
+                                    .color(VURGU),
+                                );
+                            }
                         }
+                        if sektor_ozeti.iter().any(|ozet| ozet.gonderim > 0) {
+                            let satirlar: Vec<String> = musteriler::Varyant::HEPSI
+                                .iter()
+                                .map(|varyant| sektor_ozeti[varyant.sira()].satir())
+                                .collect();
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "A/B · {}: {}",
+                                    lead.category,
+                                    satirlar.join("  ·  ")
+                                ))
+                                .size(10.5)
+                                .color(DIM),
+                            );
+                        }
+                        if let Some(tarih) = &son_gonderim {
+                            let gecen = musteriler::gun_farki(tarih, &bugun_anahtari())
+                                .map(|gun| format!("{gun} gün önce"))
+                                .unwrap_or_else(|| tarih.clone());
+                            ui.label(
+                                egui::RichText::new(format!("Son gönderim: {tarih} · {gecen}"))
+                                    .size(10.5)
+                                    .color(DIM),
+                            );
+                        }
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("GÖRÜŞME NOTU")
+                                .font(baslik_font(9.5))
+                                .color(DIM),
+                        );
+                        ui.add_space(4.0);
+                        let duzenleme = egui::TextEdit::multiline(&mut not_metni)
+                            .desired_rows(2)
+                            .desired_width(IC_GENISLIK - 8.0)
+                            .font(egui::TextStyle::Small)
+                            .hint_text("Ör. fiyat sordu, pazartesi arayacak");
+                        if ui.add(duzenleme).changed() {
+                            not_degisti = true;
+                        }
+                        ui.add_space(10.0);
                         ui.add_space(12.0);
                         if !lead.site_linki.is_empty() {
                             let baslik = match lead.site {
@@ -1498,7 +2048,7 @@ impl LeadApp {
                     wa.on_hover_text("Telefon numarası kayıtta yok")
                 };
                 if wa.clicked() {
-                    whatsapp_ac(lead, gonderen, &mut self.logs);
+                    wa_iste = true;
                 }
 
                 ui.add_space(8.0);
@@ -1554,11 +2104,22 @@ impl LeadApp {
                 );
             });
 
+        if not_degisti {
+            self.defter.not_ayarla(&anahtar, &not_metni);
+            self.defter.kaydet();
+        }
+        if wa_iste {
+            self.gonderime_hazirla(idx, gonderen);
+        }
         if let Some(durum) = yeni_durum {
             let lead = &self.leads[idx];
             let anahtar = musteriler::anahtar_uret(&lead.kaynak, &lead.name, lead.konum);
             self.defter.durum_ayarla(&anahtar, durum, &bugun_anahtari());
             self.defter.kaydet();
+            // "Gönderdim" onayı günlük gönderim hakkından düşer.
+            if durum == musteriler::Durum::Gonderildi {
+                self.gonderim_kaydet(idx);
+            }
             self.leads[idx].durum = durum;
             self.logs
                 .push(format!("[i] {} → {}", self.leads[idx].name, durum.etiket()));
@@ -2416,6 +2977,8 @@ impl eframe::App for LeadApp {
         // --- Sağ panel: işletme detayı ---------------------------------------
         self.detay_paneli(ctx, &gonderen);
         self.sektor_paneli(ctx);
+        self.takip_paneli(ctx);
+        self.onizleme_paneli(ctx, &gonderen);
 
         // --- Orta panel: sonuçlar --------------------------------------------
         egui::CentralPanel::default()
@@ -2550,6 +3113,28 @@ impl eframe::App for LeadApp {
                             self.liste_suzgeci = suzgec;
                         }
                     }
+                    // Sağda: bugünkü gönderim hakkı ve takip kuyruğu.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let kuyruk = self.defter.takip_edilecekler(&bugun, TAKIP_GUN).len();
+                        if hayalet_buton(ui, &format!("Takip kuyruğu ({kuyruk})")).clicked() {
+                            self.takip_panel_acik = true;
+                        }
+                        ui.add_space(10.0);
+                        let gunluk = self.defter.gun_gonderim(&bugun);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "bugün {gunluk}/{GUNLUK_GONDERIM_LIMITI} mesaj"
+                            ))
+                            .size(10.5)
+                            .color(
+                                if gunluk >= GUNLUK_GONDERIM_LIMITI {
+                                    VURGU
+                                } else {
+                                    DIM
+                                },
+                            ),
+                        );
+                    });
                 });
                 ui.add_space(10.0);
 
@@ -2565,6 +3150,8 @@ impl eframe::App for LeadApp {
                 let bos_ilce = self.bos_ilce_uyari.clone();
                 let il_geneli_simdi = self.il_geneli;
                 let mut yeni_detay = self.detay_idx;
+                let mut onizleme_idx: Option<usize> = None;
+                let limit_doldu = self.gunluk_limit_doldu();
                 {
                     let arama = arama_anahtari(&self.sonuc_arama);
                     let suzgec = self.liste_suzgeci;
@@ -2613,12 +3200,23 @@ impl eframe::App for LeadApp {
                                     continue;
                                 }
                                 gosterilen += 1;
-                                if kart_ciz(ui, lead, &gonderen, logs, acik_detay == Some(idx)) {
+                                let (detay_iste, wa_iste) = kart_ciz(
+                                    ui,
+                                    lead,
+                                    &gonderen,
+                                    logs,
+                                    acik_detay == Some(idx),
+                                    limit_doldu,
+                                );
+                                if detay_iste {
                                     yeni_detay = if acik_detay == Some(idx) {
                                         None
                                     } else {
                                         Some(idx)
                                     };
+                                }
+                                if wa_iste {
+                                    onizleme_idx = Some(idx);
                                 }
                                 ui.add_space(8.0);
                             }
@@ -2634,6 +3232,9 @@ impl eframe::App for LeadApp {
                 }
                 if yeni_detay != self.detay_idx {
                     self.detay_idx = yeni_detay;
+                }
+                if let Some(idx) = onizleme_idx {
+                    self.gonderime_hazirla(idx, &gonderen);
                 }
                 if il_geneli_baslat {
                     self.il_geneli = true;
@@ -7983,6 +8584,28 @@ setInterval(durumGuncelle, 60000);
     } else {
         html_kacis(gonderen)
     };
+    // Open Graph: link WhatsApp/SMS önizlemesinde başlıklı ve açıklamalı
+    // görünsün. Etiketler, tanımlayıcı alanın hemen altında durur.
+    let ozet_metni = if isletme.address.is_empty() {
+        format!("{sektor} · {ad} için hazırlanmış mobil uyumlu site taslağı")
+    } else {
+        format!("{sektor} · {adres} · {ad} için hazırlanmış mobil uyumlu site taslağı")
+    };
+    let paylasim = format!(
+        concat!(
+            "<meta name=\"description\" content=\"{ozet}\">\n",
+            "<meta property=\"og:type\" content=\"website\">\n",
+            "<meta property=\"og:site_name\" content=\"{ad}\">\n",
+            "<meta property=\"og:title\" content=\"{ad} — {sektor}\">\n",
+            "<meta property=\"og:description\" content=\"{ozet}\">\n",
+            "<meta property=\"og:locale\" content=\"tr_TR\">\n",
+            "<meta name=\"twitter:card\" content=\"summary\">\n",
+            "<meta name=\"robots\" content=\"noindex\">"
+        ),
+        ad = ad,
+        sektor = sektor,
+        ozet = ozet_metni
+    );
     let tel_blogu = match whatsapp_numarasi(&isletme.phone) {
         Some(tel) => format!(
             "<a href=\"tel:+{tel}\" class=\"inline-block bg-amber-500 text-zinc-950 font-bold px-6 py-3 rounded-full\">📞 Hemen Ara</a>"
@@ -7997,6 +8620,7 @@ setInterval(durumGuncelle, 60000);
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{ad} — {sektor}</title>
+{paylasim}
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 font-sans">
@@ -9438,6 +10062,48 @@ mod testler {
     #[test]
     fn demo_dosyasi_adi_turkce_karakterleri_sadeler() {
         assert_eq!(dosya_slug("Şişli Çiçekçi & Kahve"), "sisli-cicekci-kahve");
+    }
+
+    #[test]
+    fn demo_html_paylasim_etiketleri_icerir() {
+        let html = demo_html(&ornek_isletme(), "+90 500 111 22 33");
+        assert!(html.contains("<meta property=\"og:title\""), "{html}");
+        assert!(html.contains("og:description"));
+        assert!(html.contains("og:locale\" content=\"tr_TR"));
+        assert!(html.contains("name=\"description\""));
+        // Başlık işletme adını ve sektörü taşır; kaçışlama korunur.
+        assert!(html.contains("og:site_name\" content=\"Kafe &lt;Deneme&gt;"));
+    }
+
+    #[test]
+    fn takip_mesaji_gun_sayisini_ve_linki_yazar() {
+        let mut kayit = musteriler::Musteri {
+            anahtar: "osm:node/1".to_string(),
+            ad: "Moda Kafe".to_string(),
+            telefon: "+90 532 123 45 67".to_string(),
+            kategori: "Kafe".to_string(),
+            ..musteriler::Musteri::default()
+        };
+        let bugun = bugun_anahtari();
+        kayit.son_gonderim = Some(
+            chrono::Local::now()
+                .date_naive()
+                .checked_sub_days(chrono::Days::new(5))
+                .map(|gun| gun.format("%Y-%m-%d").to_string())
+                .unwrap_or(bugun.clone()),
+        );
+        kayit.yayin_linki = Some("https://ornek.github.io/r/demos/kafe-1.html".to_string());
+        let mesaj = takip_mesaji(&kayit);
+        assert!(mesaj.contains("Moda Kafe"), "{mesaj}");
+        assert!(mesaj.contains("5 gün önce"), "{mesaj}");
+        assert!(mesaj.contains("https://ornek.github.io/r/demos/kafe-1.html"));
+        assert!(mesaj.contains("RET"), "mesajın çıkış yolu olmalı");
+
+        // Yayın linki yoksa mesaj linksiz ama tutarlı kalır.
+        kayit.yayin_linki = None;
+        let linksiz = takip_mesaji(&kayit);
+        assert!(!linksiz.contains("http"), "{linksiz}");
+        assert!(linksiz.contains("Moda Kafe"));
     }
 
     #[test]
