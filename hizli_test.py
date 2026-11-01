@@ -121,8 +121,8 @@ def main():
         req = urllib.request.Request(BASE + "/alim", data=urllib.parse.urlencode(veri).encode(),
                                      headers={"Cookie": cookie})
         r3 = ac2.open(req, timeout=10)
-        kontrol("Alim fiisi kaydedildi (yazdirma sayfasina yonlenir)",
-                "alim-fis" in r3.url and "yazdir=1" in r3.url, r3.url)
+        kontrol("Alim fiisi kaydedildi (fis sayfasina yonlenir)",
+                "alim-fis" in r3.url, r3.url)
         # musteriye verilecek fis ciktisi kontrolu
         fis_yolu = r3.url.split("/alim-fis/")[1].split("?")[0] if "alim-fis" in r3.url else "1"
         req = urllib.request.Request(BASE + "/alim-fis/" + fis_yolu, headers={"Cookie": cookie})
@@ -183,26 +183,51 @@ def main():
         kontrol("Kilit suresinde dogru sifre bile reddedilir (302 yok)", r8.status != 302, f"durum={r8.status}")
         r8.read()
 
-        print("\n[8] Ayarlar: logo uretim + secim, fiyat/komisyon formu KALDIRILDI")
+        print("\n[8] Ayarlar: otomatik logo (3 stil), fiyat/komisyon formu KALDIRILDI")
         req = urllib.request.Request(BASE + "/ayarlar", headers={"Cookie": cookie})
         govde9 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
-        kontrol("Ayarlar sayfasinda 5 logo varyanti var",
-                govde9.count("/logo-sec") >= 5 and govde9.count("SEÇ") >= 5)
+        kontrol("Ayarlar sayfasinda 3 otomatik logo stili var",
+                govde9.count("/logo-otomatik?stil=") >= 3 and govde9.count("SEÇ") >= 3)
         kontrol("Kalibre fiyat formu KALDIRILDI", "fiyat_No:1" not in govde9)
         kontrol("Komisyon formu KALDIRILDI", "KOMİSYON MİKTARI" not in govde9)
-        kontrol("Onerilen logo isaretli", "★ önerilen" in govde9)
-        # logo sec
-        req = urllib.request.Request(BASE + "/logo-sec", data=urllib.parse.urlencode(
-            {"stil": "Altin"}).encode(), headers={"Cookie": cookie})
+        kontrol("Kaldirilan /logo-sec baglantisi YOK", "/logo-sec" not in govde9)
+        # gecersiz stil reddedilmeli: kayit degismemeli, SVG de uretilmemeli
+        req = urllib.request.Request(BASE + "/logo-otomatik-sec", data=urllib.parse.urlencode(
+            {"stil": "yokboylestil"}).encode(), headers={"Cookie": cookie})
+        r9h = ac2.open(req, timeout=10)
+        r9h.read()
+        req = urllib.request.Request(BASE + "/ayarlar", headers={"Cookie": cookie})
+        govde9h = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
+        kontrol("Gecersiz logo stili reddedilir (secim degismez)",
+                r9h.status == 200 and "oto-logo-kart secili" not in govde9h)
+        req = urllib.request.Request(BASE + "/logo-otomatik?stil=yokboylestil",
+                                     headers={"Cookie": cookie})
+        r9s = ac2.open(req, timeout=10)
+        kontrol("Gecersiz stil icin SVG uretilmez",
+                not r9s.headers.get("Content-Type", "").startswith("image/svg"),
+                r9s.headers.get("Content-Type", ""))
+        # stil sec (POST /ayarlar'a yonlendirir, kart secili gorunur)
+        req = urllib.request.Request(BASE + "/logo-otomatik-sec", data=urllib.parse.urlencode(
+            {"stil": "altin"}).encode(), headers={"Cookie": cookie})
         r9 = ac2.open(req, timeout=10)
-        kontrol("Logo secimi kaydedildi", r9.status == 200)
-        # /logo artik SVG donduruyor mu?
-        req = urllib.request.Request(BASE + "/logo", headers={"Cookie": cookie})
+        govde9b = r9.read().decode("utf-8", "replace")
+        kontrol("Logo secimi kaydedildi (kart secili)",
+                r9.status == 200 and "oto-logo-kart secili" in govde9b
+                and "SEÇİLİ" in govde9b)
+        # otomatik logo SVG uretimi
+        req = urllib.request.Request(BASE + "/logo-otomatik?stil=altin",
+                                     headers={"Cookie": cookie})
         r10 = ac2.open(req, timeout=10)
         govde10 = r10.read().decode("utf-8", "replace")
-        kontrol("/logo SVG uretti (Altin stil)",
-                r10.headers.get("Content-Type", "").startswith("image/svg") and "svg" in govde10,
+        kontrol("/logo-otomatik SVG uretti (Altin stil)",
+                r10.headers.get("Content-Type", "").startswith("image/svg")
+                and "<svg" in govde10 and "#B08D1E" in govde10,
                 r10.headers.get("Content-Type", ""))
+        # panel (kenar cubugu) secili otomatik logoyu kullaniyor mu?
+        req = urllib.request.Request(BASE + "/", headers={"Cookie": cookie})
+        panel9 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
+        kontrol("Panel secili otomatik logoyu kullaniyor",
+                "/logo-otomatik?stil=altin" in panel9)
 
         print("\n[9] Firma adi degisince logo YENIDEN uretilir (stil korunur)")
         # yeni firma adi kaydet
@@ -210,12 +235,17 @@ def main():
             {"firma_adi": "Zeytin AŞ"}).encode(), headers={"Cookie": cookie})
         r11 = ac2.open(req, timeout=10)
         kontrol("Firma adi kaydedildi", r11.status == 200)
-        # secili stil (Altin) korunmali ve monogram ZA olmali
-        req = urllib.request.Request(BASE + "/logo", headers={"Cookie": cookie})
+        # secili stil (altin) korunmali ve monogram ZA olmali
+        req = urllib.request.Request(BASE + "/logo-otomatik?stil=altin",
+                                     headers={"Cookie": cookie})
         r12 = ac2.open(req, timeout=10)
         svg12 = r12.read().decode("utf-8", "replace")
         kontrol("Logo yeni ada gore uretildi (ZA monogram)", ">ZA<" in svg12, svg12[100:200])
-        kontrol("Secili stil korundu (Altin renkleri)", "#B8860B" in svg12)
+        kontrol("Secili stil korundu (Altin renkleri)", "#B08D1E" in svg12)
+        req = urllib.request.Request(BASE + "/ayarlar", headers={"Cookie": cookie})
+        govde12 = ac2.open(req, timeout=10).read().decode("utf-8", "replace")
+        kontrol("Ayarlarda Altin stili hala secili",
+                "oto-logo-kart secili" in govde12 and "SEÇİLİ" in govde12)
         # eski ada don
         req = urllib.request.Request(BASE + "/ayarlar", data=urllib.parse.urlencode(
             {"firma_adi": "KARAOĞLU"}).encode(), headers={"Cookie": cookie})
@@ -228,27 +258,28 @@ def main():
         except Exception:
             proc.kill()
 
-    print("\n[10] DATA_DIR fallback: /data yazilamazsa varsayilana dusme")
-    eski_env = os.environ.get("KARAOGLU_DATA_DIR")
-    os.environ["KARAOGLU_DATA_DIR"] = gecici
-    import webdb
-    kontrol("Yazilabilir KARAOGLU_DATA_DIR kullanilir",
-            webdb._hazirla_data_dir() == Path(gecici))
-    engel = Path(gecici) / "engel.txt"
-    engel.write_text("x", encoding="utf-8")
-    os.environ["KARAOGLU_DATA_DIR"] = str(engel / "alt")
-    dusulen = webdb._hazirla_data_dir()
-    kontrol("Yazilamaz yolda varsayilan data/ klasorune dusuldu",
-            dusulen == webdb.BASE_DIR / "data", str(dusulen))
-    if eski_env is None:
-        os.environ.pop("KARAOGLU_DATA_DIR", None)
-    else:
-        os.environ["KARAOGLU_DATA_DIR"] = eski_env
+    print("\n[10] DATA_DIR: KARAOGLU_DATA_DIR veritabani klasorunu belirler")
+    kod = "import webdb; print(webdb.DATA_DIR)"
+    hedef = tempfile.mkdtemp(prefix="zeytin_datadir_")
+    ozel = subprocess.run(
+        [sys.executable, "-c", kod], cwd=str(KOK),
+        env={**os.environ, "KARAOGLU_DATA_DIR": hedef},
+        capture_output=True, text=True)
+    kontrol("KARAOGLU_DATA_DIR verilince o klasor kullanilir",
+            Path(ozel.stdout.strip()).resolve() == Path(hedef).resolve(),
+            ozel.stdout.strip() + ozel.stderr.strip())
+    vardi = (KOK / "data").exists()
+    temiz_ort = {k: v for k, v in os.environ.items() if k != "KARAOGLU_DATA_DIR"}
+    varsayilan = subprocess.run(
+        [sys.executable, "-c", kod], cwd=str(KOK), env=temiz_ort,
+        capture_output=True, text=True)
+    kontrol("Degisken yoksa proje ici data/ kullanilir",
+            Path(varsayilan.stdout.strip()).resolve() == (KOK / "data").resolve(),
+            varsayilan.stdout.strip() + varsayilan.stderr.strip())
     # testin olusturdugu bos klasoru temizle (projenin gercek data'sina dokunma)
     try:
-        if dusulen == webdb.BASE_DIR / "data" and dusulen.exists() \
-                and not any(dusulen.iterdir()):
-            dusulen.rmdir()
+        if not vardi and (KOK / "data").exists() and not any((KOK / "data").iterdir()):
+            (KOK / "data").rmdir()
     except OSError:
         pass
 
