@@ -20,7 +20,10 @@ permissions:
 jobs:
   duman-testi:
     name: Web (uctan uca duman testi)
-    runs-on: ubuntu-latest
+    # Sabit imaj: "ubuntu-latest" Ubuntu 26'ya kaydigi icin surum surprizi
+    # yasamamak adina 24.04'e sabitlendi. Yeni imaja gecmek istendiginde
+    # once burada denenip sonra etiket guncellenmeli.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
